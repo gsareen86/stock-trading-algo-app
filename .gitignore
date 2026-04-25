@@ -1,0 +1,58 @@
+# ----- Secrets -----
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.python-version
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# ----- Database / runtime state -----
+*.db
+*.sqlite
+*.sqlite3
+db/trading_bot.db
+db/*.db-journal
+db/*.db-wal
+db/*.db-shm
+
+# Cached price data / NIFTY universe (regenerable from NSE)
+cache/
+data/nifty500.csv
+
+# Logs
+logs/
+*.log
+
+# ----- Streamlit -----
+.streamlit/secrets.toml
+
+# ----- OS -----
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+
+# ----- IDE -----
+.idea/
+.vscode/
+*.iml
