@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional
 
 import feedparser
@@ -143,10 +143,15 @@ def _match_tickers(text: str, universe: Iterable[str]) -> List[str]:
 def news_db_stats() -> dict:
     """Quick summary for the dashboard: total items, items last 24h,
     most recent ts. Used by the News tab."""
+    # ts is stored as ISO-format UTC text; compute cutoff in Python so the
+    # query is portable across SQLite and Postgres (the SQLite-only
+    # `datetime('now', '-24 hours')` form throws on Postgres).
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     with get_conn() as conn:
         total = conn.execute("SELECT COUNT(*) AS n FROM news").fetchone()["n"]
         last_24h = conn.execute(
-            "SELECT COUNT(*) AS n FROM news WHERE datetime(ts) >= datetime('now','-24 hours')"
+            "SELECT COUNT(*) AS n FROM news WHERE ts >= ?",
+            (cutoff,),
         ).fetchone()["n"]
         latest = conn.execute(
             "SELECT MAX(ts) AS ts FROM news"
@@ -251,15 +256,16 @@ def retag_existing_news(universe: Optional[list[str]] = None) -> int:
 
 def recent_news_for_ticker(ticker: str, hours: int = 24, limit: int = 20) -> list[dict]:
     """Return the most recent news items referencing a ticker."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT ts, source, title, summary, url, sentiment
                  FROM news
                 WHERE tickers LIKE ?
-                  AND datetime(ts) >= datetime('now', ?)
+                  AND ts >= ?
                 ORDER BY ts DESC
                 LIMIT ?""",
-            (f"%{ticker}%", f"-{hours} hours", limit),
+            (f"%{ticker}%", cutoff, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
