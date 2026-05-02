@@ -36,8 +36,8 @@ NEAR_CLOSE_POLL_INTERVAL_SEC = 300  # 5 min poll near close (vs 15 min default)
 
 # ----- Risk -----
 RISK_PER_TRADE_PCT = 0.04         # 4% capital risked per trade (moderate)
-STOP_LOSS_PCT = 0.05              # 5% stop-loss
-TAKE_PROFIT_PCT = 0.10            # 10% target (1:2 RR)
+STOP_LOSS_PCT = 0.05              # 5% stop-loss (legacy fallback when ATR unusable)
+TAKE_PROFIT_PCT = 0.10            # 10% target (1:2 RR; legacy fallback)
 MAX_OPEN_POSITIONS = 5            # With 1L capital, 5 concurrent positions
 MAX_POSITION_SIZE_PCT = 0.20      # max 20% of capital in any single stock
 MIN_COMPOSITE_SCORE = 60          # 0-100; only trade above this
@@ -45,6 +45,33 @@ MIN_FUNDAMENTAL_SCORE = 40        # fundamental floor
 MIN_CONFIDENCE_THRESHOLD = 0.60   # ML will use this in Phase 2
 NO_TRADE_BEFORE = "09:30"         # skip first 15 min volatility
 NO_TRADE_AFTER = "15:00"          # no new entries in last 30 min
+
+# ----- ATR-based exits + partial T1 + trailing stop -----
+# Replaces the fixed 5%/10% SL/TP with volatility-normalised exits, plus
+# a "partial profit at 1×ATR + trail the remainder" mechanic. This is the
+# single biggest win-rate / expectancy improvement for short-horizon
+# Indian intraday on 15-min candles. See README "Risk methodology".
+USE_ATR_EXITS = True              # master switch for ATR-driven exits
+ATR_PERIOD = 14                   # standard Wilder period
+ATR_STOP_MULT = 1.5               # initial stop = entry - 1.5*ATR
+ATR_T1_MULT = 1.0                 # 1st profit target = entry + 1*ATR (50% qty out)
+ATR_TP_MULT = 3.0                 # 2nd / final target = entry + 3*ATR (runner)
+TRAIL_ATR_MULT = 1.0              # after T1, trail stop at hwm - 1*ATR
+ATR_T1_PARTIAL_PCT = 0.5          # fraction of qty to exit at T1
+# Bounds — a per-trade ATR that's <0.3% of price is implausible (likely
+# stale / illiquid candle), and >8% triggers oversize stops; we clip to
+# keep risk-of-ruin sensible.
+ATR_MIN_PCT_OF_PRICE = 0.003
+ATR_MAX_PCT_OF_PRICE = 0.08
+
+# ----- Market-regime / trend filter -----
+# Don't open longs when the broad market (NIFTY 50) is in a downtrend.
+# Mechanism: latest 15-min close > EMA(20) of 15-min closes.
+USE_NIFTY_TREND_FILTER = True
+NIFTY_TREND_INTERVAL = "15m"
+NIFTY_TREND_EMA_PERIOD = 20
+NIFTY_TREND_LOOKBACK_DAYS = 5     # 5 trading days × 25 candles/day ≈ 125 bars
+NIFTY_TREND_TICKER = "^NSEI"
 
 # ----- Indian trading costs (Zerodha-style discount broker) -----
 BROKERAGE_PER_ORDER = 20.0        # ₹20 flat per order (or 0.03% whichever lower)
@@ -74,6 +101,15 @@ STRATEGY_WEIGHTS = {
 DEFAULT_MODE = "manual"           # 'manual' | 'auto' | 'dry_run'  (user chose manual)
 APPROVAL_TIMEOUT_MIN = 10         # auto-reject pending approvals after N minutes
 SIGNAL_POLL_INTERVAL_SEC = 900    # 15 min - matches candle interval
+
+# How many tickers each cycle samples from the full universe. Bigger means
+# more chance of finding a high-conviction signal but linearly higher
+# cycle latency (yfinance fetch dominates). With FETCH_BATCH_WORKERS=8 in
+# data/fetcher.py, expect roughly:
+#   50  tickers ≈ 10-15 s per cycle
+#   100 tickers ≈ 20-30 s
+#   500 tickers ≈ 100-180 s   (use a longer poll interval if you do this)
+CYCLE_SAMPLE_SIZE = 50
 
 # ----- News sources (free RSS) -----
 NEWS_SOURCES = {

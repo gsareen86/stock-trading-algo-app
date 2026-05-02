@@ -105,7 +105,12 @@ CREATE TABLE IF NOT EXISTS positions (
     exit_ts TEXT,
     exit_price REAL,
     pnl REAL,
-    pnl_pct REAL
+    pnl_pct REAL,
+    atr_at_entry REAL,
+    t1_target REAL,
+    t1_taken INTEGER DEFAULT 0,
+    high_water_mark REAL,
+    initial_quantity INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS signals (
@@ -183,6 +188,51 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     decision_note TEXT
 );
 
+CREATE TABLE IF NOT EXISTS lt_universe (
+    ticker TEXT PRIMARY KEY,
+    last_filtered_at TEXT NOT NULL,
+    market_cap REAL,
+    sector TEXT,
+    industry TEXT,
+    has_fii INTEGER DEFAULT 0,
+    has_dii INTEGER DEFAULT 0,
+    fii_pct REAL,
+    dii_pct REAL,
+    fii_qoq_change REAL,
+    dii_qoq_change REAL,
+    promoter_holding_pct REAL,
+    promoter_pledge_pct REAL,
+    in_universe INTEGER DEFAULT 0,
+    filter_reason TEXT,
+    raw_inputs TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lt_quality (
+    ticker TEXT PRIMARY KEY,
+    scored_at TEXT NOT NULL,
+    profitability_score REAL,
+    cash_quality_score REAL,
+    solvency_score REAL,
+    growth_score REAL,
+    governance_score REAL,
+    total_score REAL,
+    raw_inputs TEXT
+);
+
+-- Cycle log: every run_cycle invocation writes a row at start (status=RUNNING)
+-- and updates it at the end (DONE / ERROR). Lets the dashboard show what the
+-- scheduler is doing cross-process AND lets long-running cycles surface
+-- progress (so the 'Run Cycle Now' UI can recover even if the browser
+-- disconnects mid-cycle).
+CREATE TABLE IF NOT EXISTS cycle_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    triggered_by TEXT,
+    summary TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON portfolio_snapshots(ts);
 CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts);
 CREATE INDEX IF NOT EXISTS idx_positions_ticker ON positions(ticker);
@@ -190,6 +240,9 @@ CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts);
 CREATE INDEX IF NOT EXISTS idx_news_ts ON news(ts);
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON pending_approvals(status);
+CREATE INDEX IF NOT EXISTS idx_lt_universe_in_universe ON lt_universe(in_universe);
+CREATE INDEX IF NOT EXISTS idx_lt_quality_total ON lt_quality(total_score);
+CREATE INDEX IF NOT EXISTS idx_cycle_log_started ON cycle_log(started_at);
 """
 
 # Postgres schema. We keep ts columns as TEXT (ISO strings) to match the
@@ -239,7 +292,12 @@ CREATE TABLE IF NOT EXISTS positions (
     exit_ts TEXT,
     exit_price DOUBLE PRECISION,
     pnl DOUBLE PRECISION,
-    pnl_pct DOUBLE PRECISION
+    pnl_pct DOUBLE PRECISION,
+    atr_at_entry DOUBLE PRECISION,
+    t1_target DOUBLE PRECISION,
+    t1_taken INTEGER DEFAULT 0,
+    high_water_mark DOUBLE PRECISION,
+    initial_quantity INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS signals (
@@ -317,6 +375,46 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     decision_note TEXT
 );
 
+CREATE TABLE IF NOT EXISTS lt_universe (
+    ticker TEXT PRIMARY KEY,
+    last_filtered_at TEXT NOT NULL,
+    market_cap DOUBLE PRECISION,
+    sector TEXT,
+    industry TEXT,
+    has_fii INTEGER DEFAULT 0,
+    has_dii INTEGER DEFAULT 0,
+    fii_pct DOUBLE PRECISION,
+    dii_pct DOUBLE PRECISION,
+    fii_qoq_change DOUBLE PRECISION,
+    dii_qoq_change DOUBLE PRECISION,
+    promoter_holding_pct DOUBLE PRECISION,
+    promoter_pledge_pct DOUBLE PRECISION,
+    in_universe INTEGER DEFAULT 0,
+    filter_reason TEXT,
+    raw_inputs JSONB
+);
+
+CREATE TABLE IF NOT EXISTS lt_quality (
+    ticker TEXT PRIMARY KEY,
+    scored_at TEXT NOT NULL,
+    profitability_score DOUBLE PRECISION,
+    cash_quality_score DOUBLE PRECISION,
+    solvency_score DOUBLE PRECISION,
+    growth_score DOUBLE PRECISION,
+    governance_score DOUBLE PRECISION,
+    total_score DOUBLE PRECISION,
+    raw_inputs JSONB
+);
+
+CREATE TABLE IF NOT EXISTS cycle_log (
+    id BIGSERIAL PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    triggered_by TEXT,
+    summary JSONB
+);
+
 CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON portfolio_snapshots(ts);
 CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts);
 CREATE INDEX IF NOT EXISTS idx_positions_ticker ON positions(ticker);
@@ -324,6 +422,9 @@ CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts);
 CREATE INDEX IF NOT EXISTS idx_news_ts ON news(ts);
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON pending_approvals(status);
+CREATE INDEX IF NOT EXISTS idx_lt_universe_in_universe ON lt_universe(in_universe);
+CREATE INDEX IF NOT EXISTS idx_lt_quality_total ON lt_quality(total_score);
+CREATE INDEX IF NOT EXISTS idx_cycle_log_started ON cycle_log(started_at);
 """
 
 
@@ -441,12 +542,48 @@ def _connect_sqlite():
     return conn
 
 
+def _migrate_positions_atr_columns(conn) -> None:
+    """Add ATR/trailing-stop + side columns to ``positions`` if missing.
+
+    Backwards-compatible: positions opened before this migration will have
+    NULL in the new columns and will fall back to the legacy fixed SL/TP path.
+    """
+    if BACKEND == "sqlite":
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(positions)").fetchall()}
+        ddl = {
+            "atr_at_entry":     "ALTER TABLE positions ADD COLUMN atr_at_entry REAL",
+            "t1_target":        "ALTER TABLE positions ADD COLUMN t1_target REAL",
+            "t1_taken":         "ALTER TABLE positions ADD COLUMN t1_taken INTEGER DEFAULT 0",
+            "high_water_mark":  "ALTER TABLE positions ADD COLUMN high_water_mark REAL",
+            "initial_quantity": "ALTER TABLE positions ADD COLUMN initial_quantity INTEGER",
+            "side":             "ALTER TABLE positions ADD COLUMN side TEXT DEFAULT 'LONG'",
+        }
+        for col, sql in ddl.items():
+            if col not in existing:
+                conn.execute(sql)
+        return
+
+    # Postgres path — IF NOT EXISTS is supported on ALTER TABLE ADD COLUMN
+    # for >= 9.6 (Supabase is much newer).
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    for sql in (
+        "ALTER TABLE positions ADD COLUMN IF NOT EXISTS atr_at_entry DOUBLE PRECISION",
+        "ALTER TABLE positions ADD COLUMN IF NOT EXISTS t1_target DOUBLE PRECISION",
+        "ALTER TABLE positions ADD COLUMN IF NOT EXISTS t1_taken INTEGER DEFAULT 0",
+        "ALTER TABLE positions ADD COLUMN IF NOT EXISTS high_water_mark DOUBLE PRECISION",
+        "ALTER TABLE positions ADD COLUMN IF NOT EXISTS initial_quantity INTEGER",
+        "ALTER TABLE positions ADD COLUMN IF NOT EXISTS side TEXT DEFAULT 'LONG'",
+    ):
+        cur.execute(sql)
+
+
 def init_db() -> None:
     """Create tables + seed bot_control row if absent."""
     if BACKEND == "sqlite":
         conn = _connect_sqlite()
         try:
             conn.executescript(_SQLITE_SCHEMA)
+            _migrate_positions_atr_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
                    VALUES (1, 'STOPPED', 'manual', ?)
@@ -463,6 +600,7 @@ def init_db() -> None:
                 # psycopg can run multi-statement DDL via execute() if the
                 # commands are separated by ;.
                 cur.execute(_POSTGRES_SCHEMA)
+                _migrate_positions_atr_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
                        VALUES (1, 'STOPPED', 'manual', %s)
@@ -569,7 +707,8 @@ def reset_db() -> None:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                DROP TABLE IF EXISTS pending_approvals, bot_control, fundamentals,
+                DROP TABLE IF EXISTS lt_quality, lt_universe,
+                                     pending_approvals, bot_control, fundamentals,
                                      news, signals, positions, trades,
                                      portfolio_snapshots CASCADE
             """)

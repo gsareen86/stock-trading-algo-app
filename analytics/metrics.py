@@ -62,65 +62,142 @@ def max_drawdown(equity: pd.Series) -> float:
 # ---------- Trade stats ----------
 
 
-def trade_stats() -> Dict:
+# ---------- Per-position P&L (canonical) ----------
+#
+# WHY THIS HELPER EXISTS — the previous trade_stats() merged BUYs to SELLs by
+# position_id and computed P&L per *row pair*. That broke catastrophically once
+# we added partial-T1 exits (which write a *second* SELL row for the same
+# position_id) and SHORT positions (which use side='SHORT'/'COVER' instead of
+# 'BUY'/'SELL'). The fix: don't pair rows at all — just sum every trade row's
+# net_value, grouped by position_id. Cash-flow truth wins:
+#
+#   LONG  BUY  net_value = -(entry*qty + costs)
+#   LONG  SELL net_value = +(exit*qty  - costs)            sum = pnl
+#   SHORT      net_value = -(entry*qty + costs)
+#   COVER      net_value = +(entry*qty + pnl)              sum = pnl
+#
+# Any partial-T1 exits become additional positive net_value rows. Summing them
+# all gives the true realised P&L for the position regardless of how many legs.
+
+def _per_position_pnl() -> pd.DataFrame:
+    """Return one row per FULLY-CLOSED position with summed cash-flow P&L.
+
+    Columns: position_id, ticker, side, strategy, opened_at, closed_at, pnl,
+    qty, entry_price, exit_price.
+    """
     df = trades_df()
     if df.empty:
-        return dict(total_trades=0)
+        return pd.DataFrame()
 
-    # Pair buy/sell per position_id
-    sells = df[df["side"] == "SELL"].copy()
-    buys = df[df["side"] == "BUY"].copy()
-    sells = sells.set_index("position_id")
-    buys = buys.set_index("position_id")
-    merged = sells.join(buys, lsuffix="_sell", rsuffix="_buy", how="inner")
-    if merged.empty:
-        return dict(total_trades=0, open_trades=len(buys) - len(sells))
+    open_sides  = df["side"].isin(["BUY", "SHORT"])
+    close_sides = df["side"].isin(["SELL", "COVER"])
 
-    merged["pnl"] = merged["net_value_sell"] + merged["net_value_buy"]
-    wins = merged[merged["pnl"] > 0]
-    losses = merged[merged["pnl"] <= 0]
-
-    win_rate = len(wins) / len(merged) if len(merged) else 0
-    avg_win = wins["pnl"].mean() if len(wins) else 0
-    avg_loss = losses["pnl"].mean() if len(losses) else 0
-    profit_factor = (
-        wins["pnl"].sum() / abs(losses["pnl"].sum()) if len(losses) and losses["pnl"].sum() != 0
-        else float("inf") if len(wins) else 0
+    # Sum net_value per position — that's the realised P&L from cash flow.
+    pnl_by_pos = (
+        df.groupby("position_id")["net_value"].sum()
+        .rename("pnl").reset_index()
     )
 
+    # Position is "fully closed" only if its open leg has at least one
+    # matching close leg AND the positions table marks it CLOSED. We don't
+    # have access to positions table here, so use the heuristic: total qty
+    # closed >= qty opened. Good enough — partial-closed positions get
+    # excluded so we don't show running P&L as final.
+    qty_open  = df[open_sides ].groupby("position_id")["quantity"].sum().rename("qty_opened")
+    qty_close = df[close_sides].groupby("position_id")["quantity"].sum().rename("qty_closed")
+    qty = pd.concat([qty_open, qty_close], axis=1).fillna(0)
+    fully_closed = qty[qty["qty_closed"] >= qty["qty_opened"]].index
+
+    pnl_by_pos = pnl_by_pos[pnl_by_pos["position_id"].isin(fully_closed)]
+    if pnl_by_pos.empty:
+        return pd.DataFrame()
+
+    # Pull metadata from the OPEN-side row (one per position).
+    open_meta = (
+        df[open_sides].sort_values("ts")
+        .drop_duplicates("position_id", keep="first")
+        [["position_id", "ticker", "side", "strategy", "ts", "price"]]
+        .rename(columns={"ts": "opened_at", "price": "entry_price",
+                         "side": "open_side"})
+    )
+    # Map open_side -> position direction.
+    open_meta["direction"] = open_meta["open_side"].map(
+        {"BUY": "LONG", "SHORT": "SHORT"}
+    )
+
+    # Final close ts + price (use the LATEST close-side row).
+    close_meta = (
+        df[close_sides].sort_values("ts")
+        .drop_duplicates("position_id", keep="last")
+        [["position_id", "ts", "price"]]
+        .rename(columns={"ts": "closed_at", "price": "exit_price"})
+    )
+
+    out = pnl_by_pos.merge(open_meta, on="position_id", how="left")
+    out = out.merge(close_meta, on="position_id", how="left")
+    out = out.merge(qty["qty_opened"].rename("qty").reset_index(),
+                    on="position_id", how="left")
+    return out[[
+        "position_id", "opened_at", "closed_at", "ticker", "direction",
+        "qty", "entry_price", "exit_price", "pnl", "strategy",
+    ]].sort_values("closed_at", ascending=False).reset_index(drop=True)
+
+
+def trade_stats() -> Dict:
+    """Aggregate stats over all FULLY-CLOSED positions (LONG + SHORT)."""
+    pos = _per_position_pnl()
+    if pos.empty:
+        return dict(total_trades=0)
+    pnl = pos["pnl"]
+    wins = pos[pnl > 0]
+    losses = pos[pnl <= 0]
+    win_rate = len(wins) / len(pos) if len(pos) else 0
+    avg_win = wins["pnl"].mean() if len(wins) else 0
+    avg_loss = losses["pnl"].mean() if len(losses) else 0
+    pf = (
+        wins["pnl"].sum() / abs(losses["pnl"].sum())
+        if len(losses) and losses["pnl"].sum() != 0
+        else float("inf") if len(wins) else 0
+    )
     return dict(
-        total_trades=len(merged),
+        total_trades=len(pos),
         wins=len(wins),
         losses=len(losses),
         win_rate=round(win_rate * 100, 2),
         avg_win=round(float(avg_win), 2),
         avg_loss=round(float(avg_loss), 2),
-        total_pnl=round(float(merged["pnl"].sum()), 2),
-        profit_factor=round(float(profit_factor), 2) if profit_factor != float("inf") else "∞",
-        best_trade=round(float(merged["pnl"].max()), 2),
-        worst_trade=round(float(merged["pnl"].min()), 2),
+        total_pnl=round(float(pnl.sum()), 2),
+        profit_factor=round(float(pf), 2) if pf != float("inf") else "∞",
+        best_trade=round(float(pnl.max()), 2),
+        worst_trade=round(float(pnl.min()), 2),
     )
 
 
 def strategy_breakdown() -> pd.DataFrame:
-    """PnL + counts grouped by strategy."""
-    df = trades_df()
-    if df.empty:
+    """PnL + counts grouped by strategy — both directions, partial-close-safe."""
+    pos = _per_position_pnl()
+    if pos.empty:
         return pd.DataFrame()
-    sells = df[df["side"] == "SELL"]
-    buys = df[df["side"] == "BUY"]
-    merged = sells.merge(buys, on="position_id", suffixes=("_sell", "_buy"))
-    if merged.empty:
-        return pd.DataFrame()
-    merged["pnl"] = merged["net_value_sell"] + merged["net_value_buy"]
-    grp = merged.groupby("strategy_buy").agg(
+    grp = pos.groupby("strategy").agg(
         trades=("pnl", "count"),
         total_pnl=("pnl", "sum"),
         avg_pnl=("pnl", "mean"),
         wins=("pnl", lambda x: (x > 0).sum()),
-    ).reset_index().rename(columns={"strategy_buy": "strategy"})
+    ).reset_index()
     grp["win_rate_pct"] = round(grp["wins"] / grp["trades"] * 100, 2)
     return grp.round(2)
+
+
+def closed_positions_report(start_date=None, end_date=None) -> pd.DataFrame:
+    """Per-trade P&L report with optional date filter on closed_at (UTC)."""
+    pos = _per_position_pnl()
+    if pos.empty:
+        return pos
+    if start_date is not None:
+        pos = pos[pd.to_datetime(pos["closed_at"]) >= pd.to_datetime(start_date)]
+    if end_date is not None:
+        pos = pos[pd.to_datetime(pos["closed_at"]) <= pd.to_datetime(end_date)]
+    return pos.reset_index(drop=True)
 
 
 # ---------- Portfolio summary ----------
