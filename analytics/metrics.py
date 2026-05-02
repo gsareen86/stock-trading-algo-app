@@ -4,10 +4,13 @@ strategy breakdown, benchmark comparison vs NIFTY 50.
 """
 from __future__ import annotations
 
+import logging
 from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 from config import BENCHMARK_TICKER, INITIAL_CAPITAL
 from data.fetcher import fetch_candles
@@ -25,11 +28,15 @@ def sharpe_ratio(returns: pd.Series, rf: float = 0.0, periods_per_year: int = 25
     if returns is None or returns.empty:
         return 0.0
     std = float(returns.std())
-    if not std or std != std:  # 0 or NaN
+    if std != std:  # NaN — insufficient data
+        log.debug("sharpe_ratio: std is NaN, returning 0.0")
+        return 0.0
+    if not std:     # zero volatility — ratio undefined
         return 0.0
     excess = returns - rf / periods_per_year
     val = np.sqrt(periods_per_year) * excess.mean() / std
-    if val != val:
+    if val != val:  # NaN from mean()
+        log.debug("sharpe_ratio: result is NaN, returning 0.0")
         return 0.0
     return float(val)
 
@@ -39,11 +46,15 @@ def sortino_ratio(returns: pd.Series, rf: float = 0.0, periods_per_year: int = 2
         return 0.0
     downside = returns[returns < 0]
     dstd = float(downside.std()) if not downside.empty else 0.0
-    if not dstd or dstd != dstd:  # 0 or NaN
+    if dstd != dstd:  # NaN — insufficient downside data
+        log.debug("sortino_ratio: downside std is NaN, returning 0.0")
+        return 0.0
+    if not dstd:      # no losing periods — ratio undefined (positive infinity)
         return 0.0
     excess = float(returns.mean()) - rf / periods_per_year
     val = np.sqrt(periods_per_year) * excess / dstd
-    if val != val:  # NaN
+    if val != val:
+        log.debug("sortino_ratio: result is NaN, returning 0.0")
         return 0.0
     return float(val)
 

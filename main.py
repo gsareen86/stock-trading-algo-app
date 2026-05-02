@@ -93,8 +93,11 @@ def main():
     try:
         dash_proc.wait()
     except KeyboardInterrupt:
-        dash_proc.terminate()
         print("\nShutting down…")
+    finally:
+        if dash_proc.poll() is None:
+            dash_proc.terminate()
+            dash_proc.wait()
 
 
 if __name__ == "__main__":

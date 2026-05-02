@@ -5,16 +5,15 @@ Single source of truth for candle data.
 from __future__ import annotations
 
 import logging
-import pickle
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
 import pandas as pd
 import yfinance as yf
 
-from config import CACHE_DIR, CANDLE_INTERVAL, LOOKBACK_DAYS
+from config import CACHE_DIR, CANDLE_INTERVAL, IST, LOOKBACK_DAYS
 from data.universe import to_yf_ticker
 
 log = logging.getLogger(__name__)
@@ -31,7 +30,7 @@ CACHE_TTL_SECONDS = {
 
 
 def _cache_path(ticker: str, interval: str) -> Path:
-    return Path(CACHE_DIR) / f"{ticker.replace('.', '_')}_{interval}.pkl"
+    return Path(CACHE_DIR) / f"{ticker.replace('.', '_')}_{interval}.parquet"
 
 
 def _is_fresh(path: Path, ttl: int) -> bool:
@@ -54,9 +53,9 @@ def fetch_candles(
 
     if use_cache and _is_fresh(path, ttl):
         try:
-            return pickle.loads(path.read_bytes())
-        except Exception:
-            pass  # cache corrupted; refetch
+            return pd.read_parquet(path)
+        except Exception as _cache_err:
+            log.warning("cache read failed for %s (%s), refetching", ticker, _cache_err)
 
     period = f"{days}d" if interval != "1d" else f"{max(days, 365)}d"
     try:
@@ -83,7 +82,7 @@ def fetch_candles(
     df.dropna(inplace=True)
 
     try:
-        path.write_bytes(pickle.dumps(df))
+        df.to_parquet(path)
     except Exception as e:
         log.debug("cache write failed: %s", e)
 
@@ -231,7 +230,15 @@ NSE_HOLIDAYS: set[str] = {
 
 def is_nse_holiday(now: Optional[datetime] = None) -> bool:
     """True if today is a known NSE full-day holiday (per NSE_HOLIDAYS)."""
-    now = now or datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    now = now or datetime.now(IST)
+    current_year = now.year
+    years_covered = {int(d[:4]) for d in NSE_HOLIDAYS}
+    if current_year not in years_covered:
+        log.warning(
+            "NSE_HOLIDAYS has no entries for %d — holiday check will treat all "
+            "weekdays as trading days. Update NSE_HOLIDAYS in data/fetcher.py.",
+            current_year,
+        )
     return now.strftime("%Y-%m-%d") in NSE_HOLIDAYS
 
 
@@ -242,7 +249,7 @@ def market_is_open(now: Optional[datetime] = None) -> bool:
     holidays like Mahavir Jayanti as "open" on weekdays. The added
     NSE_HOLIDAYS set fixes that.
     """
-    now = now or datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    now = now or datetime.now(IST)
     if now.weekday() >= 5:
         return False
     if is_nse_holiday(now):

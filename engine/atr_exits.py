@@ -217,6 +217,8 @@ def nifty_regime(force_refresh: bool = False) -> tuple[str, str]:
         ema = close.ewm(span=NIFTY_TREND_EMA_PERIOD, adjust=False).mean()
         last_close = float(close.iloc[-1])
         last_ema = float(ema.iloc[-1])
+        if last_ema == 0:
+            return "neutral", "regime: EMA is zero — defaulting to neutral"
         delta_pct = (last_close - last_ema) / last_ema * 100
         if delta_pct > NIFTY_NEUTRAL_BAND_PCT:
             regime = "bullish"

@@ -15,6 +15,7 @@ from config import (
     FUNDAMENTAL_WEIGHT,
     MIN_COMPOSITE_SCORE,
     MIN_FUNDAMENTAL_SCORE,
+    SENTIMENT_BLOCK_THRESHOLD,
     SENTIMENT_WEIGHT,
     STRATEGY_WEIGHTS,
     TECHNICAL_WEIGHT,
@@ -96,6 +97,8 @@ def evaluate(ticker: str, df: pd.DataFrame) -> CompositeDecision:
 
     # Fundamentals (cached)
     fund = get_cached(ticker) or fetch_and_store(ticker)
+    if not fund:
+        log.debug("fundamentals unavailable for %s, using neutral score 50.0", ticker)
     fund_score = float(fund.get("fundamental_score", 50.0)) if fund else 50.0
 
     # Sentiment
@@ -125,8 +128,11 @@ def evaluate(ticker: str, df: pd.DataFrame) -> CompositeDecision:
             reasons.append(f"Blocked: fundamentals {fund_score:.0f} < {MIN_FUNDAMENTAL_SCORE}")
         elif composite < MIN_COMPOSITE_SCORE:
             reasons.append(f"Blocked: composite {composite:.0f} < {MIN_COMPOSITE_SCORE}")
-        elif sent_raw < -0.4:
-            reasons.append(f"Blocked: very negative news sentiment ({sent_raw:+.2f})")
+        elif sent_raw < SENTIMENT_BLOCK_THRESHOLD:
+            reasons.append(
+                f"Blocked: very negative news sentiment "
+                f"({sent_raw:+.2f} < {SENTIMENT_BLOCK_THRESHOLD:+.2f})"
+            )
         else:
             action = "BUY"
     elif action_t == "SELL":

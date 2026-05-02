@@ -2,7 +2,12 @@
 Central configuration for the virtual trading bot.
 All tunables live here so they can be safely edited without hunting through modules.
 """
+from datetime import timezone, timedelta
 from pathlib import Path
+
+# Indian Standard Time offset (+05:30). Use datetime.now(IST) instead of
+# datetime.now(timezone.utc) + timedelta(hours=5, minutes=30) everywhere.
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # ----- Paths -----
 BASE_DIR = Path(__file__).parent.resolve()
@@ -43,6 +48,9 @@ MAX_POSITION_SIZE_PCT = 0.20      # max 20% of capital in any single stock
 MIN_COMPOSITE_SCORE = 60          # 0-100; only trade above this
 MIN_FUNDAMENTAL_SCORE = 40        # fundamental floor
 MIN_CONFIDENCE_THRESHOLD = 0.60   # ML will use this in Phase 2
+# BUY signals are blocked when rolling sentiment drops below this.
+# Applies to LONGs only — SELL signals are not gated on sentiment.
+SENTIMENT_BLOCK_THRESHOLD = -0.4
 NO_TRADE_BEFORE = "09:30"         # skip first 15 min volatility
 NO_TRADE_AFTER = "15:00"          # no new entries in last 30 min
 

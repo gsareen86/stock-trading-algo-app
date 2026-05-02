@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -88,7 +87,7 @@ CREATE TABLE IF NOT EXISTS trades (
     reason TEXT,
     composite_score REAL,
     mode TEXT,
-    position_id INTEGER
+    position_id INTEGER REFERENCES positions(id)
 );
 
 CREATE TABLE IF NOT EXISTS positions (
@@ -275,7 +274,7 @@ CREATE TABLE IF NOT EXISTS trades (
     reason TEXT,
     composite_score DOUBLE PRECISION,
     mode TEXT,
-    position_id BIGINT
+    position_id BIGINT REFERENCES positions(id)
 );
 
 CREATE TABLE IF NOT EXISTS positions (
@@ -430,16 +429,35 @@ CREATE INDEX IF NOT EXISTS idx_cycle_log_started ON cycle_log(started_at);
 
 # ---------- Postgres adapter ----------
 
-# We translate ``?`` placeholders to ``%s`` at execute() time. This is a naive
-# string substitution but safe for our codebase because no SQL string contains
-# a literal ``?`` and the only ``%`` occurrences live inside parameter values
-# (e.g. LIKE '%foo%') which psycopg handles via DBAPI substitution.
-_PLACEHOLDER_RE = re.compile(r"\?")
-
-
 def _q(sql: str) -> str:
-    """Translate sqlite ``?`` placeholders to psycopg ``%s``."""
-    return _PLACEHOLDER_RE.sub("%s", sql)
+    """Translate SQLite ``?`` placeholders to psycopg ``%s``.
+
+    Uses a simple state machine to skip ``?`` characters that appear inside
+    single-quoted string literals, preventing incorrect substitution for SQL
+    like ``WHERE reason = 'Why?'``.
+    """
+    result: list[str] = []
+    in_string = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch == "'" and not in_string:
+            in_string = True
+            result.append(ch)
+        elif ch == "'" and in_string:
+            # Handle escaped quote ''
+            if i + 1 < len(sql) and sql[i + 1] == "'":
+                result.append("''")
+                i += 2
+                continue
+            in_string = False
+            result.append(ch)
+        elif ch == "?" and not in_string:
+            result.append("%s")
+        else:
+            result.append(ch)
+        i += 1
+    return "".join(result)
 
 
 class _PgCursorWrapper:
@@ -539,6 +557,7 @@ def _connect_sqlite():
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
