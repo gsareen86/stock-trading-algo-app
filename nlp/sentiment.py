@@ -5,6 +5,7 @@ Optional: FinBERT (finance-tuned, heavier). Toggle via config.ENABLE_FINBERT.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
@@ -17,21 +18,26 @@ log = logging.getLogger(__name__)
 
 _vader = SentimentIntensityAnalyzer()
 _finbert_pipeline = None
+_finbert_lock = threading.Lock()
 
 
 def _get_finbert():
     global _finbert_pipeline
-    if _finbert_pipeline is None:
-        try:
-            from transformers import pipeline  # lazy import
-            _finbert_pipeline = pipeline(
-                "sentiment-analysis",
-                model="ProsusAI/finbert",
-                truncation=True,
-            )
-        except Exception as e:
-            log.warning("FinBERT unavailable, falling back to VADER: %s", e)
-            _finbert_pipeline = False
+    # Double-checked locking: fast path avoids acquiring the lock once loaded.
+    if _finbert_pipeline is not None:
+        return _finbert_pipeline
+    with _finbert_lock:
+        if _finbert_pipeline is None:
+            try:
+                from transformers import pipeline  # lazy import
+                _finbert_pipeline = pipeline(
+                    "sentiment-analysis",
+                    model="ProsusAI/finbert",
+                    truncation=True,
+                )
+            except Exception as e:
+                log.warning("FinBERT unavailable, falling back to VADER: %s", e)
+                _finbert_pipeline = False
     return _finbert_pipeline
 
 
@@ -55,8 +61,8 @@ def score_text(text: str) -> float:
                 if label == "negative":
                     return -score
                 return 0.0
-            except Exception:
-                pass  # fall through to VADER
+            except Exception as e:
+                log.warning("FinBERT inference failed, falling back to VADER: %s", e)
 
     # VADER default
     s = _vader.polarity_scores(text)
@@ -93,6 +99,11 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
     return n
 
 
+def _escape_like(value: str) -> str:
+    """Escape SQL LIKE special characters for use with ESCAPE '\'."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def aggregated_sentiment(ticker: str, hours: int = 24) -> float:
     """
     Rolling 24-hour weighted sentiment for a ticker.
@@ -101,13 +112,14 @@ def aggregated_sentiment(ticker: str, hours: int = 24) -> float:
     # Compute cutoff in Python so the WHERE clause is dialect-agnostic
     # (SQLite's datetime('now', '-X hours') is not valid Postgres).
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    escaped = _escape_like(ticker)
     with get_conn() as conn:
         rows = conn.execute(
-            """SELECT ts, sentiment FROM news
-                WHERE tickers LIKE ?
+            r"""SELECT ts, sentiment FROM news
+                WHERE tickers LIKE ? ESCAPE '\'
                   AND sentiment IS NOT NULL
                   AND ts >= ?""",
-            (f"%{ticker}%", cutoff),
+            (f"%{escaped}%", cutoff),
         ).fetchall()
     if not rows:
         return 0.0

@@ -16,12 +16,13 @@ from __future__ import annotations
 import logging
 import random
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import List
 
 from config import (
     APPROVAL_TIMEOUT_MIN,
     ATR_T1_PARTIAL_PCT,
+    IST,
     NEAR_CLOSE_POLL_INTERVAL_SEC,
     NEAR_CLOSE_START,
     NEWS_REFRESH_MIN,
@@ -47,6 +48,7 @@ from engine.atr_exits import (
     trail_stop_after_t1,
     trail_stop_after_t1_short,
 )
+from engine.paper_broker import execute as _broker_execute
 from engine.portfolio import (
     close_position,
     initialize_if_empty,
@@ -192,16 +194,34 @@ def expire_stale_approvals() -> int:
 def execute_single_approval(approval_id: int) -> int | None:
     """Execute a single APPROVED row immediately. Called from the dashboard
     when the user clicks Approve, so trades don't have to wait for the next
-    scheduler cycle."""
+    scheduler cycle.
+
+    Race-condition guard: we first atomically transition APPROVED→EXECUTING.
+    If rowcount==0 a concurrent caller already claimed it — we bail out.
+    This prevents duplicate trades when the dashboard and a catch-up sweep
+    run concurrently. If the process crashes between EXECUTING and EXECUTED
+    the row is left in EXECUTING; a future manual retry or restart is needed.
+    """
     with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE pending_approvals SET status='EXECUTING' WHERE id=? AND status='APPROVED'",
+            (approval_id,),
+        )
+        if cur.rowcount != 1:
+            return None
         r = conn.execute(
-            "SELECT * FROM pending_approvals WHERE id=? AND status='APPROVED'",
+            "SELECT * FROM pending_approvals WHERE id=?",
             (approval_id,),
         ).fetchone()
-    if not r:
+
+    if not r or r["action"] != "BUY":
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE pending_approvals SET status='APPROVED' WHERE id=? AND status='EXECUTING'",
+                (approval_id,),
+            )
         return None
-    if r["action"] != "BUY":
-        return None
+
     pos_id = open_position(
         r["ticker"], r["price"], r["quantity"],
         stop_loss=r["stop_loss"], take_profit=r["take_profit"],
@@ -251,7 +271,7 @@ def evaluate_exits(prices: dict) -> dict:
     Returns ``{"closed": N, "t1_partials": M, "trailed": K}``.
     """
     counts = {"closed": 0, "t1_partials": 0, "trailed": 0}
-    now_ist = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%H:%M")
+    now_ist = datetime.now(IST).strftime("%H:%M")
     squareoff_time = SQUARE_OFF_TIME
 
     for p in open_positions():
@@ -283,6 +303,12 @@ def evaluate_exits(prices: dict) -> dict:
         )
         if t1_hit:
             qty_to_book = max(1, int(p["quantity"] * ATR_T1_PARTIAL_PCT))
+            if qty_to_book >= p["quantity"]:
+                log.debug(
+                    "T1 partial skipped for %s pos %d: qty_to_book=%d >= remaining=%d "
+                    "(ATR_T1_PARTIAL_PCT=%.2f). Will close fully on TP/SL.",
+                    ticker, p["id"], qty_to_book, p["quantity"], ATR_T1_PARTIAL_PCT,
+                )
             if qty_to_book < p["quantity"]:
                 pnl = partial_close_position(
                     p["id"], price, qty_to_book,
@@ -319,7 +345,10 @@ def evaluate_exits(prices: dict) -> dict:
                     counts["trailed"] += 1
             else:
                 candidate = trail_stop_after_t1_short(new_wm, float(atr))
-                if cur_stop == 0 or candidate < cur_stop:   # ratchet down
+                # Validate: candidate must be above current price (still a
+                # valid stop) and above entry (short entered below candidate).
+                candidate_valid = candidate > float(price)
+                if candidate_valid and (cur_stop == 0 or candidate < cur_stop):
                     new_stop_for_trail = candidate
                     counts["trailed"] += 1
 
@@ -396,7 +425,7 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         return out
 
     try:
-        cycle_start_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        cycle_start_ist = datetime.now(IST)
         market_open = market_is_open(cycle_start_ist)
 
         # Refresh news + sentiment (throttled: every ~30 min)
@@ -437,7 +466,7 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         # scraping + 50-ticker yfinance fetch can take 1-3 minutes, so a cycle
         # that started at 09:29 IST might reach this gate at 09:31 — using the
         # stale start time was incorrectly skipping cycles past the cutoff.
-        now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        now_ist = datetime.now(IST)
         hhmm = now_ist.strftime("%H:%M")
         skip_entry_reason = None
         if not market_open:
@@ -569,14 +598,23 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                         else:
                             placed += 1
                         open_count += 1
-                        cash -= d.price * qty   # margin block, both sides
+                        # Deduct the realistic cost (fill price + all fees)
+                        # so subsequent signals in this cycle use accurate cash.
+                        est = _broker_execute("BUY", d.price, qty)
+                        cash += est.net  # est.net is negative on BUY-side
                 elif mode == "manual":
-                    # Manual approvals stay long-only for now (queue schema
-                    # doesn't carry side). SHORT signals in manual mode are
-                    # surfaced in the signal log but not enqueued.
                     if side == "LONG":
                         enqueue_approval(d, qty, sl, tp)
                         enqueued += 1
+                    else:
+                        # SHORT signals cannot be enqueued yet (pending_approvals
+                        # schema has no side column). Signal is logged to the DB
+                        # above; explicitly warn so the operator can act on it.
+                        log.info(
+                            "SHORT signal for %s (score=%.1f) skipped in manual mode "
+                            "— visible in signal log only",
+                            d.ticker, d.composite_score,
+                        )
 
         # Always snapshot so the chart moves even when no trades happen
         snapshot(prices)
@@ -613,7 +651,7 @@ def _next_poll_interval() -> int:
     """Use the tighter near-close cadence between NEAR_CLOSE_START and 15:30
     IST so intraday square-off fires within ≤NEAR_CLOSE_POLL_INTERVAL_SEC of
     the cutoff instead of the default 15-min lag."""
-    now_ist = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%H:%M")
+    now_ist = datetime.now(IST).strftime("%H:%M")
     if NEAR_CLOSE_START <= now_ist <= "15:30":
         return NEAR_CLOSE_POLL_INTERVAL_SEC
     return SIGNAL_POLL_INTERVAL_SEC

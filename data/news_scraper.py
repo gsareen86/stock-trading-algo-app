@@ -254,18 +254,24 @@ def retag_existing_news(universe: Optional[list[str]] = None) -> int:
     return updated
 
 
+def _escape_like(value: str) -> str:
+    """Escape SQL LIKE special characters in value for use with ESCAPE '\'."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def recent_news_for_ticker(ticker: str, hours: int = 24, limit: int = 20) -> list[dict]:
     """Return the most recent news items referencing a ticker."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    escaped = _escape_like(ticker)
     with get_conn() as conn:
         rows = conn.execute(
-            """SELECT ts, source, title, summary, url, sentiment
+            r"""SELECT ts, source, title, summary, url, sentiment
                  FROM news
-                WHERE tickers LIKE ?
+                WHERE tickers LIKE ? ESCAPE '\'
                   AND ts >= ?
                 ORDER BY ts DESC
                 LIMIT ?""",
-            (f"%{ticker}%", cutoff, limit),
+            (f"%{escaped}%", cutoff, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
