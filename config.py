@@ -98,12 +98,67 @@ FUNDAMENTAL_WEIGHT = 0.25
 SENTIMENT_WEIGHT = 0.25
 
 # ----- Strategy weights (Phase 2 will make these adaptive) -----
+# Weights sum to 1.0. The four direction-balanced additions (orb, vwap_reversion,
+# supertrend, gap_play, pair_trading) are weighted higher than the legacy
+# long-biased trio because they're what produces SHORT signals on red days.
 STRATEGY_WEIGHTS = {
-    "ema_crossover": 0.25,
-    "rsi_mean_reversion": 0.25,
-    "bollinger_breakout": 0.25,
-    "momentum": 0.25,
+    # Legacy (long-biased)
+    "ema_crossover":       0.10,
+    "rsi_mean_reversion":  0.10,
+    "bollinger_breakout":  0.10,
+    "momentum":            0.10,
+    # Direction-agnostic additions
+    "orb":                 0.18,   # highest impact — biggest expected lift
+    "vwap_reversion":      0.13,   # rangebound-day workhorse
+    "supertrend":          0.12,   # high-conviction trend confluence
+    "gap_play":            0.10,   # first-30-min edge
+    "pair_trading":        0.07,   # rangebound stat-arb (selective)
 }
+
+# ----- Opening Range Breakout (ORB) -----
+# First N minutes after 09:15 IST define the day's range. After the window
+# closes a 15-min close beyond either side fires a directional signal.
+ORB_WINDOW_MIN = 15                # 09:15-09:30 IST
+ORB_MIN_BREAKOUT_PCT = 0.10        # min % beyond OR-high/low to count as breakout
+
+# ----- VWAP mean-reversion -----
+VWAP_BAND_K = 1.8                  # multiplier on recent intraday return-stdev
+VWAP_VOL_LOOKBACK = 8              # bars of returns used to size the band
+
+# ----- Supertrend -----
+SUPERTREND_PERIOD = 10
+SUPERTREND_MULT = 3.0
+
+# ----- Gap-and-go / Gap-fade -----
+GAP_GO_PCT = 1.5                   # |gap %| threshold for continuation
+GAP_FADE_PCT = 2.0                 # |gap %| threshold for fade (needs weak vol)
+GAP_GO_VOL_MULT = 1.5              # first-bar vol vs prior session avg
+GAP_ENTRY_WINDOW_MIN = 30          # only fire within first 30 min after open
+
+# ----- Pair trading (statistical arbitrage) -----
+# Pairs are (A, B). Each pair generates two evaluations per cycle (one per
+# leg) and the composite scorer ends up with one BUY + one SELL — perfect
+# for direction-balanced exposure on rangebound days.
+PAIR_TRADING_PAIRS: list[tuple[str, str]] = [
+    ("HDFCBANK",  "ICICIBANK"),    # private banks
+    ("RELIANCE",  "ONGC"),         # energy / oil
+    ("TCS",       "INFY"),         # IT large-caps
+    ("HCLTECH",   "WIPRO"),        # IT mid-caps
+    ("MARUTI",    "TATAMOTORS"),   # autos
+    ("SBIN",      "AXISBANK"),     # banks (PSU vs private)
+    ("HINDUNILVR", "ITC"),         # FMCG
+    ("TATASTEEL", "JSWSTEEL"),     # metals
+]
+PAIR_Z_ENTRY = 2.0                 # |z| ≥ 2.0 → enter
+PAIR_Z_LOOKBACK = 60               # 15-min bars; ~2 trading days
+
+# ----- Time-of-day no-trade windows -----
+# Disable NEW entries during the listed (start, end) IST windows. The 11:30-
+# 13:00 "dead zone" produces a disproportionate share of false breakouts in
+# Indian markets. Existing positions still get exit-managed normally.
+NO_TRADE_WINDOWS: list[tuple[str, str]] = [
+    ("11:30", "13:00"),
+]
 
 # ----- Bot control defaults -----
 DEFAULT_MODE = "manual"           # 'manual' | 'auto' | 'dry_run'  (user chose manual)
