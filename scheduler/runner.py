@@ -26,12 +26,13 @@ from config import (
     NEAR_CLOSE_POLL_INTERVAL_SEC,
     NEAR_CLOSE_START,
     NEWS_REFRESH_MIN,
+    NO_TRADE_AFTER,
+    NO_TRADE_BEFORE,
+    NO_TRADE_WINDOWS,
     SIGNAL_POLL_INTERVAL_SEC,
     SQUARE_OFF_TIME,
     STOP_LOSS_PCT,
     TAKE_PROFIT_PCT,
-    NO_TRADE_AFTER,
-    NO_TRADE_BEFORE,
     USE_ATR_EXITS,
     USE_NIFTY_TREND_FILTER,
 )
@@ -475,6 +476,15 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
             skip_entry_reason = f"before {NO_TRADE_BEFORE} IST (volatility skip)"
         elif hhmm > NO_TRADE_AFTER:
             skip_entry_reason = f"after {NO_TRADE_AFTER} IST (no new entries)"
+        else:
+            # Block entries inside any configured "dead zone" window. Existing
+            # positions are still exit-managed above; only NEW entries are gated.
+            for win_start, win_end in NO_TRADE_WINDOWS:
+                if win_start <= hhmm <= win_end:
+                    skip_entry_reason = (
+                        f"within no-trade window {win_start}-{win_end} IST"
+                    )
+                    break
 
         # ----- Market-regime gate (3-way: bullish / bearish / neutral) -----
         # Routes signals based on regime so the bot can profit in BOTH
