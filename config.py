@@ -194,6 +194,97 @@ BENCHMARK_TICKER = "^NSEI"        # NIFTY 50
 # ----- Logging -----
 LOG_LEVEL = "INFO"
 
+# ----- Positional trading module -----
+POSITIONAL_ENABLED = False        # toggled via dashboard / bot_control.positional_enabled
+POSITIONAL_CAPITAL_PCT = 0.40     # 40% of INITIAL_CAPITAL reserved for positional pool
+POSITIONAL_MAX_POSITIONS = 5
+POSITIONAL_MAX_POSITION_PCT = 0.25   # max 25% of positional pool per trade
+POSITIONAL_MIN_COMPOSITE_SCORE = 65
+POSITIONAL_MIN_QUALITY_SCORE = 60    # lt_quality total_score floor
+POSITIONAL_MIN_FII_PCT = 5.0         # FII holding % floor for universe inclusion
+POSITIONAL_CANDLE_INTERVAL = "1d"
+POSITIONAL_LOOKBACK_DAYS = 365
+POSITIONAL_RISK_PCT = 0.02           # 2% of positional pool per trade
+POSITIONAL_ATR_PERIOD = 14
+POSITIONAL_ATR_STOP_MULT = 2.0       # initial stop = entry − 2×ATR
+POSITIONAL_ATR_T1_MULT = 1.5         # first target = entry + 1.5×ATR (50% out)
+POSITIONAL_ATR_TP_MULT = 4.0         # final target = entry + 4×ATR
+POSITIONAL_TRAIL_ATR_MULT = 1.5      # after T1 trail at hwm − 1.5×ATR
+POSITIONAL_T1_PARTIAL_PCT = 0.50
+POSITIONAL_MIN_HOLD_DAYS = 3
+POSITIONAL_MAX_HOLD_DAYS = 30
+POSITIONAL_TIME_STOP_DAYS = 10       # exit flat position after N days
+POSITIONAL_SCAN_TIME = "08:45"       # IST — pre-market daily scan
+POSITIONAL_EXIT_TIME = "15:20"       # IST — EOD exit management
+POSITIONAL_APPROVAL_TIMEOUT_MIN = 60
+POSITIONAL_EVENT_GUARD_DAYS = 2      # exit N days before earnings/dividends
+
+# Positional strategy weights (sum to 1.0)
+POSITIONAL_STRATEGY_WEIGHTS = {
+    "trend_following":   0.20,
+    "breakout_retest":   0.20,
+    "quality_momentum":  0.25,
+    "vcp_breakout":      0.15,
+    "sector_rotation":   0.10,
+    "mean_reversion":    0.05,
+    "earnings_momentum": 0.05,
+}
+
+# EMA ribbon (trend following)
+POS_EMA_FAST = 9
+POS_EMA_MID = 21
+POS_EMA_SLOW = 55
+POS_ADX_PERIOD = 14
+POS_ADX_THRESHOLD = 25
+
+# 52W breakout retest
+POS_BREAKOUT_52W_PROXIMITY_PCT = 2.0
+POS_BREAKOUT_MAX_PULLBACK_PCT = 5.0
+POS_BREAKOUT_VOL_MULT = 1.5
+
+# Quality momentum
+POS_QUALITY_MIN_SCORE = 70
+POS_MOMENTUM_63D_MIN_PCT = 15
+POS_RSI_PERIOD = 14
+POS_RSI_ENTRY_LEVEL = 50
+
+# VCP (Volatility Contraction Pattern)
+POS_VCP_BASE_MIN_DAYS = 20
+POS_VCP_BASE_MAX_DAYS = 120
+POS_VCP_CONTRACTION_RATIO = 0.85
+POS_VCP_VOLUME_DRY_RATIO = 0.80
+POS_VCP_BREAKOUT_VOL_MULT = 1.5
+
+# Sector rotation
+SECTOR_INDEX_TICKERS = {
+    "IT":     "^CNXIT",
+    "Bank":   "^NSEBANK",
+    "FMCG":   "^CNXFMCG",
+    "Pharma": "^CNXPHARMA",
+    "Auto":   "^CNXAUTO",
+    "Metal":  "^CNXMETAL",
+    "Energy": "^CNXENERGY",
+    "Realty": "^CNXREALTY",
+}
+POS_SECTOR_LOOKBACK = 20
+POS_SECTOR_TOP_N = 3
+
+# Mean reversion
+POS_MR_BELOW_52W_MIN_PCT = 15
+POS_MR_BELOW_52W_MAX_PCT = 25
+POS_MR_RSI_THRESHOLD = 35
+POS_MR_VOL_SPIKE_MULT = 2.0
+POS_MR_MIN_QUALITY_SCORE = 65
+
+# Earnings momentum
+POS_EARNINGS_WINDOW_DAYS = 3
+POS_EARNINGS_MAX_GAP_PCT = 8.0
+
+# Delivery STT / stamp (differs from intraday)
+STT_DELIVERY_BUY_PCT = 0.001
+STT_DELIVERY_SELL_PCT = 0.001
+STAMP_DUTY_DELIVERY_PCT = 0.00015
+
 # ----- Feature flags (Phase 2) -----
 ENABLE_ML_META_MODEL = False      # Phase 2
 ENABLE_ADAPTIVE_WEIGHTS = False   # Phase 2

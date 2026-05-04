@@ -23,6 +23,7 @@ from pathlib import Path
 from config import DEFAULT_MODE, LOG_DIR, LOG_LEVEL
 from db.models import init_db
 from engine.portfolio import initialize_if_empty
+from positional.runner import run_positional_forever
 from scheduler.runner import run_forever, set_bot_state
 
 
@@ -55,6 +56,8 @@ def main():
     parser.add_argument("--init", action="store_true", help="init DB and exit")
     parser.add_argument("--runner-only", action="store_true")
     parser.add_argument("--dashboard-only", action="store_true")
+    parser.add_argument("--positional-only", action="store_true",
+                        help="run positional runner only (no intraday, no dashboard)")
     parser.add_argument("--reset", action="store_true", help="wipe DB (destructive)")
     args = parser.parse_args()
 
@@ -85,10 +88,17 @@ def main():
         run_forever()
         return
 
-    # Full mode: dashboard in a subprocess + runner in a thread
+    if args.positional_only:
+        run_positional_forever()
+        return
+
+    # Full mode: dashboard + intraday runner + positional runner
     dash_proc = start_dashboard()
     runner = threading.Thread(target=run_forever, daemon=True, name="bot-runner")
+    pos_runner = threading.Thread(target=run_positional_forever, daemon=True,
+                                  name="positional-runner")
     runner.start()
+    pos_runner.start()
 
     try:
         dash_proc.wait()
