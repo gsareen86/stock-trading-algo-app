@@ -177,7 +177,7 @@ def _set_bot(**kwargs) -> None:
         return
     sets = ", ".join(f"{k}=?" for k in kwargs)
     vals = list(kwargs.values())
-    vals.append(datetime.utcnow().isoformat())
+    vals.append(datetime.now(timezone.utc).isoformat())
     with get_conn() as conn:
         conn.execute(
             f"UPDATE bot_control SET {sets}, updated_at=? WHERE id=1", vals
@@ -221,7 +221,14 @@ with st.sidebar:
     )
     st.markdown(f"**Mode:** `{mode.upper()}`")
 
-    if market_is_open():
+    _mkt_open = market_is_open()
+    # Fragment refresh cadence: only auto-poll when the market is open.
+    # When closed there is nothing changing, so fragments run once on page
+    # load and stay static until the user hits "Refresh now". This eliminates
+    # the Streamlit ⟳/Stop spinner that was firing every 15–30 s even at night.
+    _frag_refresh = 60 if _mkt_open else None
+
+    if _mkt_open:
         st.markdown('<div class="banner-ok">🕒 <b>NSE Market OPEN</b></div>',
                     unsafe_allow_html=True)
     else:
@@ -246,11 +253,7 @@ with st.sidebar:
     if st.button("🔄 Refresh now", width="stretch"):
         st.rerun()
 
-    # Live status pill — fragment so it updates without page rerun.
-    # Interval bumped from 10s → 30s to reduce server load (each tick is
-    # a server-side rerun of this block; 4 fragments at 10s was making
-    # the rest of the UI feel laggy).
-    @st.fragment(run_every=30)
+    # Last-cycle chip — only auto-refreshes when market is open.
     def _sidebar_cycle_chip():
         row = runner_mod.last_cycle_summary()
         if not row:
@@ -258,24 +261,36 @@ with st.sidebar:
             return
         try:
             started = pd.to_datetime(row.get("started_at"))
-            age = (pd.Timestamp.utcnow().tz_localize(None) - started).total_seconds()
+            age = (pd.Timestamp.now('UTC').tz_localize(None) - started).total_seconds()
         except Exception:
             age = None
-        status = row.get("status") or "?"
+        _s = row.get("status") or "?"
         status_emoji = {"RUNNING": "🟡", "DONE": "🟢",
-                        "ERROR": "🔴", "SKIPPED": "⚪"}.get(status, "•")
+                        "ERROR": "🔴", "SKIPPED": "⚪"}.get(_s, "•")
         if age is None:
-            st.caption(f"Last cycle: {status_emoji} {status}")
+            st.caption(f"Last cycle: {status_emoji} {_s}")
         else:
-            st.caption(f"Last cycle: {status_emoji} {status} · {int(age)}s ago")
+            st.caption(f"Last cycle: {status_emoji} {_s} · {int(age)}s ago")
 
-    _sidebar_cycle_chip()
+    if _frag_refresh:
+        st.fragment(run_every=_frag_refresh)(_sidebar_cycle_chip)()
+    else:
+        _sidebar_cycle_chip()
 
-    # Live timestamp — also a fragment (30s; was 10s).
-    @st.fragment(run_every=30)
-    def _sidebar_clock():
-        st.caption(f"Dashboard time: {datetime.now().strftime('%H:%M:%S')}")
-    _sidebar_clock()
+    # Version indicator — shows which git branch/commit is running.
+    try:
+        import subprocess as _sp
+        _branch = _sp.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            stderr=_sp.DEVNULL, cwd=str(ROOT),
+        ).decode().strip()
+        _commit = _sp.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=_sp.DEVNULL, cwd=str(ROOT),
+        ).decode().strip()
+        st.caption(f"🔖 `{_branch}` · `{_commit}`")
+    except Exception:
+        pass
 
 
 # ------------------------------------------------------------------
@@ -326,7 +341,7 @@ with tab_ctrl:
     # are taken/closed without forcing a full page rerun. Previously it
     # was rendered once at page load and showed a stale count (e.g. 0/10
     # while the Positions tab had 2 active positions).
-    @st.fragment(run_every=15)
+    @st.fragment(run_every=_frag_refresh)
     def _capacity_banner():
         with get_conn() as conn:
             n_open = conn.execute(
@@ -373,18 +388,13 @@ with tab_ctrl:
     # ----- Signal history with filters (so user can see WHY no trade was placed
     # and trace any historical signal — was previously hard-capped at 30) -----
     #
-    # BUG FIX: this used to live in the main page body — meaning it only
-    # re-queried the DB when Streamlit reran the whole page (e.g. when the
-    # user fiddled with a widget). The cycle scheduler writes to `signals`
-    # in a separate process; the dashboard had no idea fresh rows existed
-    # until the user typed in the Max-rows box. Wrapping in a fragment with
-    # `run_every=30` makes the expander pull fresh data every 30s WITHOUT
-    # touching the rest of the page.
-    @st.fragment(run_every=30)
+    # Signal history — only auto-refreshes when market is open (new signals
+    # only arrive during trading hours).
+    @st.fragment(run_every=_frag_refresh)
     def _signal_history_panel():
+        refresh_note = "auto-refreshes every 60s" if _frag_refresh else "market closed — use Refresh now"
         with st.expander(
-            "🧭 Signal history (filterable — see why each signal was/wasn't taken) "
-            "· auto-refreshes every 30s",
+            f"🧭 Signal history (filterable — see why each signal was/wasn't taken) · {refresh_note}",
             expanded=False,
         ):
             # Filters — added a Status filter as requested.
@@ -411,7 +421,7 @@ with tab_ctrl:
                 key="sig_limit_f",
             )
 
-            cutoff = (datetime.utcnow() - timedelta(hours=int(sig_hours))).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=int(sig_hours))).isoformat()
             params: list = [cutoff]
             sql = ("SELECT ts, ticker, action, strategy, composite_score, "
                    "technical_score, fundamental_score, sentiment_score, "
@@ -525,10 +535,7 @@ with tab_ctrl:
 
     _signal_history_panel()
 
-    # Holdings count freshness — the capacity banner above (line ~310) reads
-    # `open_positions()` once at page-render time. Add a tiny fragment so the
-    # user sees a fresh count without forcing a page rerun.
-    @st.fragment(run_every=30)
+    @st.fragment(run_every=_frag_refresh)
     def _live_holdings_chip():
         with get_conn() as conn:
             n_open = conn.execute(
@@ -626,7 +633,7 @@ with tab_ctrl:
     # of the page — see the auto-refresh section at the bottom of app.py.
     # ------------------------------------------------------------------
     with rcol2:
-        @st.fragment(run_every=20)
+        @st.fragment(run_every=_frag_refresh)
         def _last_cycle_panel():
             row = runner_mod.last_cycle_summary()
             if not row:
@@ -699,6 +706,48 @@ with tab_ctrl:
 
     st.divider()
 
+    # ------------------------------------------------------------------
+    # Positional trading control
+    # ------------------------------------------------------------------
+    st.subheader("📅 Positional Trading")
+    _pos_enabled = bool(bot.get("positional_enabled", 0))
+    _pos_col1, _pos_col2 = st.columns([2, 3])
+    with _pos_col1:
+        _new_pos_enabled = st.toggle(
+            "Enable positional module",
+            value=_pos_enabled,
+            help="When ON the positional runner scans at 08:45 IST and manages exits at 15:20 IST daily.",
+        )
+        if _new_pos_enabled != _pos_enabled:
+            _set_bot(positional_enabled=int(_new_pos_enabled))
+            st.toast(
+                f"Positional module {'enabled' if _new_pos_enabled else 'disabled'}.",
+                icon="📅",
+            )
+            st.rerun()
+    with _pos_col2:
+        try:
+            with get_conn() as _pc:
+                _n_pos = _pc.execute(
+                    "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN' AND trade_type='positional'"
+                ).fetchone()["n"]
+                _n_pos_pend = _pc.execute(
+                    "SELECT COUNT(*) AS n FROM pending_approvals WHERE status='PENDING' AND trade_type='positional'"
+                ).fetchone()["n"]
+            from config import POSITIONAL_MAX_POSITIONS, POSITIONAL_SCAN_TIME, POSITIONAL_EXIT_TIME
+            _pos_status = "🟢 ON" if _pos_enabled else "⚫ OFF"
+            st.markdown(
+                f"**Status:** {_pos_status} &nbsp;|&nbsp; "
+                f"**Open positions:** {_n_pos}/{POSITIONAL_MAX_POSITIONS} &nbsp;|&nbsp; "
+                f"**Pending approvals:** {_n_pos_pend}  \n"
+                f"Pre-market scan: `{POSITIONAL_SCAN_TIME} IST` &nbsp;·&nbsp; "
+                f"EOD exit check: `{POSITIONAL_EXIT_TIME} IST`"
+            )
+        except Exception:
+            st.caption("Positional status unavailable.")
+
+    st.divider()
+
     # Pending approvals queue
     st.subheader("📋 Pending Approvals")
     with get_conn() as conn:
@@ -714,7 +763,7 @@ with tab_ctrl:
         for r in pending_rows:
             r = dict(r)
             expires = datetime.fromisoformat(r["expires_at"])
-            remaining = expires - datetime.utcnow()
+            remaining = expires - datetime.now(timezone.utc).replace(tzinfo=None)
             mins = max(0, int(remaining.total_seconds() // 60))
             secs = max(0, int(remaining.total_seconds() % 60))
             with st.container(border=True):
@@ -737,7 +786,7 @@ with tab_ctrl:
                                 """UPDATE pending_approvals
                                       SET status='APPROVED', decided_at=?
                                     WHERE id=?""",
-                                (datetime.utcnow().isoformat(), int(r["id"])),
+                                (datetime.now(timezone.utc).isoformat(), int(r["id"])),
                             )
                         pos_id = runner_mod.execute_single_approval(int(r["id"]))
                         if pos_id:
@@ -752,7 +801,7 @@ with tab_ctrl:
                                 """UPDATE pending_approvals
                                       SET status='REJECTED', decided_at=?
                                     WHERE id=?""",
-                                (datetime.utcnow().isoformat(), int(r["id"])),
+                                (datetime.now(timezone.utc).isoformat(), int(r["id"])),
                             )
                         st.rerun()
 
@@ -896,7 +945,7 @@ with tab_pos:
         help="Bypass the yfinance disk cache and re-pull 5-minute candles right now. "
              "Works even when auto-refresh is paused.",
     ):
-        st.session_state["op_force_refresh_at"] = datetime.utcnow().isoformat()
+        st.session_state["op_force_refresh_at"] = datetime.now(timezone.utc).isoformat()
         st.rerun()  # re-render the panel immediately to honour the click
 
     # Find the current label that matches the saved interval (fall back to 30s).
@@ -924,7 +973,7 @@ with tab_pos:
         force_now = False
         if force_at:
             try:
-                age = (datetime.utcnow() - datetime.fromisoformat(force_at)).total_seconds()
+                age = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(force_at).replace(tzinfo=None)).total_seconds()
                 force_now = age < 5  # only honour the click for the next render
             except Exception:
                 force_now = False
