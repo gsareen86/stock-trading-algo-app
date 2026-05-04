@@ -1078,7 +1078,12 @@ with tab_pos:
     #     partial-T1). Useful when you need to audit a specific exit.
     # Date / direction / ticker filters apply to both views consistently.
     st.divider()
-    st.subheader("📑 Trade report")
+    _hcol, _bcol = st.columns([6, 1])
+    _hcol.subheader("📑 Trade report")
+    if _bcol.button("🔄 Refresh", key="trade_report_refresh",
+                    help="Re-query trades from DB (clears 30s cache)"):
+        st.cache_data.clear()
+        st.rerun()
 
     @st.cache_data(ttl=30, show_spinner=False)
     def _cached_closed_positions_report():

@@ -276,6 +276,13 @@ def evaluate_exits(prices: dict) -> dict:
     squareoff_time = SQUARE_OFF_TIME
 
     for p in open_positions():
+        # Positional positions have their own dedicated daily exit-management
+        # logic (positional.runner.run_positional_exit_check). Skip them here
+        # so the intraday squareoff cutoff and intraday SL/TP/trail logic
+        # don't accidentally close a multi-day positional hold.
+        if (p.get("trade_type") or "intraday") == "positional":
+            continue
+
         ticker = p["ticker"]
         price = prices.get(ticker) or latest_price(ticker)
         if not price:

@@ -135,7 +135,7 @@ def _queue_approval(
                (created_at, expires_at, ticker, action, quantity, price,
                 stop_loss, take_profit, strategy, composite_score, reason,
                 status, trade_type)
-               VALUES (?,?,?,?,?,?,?,?,?,?,'pending','positional')""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending','positional')""",
             (
                 now.isoformat(), expires.isoformat(),
                 ticker, action, qty, price,
@@ -204,6 +204,16 @@ def _open_positional_position(
                 "positional", pos_id,
             ),
         )
+
+    # Critical: deduct the position cost from portfolio cash via a fresh
+    # snapshot. Without this, the position is "free" — the dashboard's Cash
+    # column never decrements on positional opens and a phantom gain appears
+    # when the position eventually closes (close_position credits cash for
+    # exit but the entry was never debited).
+    from engine.portfolio import get_cash, _snapshot_row
+    new_cash = get_cash() - (fill * qty + costs)
+    _snapshot_row(new_cash, prices={ticker: fill})
+
     log.info(
         "POSITIONAL OPEN: %s qty=%d fill=%.2f stop=%.2f T1=%.2f TP=%.2f "
         "ATR=%.2f strategy=%s score=%.1f",
@@ -475,6 +485,10 @@ def _execute_positional_exit(pos: dict, price: float, mode: str, reason: str) ->
                     "positional", pos_id,
                 ),
             )
+        # Credit cash for the exit proceeds.
+        from engine.portfolio import get_cash, _snapshot_row
+        new_cash = get_cash() + (fill * qty - costs)
+        _snapshot_row(new_cash, prices={ticker: fill})
         log.info("POSITIONAL EXIT: %s qty=%d fill=%.2f pnl=%.2f (%.2f%%) %s",
                  ticker, qty, fill, pnl, pnl_pct, reason)
     except Exception as e:
@@ -528,6 +542,10 @@ def _execute_t1_partial(pos: dict, price: float, mode: str) -> None:
                     "positional", pos_id,
                 ),
             )
+        # Credit cash for the partial exit proceeds.
+        from engine.portfolio import get_cash, _snapshot_row
+        new_cash = get_cash() + (fill * t1_qty - costs)
+        _snapshot_row(new_cash, prices={ticker: fill})
         log.info("POSITIONAL T1 PARTIAL: %s sold %d @ %.2f pnl=%.2f remaining=%d",
                  ticker, t1_qty, fill, partial_pnl, remaining)
     except Exception as e:

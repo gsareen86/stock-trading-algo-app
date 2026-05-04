@@ -186,7 +186,7 @@ NEWS_SOURCES = {
 }
 
 NEWS_REFRESH_MIN = 30             # rescrape news every 30 min
-SENTIMENT_ENGINE = "vader"        # 'vader' or 'finbert'
+SENTIMENT_ENGINE = "finbert"      # 'vader' or 'finbert' — finbert is finance-tuned, more accurate
 
 # ----- Benchmark -----
 BENCHMARK_TICKER = "^NSEI"        # NIFTY 50
@@ -288,4 +288,4 @@ STAMP_DUTY_DELIVERY_PCT = 0.00015
 # ----- Feature flags (Phase 2) -----
 ENABLE_ML_META_MODEL = False      # Phase 2
 ENABLE_ADAPTIVE_WEIGHTS = False   # Phase 2
-ENABLE_FINBERT = False            # heavier model - keep off by default
+ENABLE_FINBERT = True             # ProsusAI/finbert via transformers — finance-tuned
