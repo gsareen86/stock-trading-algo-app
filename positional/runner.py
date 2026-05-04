@@ -537,21 +537,39 @@ def _execute_t1_partial(pos: dict, price: float, mode: str) -> None:
 # ---------- Daemon loop ----------
 
 def run_positional_forever() -> None:
-    """Standalone daemon: waits for the scan and exit-check times each day."""
+    """Standalone daemon: waits for the scan and exit-check times each day.
+
+    Uses >= comparison with per-date tracking so a scan is never missed if the
+    machine was asleep at the exact scheduled minute and wakes up later.
+    """
     log.info("positional runner started")
+    _last_scan_date: object = None   # date object or None
+    _last_exit_date: object = None
+
     while True:
         try:
             now = datetime.now(IST)
+            today = now.date()
             hhmm = now.strftime("%H:%M")
 
-            if hhmm == POSITIONAL_SCAN_TIME:
+            scan_h, scan_m = POSITIONAL_SCAN_TIME.split(":")
+            exit_h, exit_m = POSITIONAL_EXIT_TIME.split(":")
+            past_scan = (now.hour, now.minute) >= (int(scan_h), int(scan_m))
+            past_exit = (now.hour, now.minute) >= (int(exit_h), int(exit_m))
+
+            if past_scan and _last_scan_date != today:
+                _last_scan_date = today
                 run_positional_scan()
-                time.sleep(70)   # avoid double-firing within the same minute
-            elif hhmm == POSITIONAL_EXIT_TIME:
+                time.sleep(60)
+                continue
+
+            if past_exit and _last_exit_date != today:
+                _last_exit_date = today
                 run_positional_exit_check()
-                time.sleep(70)
-            else:
-                time.sleep(30)
+                time.sleep(60)
+                continue
+
+            time.sleep(30)
         except Exception as e:
             log.error("positional runner loop error: %s", e)
             time.sleep(60)

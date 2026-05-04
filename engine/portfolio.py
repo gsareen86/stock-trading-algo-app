@@ -359,7 +359,7 @@ def snapshots_df():
     import pandas as pd
     df = query_df("SELECT * FROM portfolio_snapshots ORDER BY ts")
     if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"])
+        df["ts"] = pd.to_datetime(df["ts"], format="mixed", utc=True)
     return df
 
 
@@ -367,5 +367,5 @@ def trades_df():
     import pandas as pd
     df = query_df("SELECT * FROM trades ORDER BY ts DESC")
     if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"])
+        df["ts"] = pd.to_datetime(df["ts"], format="mixed", utc=True)
     return df

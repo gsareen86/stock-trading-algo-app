@@ -57,7 +57,7 @@ def get_positional_universe() -> List[Tuple[str, float, str]]:
             ).fetchall()
         result = [(r["ticker"], float(r["quality_score"]), r["sector"] or "Unknown")
                   for r in rows]
-        log.info("positional universe: %d tickers (quality≥%s, FII≥%s%%)",
+        log.info("positional universe: %d tickers (quality>=%s, FII>=%s%%)",
                  len(result), POSITIONAL_MIN_QUALITY_SCORE, POSITIONAL_MIN_FII_PCT)
         return result
     except Exception as e:

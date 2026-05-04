@@ -28,14 +28,22 @@ from scheduler.runner import run_forever, set_bot_state
 
 
 def _setup_logging():
+    import io
     log_path = Path(LOG_DIR) / "bot.log"
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    # FileHandler always UTF-8 so log file captures all Unicode chars.
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(fmt))
+    # Console on Windows may be cp1252 — wrap with UTF-8 and replace unmappable chars.
+    if hasattr(sys.stdout, "buffer"):
+        stdout_stream = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    else:
+        stdout_stream = sys.stdout
+    console_handler = logging.StreamHandler(stdout_stream)
+    console_handler.setFormatter(logging.Formatter(fmt))
     logging.basicConfig(
         level=getattr(logging, LOG_LEVEL, logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(log_path),
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=[file_handler, console_handler],
     )
 
 

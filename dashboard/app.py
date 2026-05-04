@@ -272,10 +272,7 @@ with st.sidebar:
         else:
             st.caption(f"Last cycle: {status_emoji} {_s} · {int(age)}s ago")
 
-    if _frag_refresh:
-        st.fragment(run_every=_frag_refresh)(_sidebar_cycle_chip)()
-    else:
-        _sidebar_cycle_chip()
+    st.fragment(run_every=_frag_refresh)(_sidebar_cycle_chip)()
 
     # Version indicator — shows which git branch/commit is running.
     try:

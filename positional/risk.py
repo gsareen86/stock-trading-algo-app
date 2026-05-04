@@ -169,7 +169,7 @@ def check_positional_exits(pos: dict, current_price: float, days_held: int) -> O
 
     # Hard stop: daily close below stop
     if stop > 0 and current_price <= stop:
-        return f"STOP: price {current_price:.2f} ≤ stop {stop:.2f}"
+        return f"STOP: price {current_price:.2f} <= stop {stop:.2f}"
 
     # T1 target partial exit (caller handles quantity reduction)
     if not t1_taken and t1 > 0 and current_price >= t1:

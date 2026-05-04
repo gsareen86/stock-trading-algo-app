@@ -34,7 +34,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
             score = self._clip(60 + depth * 2)
             return Signal(
                 ticker, "BUY", self.name, score, price,
-                reason=f"RSI oversold rising ({rsi_prev:.1f}→{rsi_now:.1f})",
+                reason=f"RSI oversold rising ({rsi_prev:.1f}->{rsi_now:.1f})",
                 meta={"rsi": rsi_now},
             )
         if rsi_now > self.overbought and rsi_now < rsi_prev:
@@ -42,7 +42,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
             score = self._clip(60 + height * 2)
             return Signal(
                 ticker, "SELL", self.name, score, price,
-                reason=f"RSI overbought falling ({rsi_prev:.1f}→{rsi_now:.1f})",
+                reason=f"RSI overbought falling ({rsi_prev:.1f}->{rsi_now:.1f})",
                 meta={"rsi": rsi_now},
             )
 
