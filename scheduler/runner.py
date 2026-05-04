@@ -511,30 +511,33 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         allow_long  = (regime in ("bullish", "neutral"))
         allow_short = (regime in ("bearish", "neutral"))
 
-        if not skip_entry_reason:
-            decisions = evaluate_batch(candles)
-            signals_seen = len(decisions)
-            buys  = [d for d in decisions if d.action == "BUY"]
-            sells = [d for d in decisions if d.action == "SELL"]
-            buys_found  = len(buys)
-            sells_found = len(sells)
+        # Always evaluate and log signals so the Signal History panel shows
+        # what was generated even during no-trade windows and STOPPED state.
+        decisions = evaluate_batch(candles)
+        signals_seen = len(decisions)
+        buys  = [d for d in decisions if d.action == "BUY"]
+        sells = [d for d in decisions if d.action == "SELL"]
+        buys_found  = len(buys)
+        sells_found = len(sells)
 
-            # Persist raw signals
-            with get_conn() as conn:
-                for d in decisions:
-                    conn.execute(
-                        """INSERT INTO signals
-                           (ts, ticker, action, strategy, technical_score, fundamental_score,
-                            sentiment_score, composite_score, price, reason)
-                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                        (
-                            datetime.utcnow().isoformat(),
-                            d.ticker, d.action, _top_strategy(d),
-                            d.technical_score, d.fundamental_score,
-                            d.sentiment_score, d.composite_score,
-                            d.price, " | ".join(d.reasons),
-                        ),
-                    )
+        # Persist raw signals regardless of no-trade window or bot status.
+        with get_conn() as conn:
+            for d in decisions:
+                conn.execute(
+                    """INSERT INTO signals
+                       (ts, ticker, action, strategy, technical_score, fundamental_score,
+                        sentiment_score, composite_score, price, reason)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        datetime.utcnow().isoformat(),
+                        d.ticker, d.action, _top_strategy(d),
+                        d.technical_score, d.fundamental_score,
+                        d.sentiment_score, d.composite_score,
+                        d.price, " | ".join(d.reasons),
+                    ),
+                )
+
+        if not skip_entry_reason:
 
             from engine.portfolio import get_cash
             cash = get_cash()

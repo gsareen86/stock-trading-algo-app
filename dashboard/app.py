@@ -1080,8 +1080,16 @@ with tab_pos:
     st.divider()
     st.subheader("📑 Trade report")
 
-    rep = closed_positions_report()
-    raw_trades = trades_df()
+    @st.cache_data(ttl=30, show_spinner=False)
+    def _cached_closed_positions_report():
+        return closed_positions_report()
+
+    @st.cache_data(ttl=30, show_spinner=False)
+    def _cached_trades_df():
+        return trades_df()
+
+    rep = _cached_closed_positions_report()
+    raw_trades = _cached_trades_df()
 
     if (rep is None or rep.empty) and (raw_trades is None or raw_trades.empty):
         st.caption("No trades yet.")
@@ -1110,8 +1118,8 @@ with tab_pos:
                 rl["closed_at_ts"] = to_ist(rl["closed_at"])
                 rl["opened_at_ts"] = to_ist(rl["opened_at"])
                 mask = (
-                    (rl["closed_at_ts"].dt.tz_localize(None).dt.date >= start)
-                    & (rl["closed_at_ts"].dt.tz_localize(None).dt.date <= end)
+                    (rl["closed_at_ts"].dt.tz_convert(None).dt.date >= start)
+                    & (rl["closed_at_ts"].dt.tz_convert(None).dt.date <= end)
                 )
                 if side_f != "All":
                     mask &= rl["direction"] == side_f
@@ -1161,8 +1169,8 @@ with tab_pos:
                 rt = raw_trades.copy()
                 rt["ts_ist"] = to_ist(rt["ts"])
                 mask = (
-                    (rt["ts_ist"].dt.tz_localize(None).dt.date >= start)
-                    & (rt["ts_ist"].dt.tz_localize(None).dt.date <= end)
+                    (rt["ts_ist"].dt.tz_convert(None).dt.date >= start)
+                    & (rt["ts_ist"].dt.tz_convert(None).dt.date <= end)
                 )
                 # Direction filter: BUY+SELL = LONG legs, SHORT+COVER = SHORT
                 if side_f == "LONG":
