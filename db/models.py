@@ -124,7 +124,9 @@ CREATE TABLE IF NOT EXISTS signals (
     composite_score REAL,
     price REAL,
     reason TEXT,
-    taken INTEGER DEFAULT 0
+    taken INTEGER DEFAULT 0,
+    threshold_at_time REAL,
+    mode_at_time TEXT
 );
 
 CREATE TABLE IF NOT EXISTS news (
@@ -184,7 +186,8 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING',
     decided_at TEXT,
-    decision_note TEXT
+    decision_note TEXT,
+    side TEXT DEFAULT 'LONG'
 );
 
 CREATE TABLE IF NOT EXISTS lt_universe (
@@ -341,7 +344,9 @@ CREATE TABLE IF NOT EXISTS signals (
     composite_score DOUBLE PRECISION,
     price DOUBLE PRECISION,
     reason TEXT,
-    taken INTEGER DEFAULT 0
+    taken INTEGER DEFAULT 0,
+    threshold_at_time DOUBLE PRECISION,
+    mode_at_time TEXT
 );
 
 CREATE TABLE IF NOT EXISTS news (
@@ -401,7 +406,8 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING',
     decided_at TEXT,
-    decision_note TEXT
+    decision_note TEXT,
+    side TEXT DEFAULT 'LONG'
 );
 
 CREATE TABLE IF NOT EXISTS lt_universe (
@@ -667,6 +673,14 @@ def _migrate_positional_columns(conn) -> None:
             conn.execute("ALTER TABLE pending_approvals ADD COLUMN trade_type TEXT DEFAULT 'intraday'")
         if "positional_enabled" not in {r["name"] for r in conn.execute("PRAGMA table_info(bot_control)").fetchall()}:
             conn.execute("ALTER TABLE bot_control ADD COLUMN positional_enabled INTEGER DEFAULT 0")
+        sig_cols = {r["name"] for r in conn.execute("PRAGMA table_info(signals)").fetchall()}
+        if "threshold_at_time" not in sig_cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN threshold_at_time REAL")
+        if "mode_at_time" not in sig_cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN mode_at_time TEXT")
+        pend_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
+        if "side" not in pend_cols:
+            conn.execute("ALTER TABLE pending_approvals ADD COLUMN side TEXT DEFAULT 'LONG'")
         return
 
     cur = conn.cursor() if hasattr(conn, "cursor") else conn
@@ -674,6 +688,9 @@ def _migrate_positional_columns(conn) -> None:
         "ALTER TABLE positions ADD COLUMN IF NOT EXISTS trade_type TEXT DEFAULT 'intraday'",
         "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS trade_type TEXT DEFAULT 'intraday'",
         "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS positional_enabled INTEGER DEFAULT 0",
+        "ALTER TABLE signals ADD COLUMN IF NOT EXISTS threshold_at_time DOUBLE PRECISION",
+        "ALTER TABLE signals ADD COLUMN IF NOT EXISTS mode_at_time TEXT",
+        "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS side TEXT DEFAULT 'LONG'",
     ):
         cur.execute(sql)
 

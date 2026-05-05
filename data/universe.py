@@ -16,6 +16,14 @@ from config import DEFAULT_WATCHLIST_FILE
 
 NSE_NIFTY500_CSV_URL = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
 
+# Tickers that cause persistent yfinance 404/empty errors due to delisting,
+# symbol changes, or NSE data feed quirks. Filtered out of the universe
+# before any fetch or strategy evaluation to avoid noisy log spam every cycle.
+_BLOCKED_TICKERS: frozenset[str] = frozenset({
+    "DUMMYVEDL1", "DUMMYVEDL2", "DUMMYVEDL3", "DUMMYVEDL4",
+    "VEDL",       # often returns stale / zero data; use VEDANTA if needed
+})
+
 # A curated fallback subset (~200 names: NIFTY 100 + Next 50 + popular mid-caps)
 # used if the NSE CSV download fails. Symbols are NSE codes WITHOUT the .NS
 # suffix — `to_yf_ticker()` adds it. Roughly ordered: large-cap → mid-cap.
@@ -121,16 +129,17 @@ def download_nifty500() -> List[str]:
         reader = csv.DictReader(io.StringIO(resp.text))
         symbols = [row["Symbol"].strip() for row in reader if row.get("Symbol")]
         if symbols:
-            return symbols
+            return [s for s in symbols if s.upper() not in _BLOCKED_TICKERS]
     except Exception as e:
         print(f"[universe] NSE download failed ({e}); using fallback list.")
-    return list(FALLBACK_UNIVERSE)
+    return [s for s in FALLBACK_UNIVERSE if s.upper() not in _BLOCKED_TICKERS]
 
 
 def load_universe(refresh: bool = False) -> List[str]:
     """
     Return list of NSE symbols (without .NS suffix).
     Caches to data/nifty500.csv so we don't hammer NSE.
+    Known-bad tickers (delisted / stale feed) are excluded automatically.
     """
     path = Path(DEFAULT_WATCHLIST_FILE)
     if refresh or not path.exists():
@@ -140,10 +149,11 @@ def load_universe(refresh: bool = False) -> List[str]:
             writer = csv.writer(f)
             writer.writerow(["Symbol"])
             writer.writerows([[s] for s in symbols])
-        return symbols
-    with open(path) as f:
-        reader = csv.DictReader(f)
-        return [row["Symbol"].strip() for row in reader if row.get("Symbol")]
+    else:
+        with open(path) as f:
+            reader = csv.DictReader(f)
+            symbols = [row["Symbol"].strip() for row in reader if row.get("Symbol")]
+    return [s for s in symbols if s.upper() not in _BLOCKED_TICKERS]
 
 
 def yf_tickers(symbols: List[str] | None = None) -> List[str]:

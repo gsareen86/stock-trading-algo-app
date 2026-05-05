@@ -83,6 +83,19 @@ def main():
     # (User toggles RUN from the dashboard).
     set_bot_state(status="STOPPED", mode=DEFAULT_MODE)
 
+    # Pre-warm FinBERT in a background thread so the first news-scrape cycle
+    # doesn't block for ~3 minutes while the 400 MB model downloads and loads.
+    # The load is idempotent (double-checked lock in _get_finbert) so this is
+    # safe to call even if FinBERT is disabled — it will simply return quickly.
+    try:
+        from config import ENABLE_FINBERT
+        if ENABLE_FINBERT:
+            import threading as _t
+            from nlp.sentiment import _get_finbert
+            _t.Thread(target=_get_finbert, daemon=True, name="finbert-prewarm").start()
+    except Exception:
+        pass  # non-fatal; first cycle will load on demand
+
     if args.init:
         print("DB initialized.")
         return

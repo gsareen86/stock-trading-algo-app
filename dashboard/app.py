@@ -296,7 +296,7 @@ with st.sidebar:
 
 (
     tab_ctrl, tab_overview, tab_pos, tab_news,
-    tab_fund, tab_analytics, tab_lt_research,
+    tab_fund, tab_analytics, tab_lt_research, tab_logs,
 ) = st.tabs([
     "🎛️ Control Panel",
     "📊 Overview",
@@ -305,6 +305,7 @@ with st.sidebar:
     "📈 Fundamentals",
     "📉 Analytics",
     "🔬 Long-Term Research",
+    "📋 Logs",
 ])
 
 
@@ -422,7 +423,8 @@ with tab_ctrl:
             params: list = [cutoff]
             sql = ("SELECT ts, ticker, action, strategy, composite_score, "
                    "technical_score, fundamental_score, sentiment_score, "
-                   "price, reason, taken FROM signals WHERE ts >= ?")
+                   "price, reason, taken, threshold_at_time, mode_at_time "
+                   "FROM signals WHERE ts >= ?")
             if sig_action != "All":
                 sql += " AND action = ?"
                 params.append(sig_action)
@@ -471,37 +473,57 @@ with tab_ctrl:
             for r in sig_rows:
                 cs = r["composite_score"] or 0.0
                 action = r["action"] or "-"
+                # Use threshold stored at signal-generation time if available,
+                # falling back to current live threshold. This prevents signals
+                # from showing "below threshold" when the user changed min_score
+                # AFTER the signal fired (the historical signal was taken/queued
+                # under the old threshold and should be shown accurately).
+                sig_threshold = r.get("threshold_at_time") or min_score
+                sig_mode = r.get("mode_at_time") or "unknown"
                 # Buckets line up with the Status filter dropdown above.
                 bucket = None
                 if r["taken"]:
                     why, bucket = "✅ taken", "Taken"
                 elif action == "BUY":
-                    if cs < min_score:
-                        why = f"🚫 score {cs:.0f} < threshold {min_score:.0f}"
+                    if cs < sig_threshold:
+                        why = (f"🚫 score {cs:.0f} < threshold {sig_threshold:.0f}"
+                               f" (at signal time)")
                         bucket = "Score below threshold"
                     elif current_regime == "bearish":
                         why = "🚫 long blocked (NIFTY bearish)"
                         bucket = "Blocked by regime"
+                    elif sig_mode == "manual":
+                        why = "⏳ queued for manual approval"
+                        bucket = "Pending / queued"
+                    elif sig_mode == "dry_run":
+                        why = "👁 dry-run (signal logged only)"
+                        bucket = "Not actionable (HOLD/SELL)"
                     elif live_open >= max_pos_now:
                         why = "🚫 at capacity"
                         bucket = "At capacity"
                     else:
-                        why = "⏳ pending / queued"
-                        bucket = "Pending / queued"
+                        why = "⚡ auto-executed (AUTO mode)"
+                        bucket = "Taken"
                 elif action == "SELL":
-                    # SELL = SHORT entry candidate under the new strategy.
-                    if cs < min_score:
-                        why = f"🚫 score {cs:.0f} < threshold {min_score:.0f}"
+                    if cs < sig_threshold:
+                        why = (f"🚫 score {cs:.0f} < threshold {sig_threshold:.0f}"
+                               f" (at signal time)")
                         bucket = "Score below threshold"
                     elif current_regime == "bullish":
                         why = "🚫 short blocked (NIFTY bullish)"
                         bucket = "Blocked by regime"
+                    elif sig_mode == "manual":
+                        why = "⏳ SHORT queued for manual approval"
+                        bucket = "Pending / queued"
+                    elif sig_mode == "dry_run":
+                        why = "👁 dry-run (signal logged only)"
+                        bucket = "Not actionable (HOLD/SELL)"
                     elif live_open >= max_pos_now:
                         why = "🚫 at capacity"
                         bucket = "At capacity"
                     else:
-                        why = "⏳ short pending / queued"
-                        bucket = "Pending / queued"
+                        why = "⚡ short auto-executed (AUTO mode)"
+                        bucket = "Taken"
                 else:
                     why, bucket = "— HOLD (no action)", "Not actionable (HOLD/SELL)"
 
@@ -522,6 +544,7 @@ with tab_ctrl:
                     "Tech": f"{(r['technical_score'] or 0):.0f}",
                     "Fund": f"{(r['fundamental_score'] or 0):.0f}",
                     "Sent": f"{(r['sentiment_score'] or 0):+.2f}",
+                    "Mode": sig_mode,
                     "Status": why,
                 })
             st.caption(
@@ -763,11 +786,17 @@ with tab_ctrl:
             remaining = expires - datetime.now(timezone.utc).replace(tzinfo=None)
             mins = max(0, int(remaining.total_seconds() // 60))
             secs = max(0, int(remaining.total_seconds() % 60))
+            side_label = (r.get("side") or "LONG").upper()
+            side_chip = "🔻 SHORT" if side_label == "SHORT" else "🔺 LONG"
+            trade_type_label = (r.get("trade_type") or "intraday").upper()
             with st.container(border=True):
                 cols = st.columns([3, 1, 1])
                 with cols[0]:
                     st.markdown(
-                        f"**{r['action']} {r['quantity']} × {r['ticker']} @ ₹{r['price']:.2f}**"
+                        f"**{side_chip} {r['action']} {r['quantity']} × "
+                        f"{r['ticker']} @ ₹{r['price']:.2f}** "
+                        f"<sub>({trade_type_label})</sub>",
+                        unsafe_allow_html=True,
                     )
                     st.caption(
                         f"SL ₹{r['stop_loss']:.2f} | TP ₹{r['take_profit']:.2f} | "
@@ -844,6 +873,52 @@ with tab_ctrl:
             )
             st.success("Saved.")
             st.rerun()
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # DB Repair utilities — portfolio_snapshots total_value correction
+    # ------------------------------------------------------------------
+    with st.expander("🔧 DB Repair — fix portfolio_snapshots total_value", expanded=False):
+        st.markdown(
+            "If the portfolio total\_value shows an incorrect figure (e.g. ₹1,12,565 "
+            "instead of the correct cash + equity sum), run the fix below. "
+            "This corrects rows where `total_value != cash + equity`."
+        )
+        _snap_preview = None
+        try:
+            with get_conn() as _rc:
+                _snap_preview = _rc.execute(
+                    """SELECT id, ts, cash, equity, total_value,
+                              (cash + equity) AS correct_total,
+                              ABS(total_value - (cash + equity)) AS drift
+                       FROM portfolio_snapshots
+                       ORDER BY id DESC LIMIT 10"""
+                ).fetchall()
+        except Exception as _re:
+            st.caption(f"Could not query snapshots: {_re}")
+
+        if _snap_preview:
+            _snap_df = pd.DataFrame([dict(r) for r in _snap_preview])
+            _bad = _snap_df[_snap_df["drift"] > 0.01]
+            if _bad.empty:
+                st.success("All snapshots look correct (total_value == cash + equity).")
+            else:
+                st.warning(f"{len(_bad)} snapshot(s) have incorrect total_value.")
+                render_table(_snap_df[["id", "ts", "cash", "equity",
+                                       "total_value", "correct_total", "drift"]])
+                if st.button("🔧 Fix total_value = cash + equity", key="fix_snapshots"):
+                    try:
+                        with get_conn() as _fc:
+                            _fc.execute(
+                                """UPDATE portfolio_snapshots
+                                      SET total_value = cash + equity
+                                    WHERE ABS(total_value - (cash + equity)) > 0.01"""
+                            )
+                        st.success("Fixed. Refresh the Overview tab to see the updated equity curve.")
+                        st.rerun()
+                    except Exception as _fe:
+                        st.error(f"Fix failed: {_fe}")
 
 
 # ==================================================================
@@ -2034,6 +2109,131 @@ with tab_lt_research:
                     st.caption("No coverage gaps recorded yet.")
             except Exception as e:
                 st.caption(f"(no universe table yet — {e})")
+
+
+# ==================================================================
+# 8. Logs tab
+# ==================================================================
+
+with tab_logs:
+    st.header("📋 Bot Logs")
+
+    from config import LOG_DIR as _LOG_DIR
+    _log_path = Path(_LOG_DIR) / "bot.log"
+
+    _lcol1, _lcol2, _lcol3 = st.columns([2, 1, 1])
+    _log_lines = _lcol1.number_input(
+        "Lines to display (most recent)", min_value=50, max_value=5000,
+        value=200, step=50, key="log_lines",
+    )
+    _log_level_filter = _lcol2.selectbox(
+        "Filter level", ["ALL", "ERROR", "WARNING", "INFO", "DEBUG"],
+        key="log_level_filter",
+    )
+
+    if _log_path.exists():
+        try:
+            raw_log = _log_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as _e:
+            raw_log = f"(could not read log file: {_e})"
+
+        # Download button — full log file
+        _lcol3.download_button(
+            "⬇ Download bot.log",
+            data=raw_log.encode("utf-8"),
+            file_name="bot.log",
+            mime="text/plain",
+            key="log_download",
+        )
+
+        # Filter by log level
+        lines = raw_log.splitlines()
+        if _log_level_filter != "ALL":
+            lines = [l for l in lines if _log_level_filter in l]
+
+        # Show the most recent N lines
+        display_lines = lines[-int(_log_lines):]
+        display_text = "\n".join(display_lines)
+
+        # Colour-code ERROR and WARNING lines
+        highlighted = []
+        for line in display_lines:
+            if " ERROR " in line or " CRITICAL " in line:
+                highlighted.append(
+                    f'<span style="color:#ff4b4b">{line}</span>'
+                )
+            elif " WARNING " in line:
+                highlighted.append(
+                    f'<span style="color:#ffc000">{line}</span>'
+                )
+            else:
+                highlighted.append(line)
+
+        st.markdown(
+            "<pre style='font-size:0.78rem; line-height:1.4; "
+            "overflow-x:auto; max-height:600px; overflow-y:auto; "
+            "background:rgba(0,0,0,0.05); padding:10px; border-radius:6px'>"
+            + "\n".join(highlighted) + "</pre>",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"Log file: `{_log_path}` · "
+            f"{len(lines)} lines total · showing last {min(len(lines), int(_log_lines))}."
+        )
+    else:
+        st.info(
+            f"No log file found at `{_log_path}`. "
+            "Start the bot via `python main.py` to begin logging."
+        )
+
+    # Recent DB cycle log (complementary to file log)
+    st.divider()
+    st.subheader("Cycle History (DB)")
+    try:
+        with get_conn() as _lc:
+            _cycle_rows = _lc.execute(
+                """SELECT started_at, finished_at, status, triggered_by, summary
+                   FROM cycle_log ORDER BY id DESC LIMIT 50"""
+            ).fetchall()
+        if _cycle_rows:
+            import json as _json
+            _cycle_view = []
+            for _cr in _cycle_rows:
+                try:
+                    _st_local = to_ist(_cr["started_at"]).strftime("%d %b %H:%M:%S IST")
+                except Exception:
+                    _st_local = (_cr["started_at"] or "")[:19]
+                _dur = "—"
+                if _cr["started_at"] and _cr["finished_at"]:
+                    try:
+                        _d0 = pd.to_datetime(_cr["started_at"])
+                        _d1 = pd.to_datetime(_cr["finished_at"])
+                        _dur = f"{(_d1 - _d0).total_seconds():.0f}s"
+                    except Exception:
+                        pass
+                _summ = ""
+                if _cr["summary"]:
+                    try:
+                        _s = (_json.loads(_cr["summary"])
+                              if isinstance(_cr["summary"], str) else _cr["summary"])
+                        _summ = (f"placed={_s.get('placed_long', 0)}L/"
+                                 f"{_s.get('placed_short', 0)}S "
+                                 f"signals={_s.get('signals', '?')} "
+                                 f"closed={_s.get('closed', '?')}")
+                    except Exception:
+                        _summ = str(_cr["summary"])[:80]
+                _cycle_view.append({
+                    "Started": _st_local,
+                    "Duration": _dur,
+                    "Status": _cr["status"] or "?",
+                    "By": _cr["triggered_by"] or "?",
+                    "Summary": _summ,
+                })
+            render_table(pd.DataFrame(_cycle_view))
+        else:
+            st.caption("No cycles recorded yet.")
+    except Exception as _le:
+        st.caption(f"Cycle log unavailable: {_le}")
 
 
 # ==================================================================
