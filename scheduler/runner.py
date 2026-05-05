@@ -23,6 +23,7 @@ from config import (
     APPROVAL_TIMEOUT_MIN,
     ATR_T1_PARTIAL_PCT,
     IST,
+    MIN_COMPOSITE_SCORE,
     NEAR_CLOSE_POLL_INTERVAL_SEC,
     NEAR_CLOSE_START,
     NEWS_REFRESH_MIN,
@@ -155,15 +156,16 @@ def set_bot_state(status: str | None = None, mode: str | None = None) -> None:
 # ---------- Approval queue ----------
 
 
-def enqueue_approval(d: CompositeDecision, qty: int, sl: float, tp: float) -> int:
+def enqueue_approval(d: CompositeDecision, qty: int, sl: float, tp: float,
+                     side: str = "LONG") -> int:
     now = datetime.utcnow()
     with get_conn() as conn:
         return insert_returning_id(
             conn,
             """INSERT INTO pending_approvals
                (created_at, expires_at, ticker, action, quantity, price,
-                stop_loss, take_profit, strategy, composite_score, reason, status)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?, 'PENDING')""",
+                stop_loss, take_profit, strategy, composite_score, reason, status, side)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?, 'PENDING', ?)""",
             (
                 now.isoformat(),
                 (now + timedelta(minutes=APPROVAL_TIMEOUT_MIN)).isoformat(),
@@ -176,6 +178,7 @@ def enqueue_approval(d: CompositeDecision, qty: int, sl: float, tp: float) -> in
                 _top_strategy(d),
                 d.composite_score,
                 " | ".join(d.reasons),
+                side,
             ),
         )
 
@@ -215,7 +218,7 @@ def execute_single_approval(approval_id: int) -> int | None:
             (approval_id,),
         ).fetchone()
 
-    if not r or r["action"] != "BUY":
+    if not r or r["action"] not in ("BUY", "SELL"):
         with get_conn() as conn:
             conn.execute(
                 "UPDATE pending_approvals SET status='APPROVED' WHERE id=? AND status='EXECUTING'",
@@ -223,11 +226,13 @@ def execute_single_approval(approval_id: int) -> int | None:
             )
         return None
 
+    side = (r.get("side") or "LONG").upper()
     pos_id = open_position(
         r["ticker"], r["price"], r["quantity"],
         stop_loss=r["stop_loss"], take_profit=r["take_profit"],
         strategy=r["strategy"], composite_score=r["composite_score"],
         reason=r["reason"] or "manual approval", mode="manual",
+        side=side,
     )
     with get_conn() as conn:
         conn.execute(
@@ -276,6 +281,13 @@ def evaluate_exits(prices: dict) -> dict:
     squareoff_time = SQUARE_OFF_TIME
 
     for p in open_positions():
+        # Positional positions have their own dedicated daily exit-management
+        # logic (positional.runner.run_positional_exit_check). Skip them here
+        # so the intraday squareoff cutoff and intraday SL/TP/trail logic
+        # don't accidentally close a multi-day positional hold.
+        if (p.get("trade_type") or "intraday") == "positional":
+            continue
+
         ticker = p["ticker"]
         price = prices.get(ticker) or latest_price(ticker)
         if not price:
@@ -413,7 +425,9 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
     `triggered_by` is logged in cycle_log for cross-process visibility.
     """
     global LAST_CYCLE, LAST_CYCLE_TS
-    init_db()
+    # init_db() is called ONCE at process startup (main.py). Calling it here
+    # every cycle was unnecessary and caused the entire cycle to crash whenever
+    # the Postgres connection timed out (e.g. laptop sleep / IPv6 DNS failure).
     initialize_if_empty()
 
     cycle_id = _cycle_begin(triggered_by)
@@ -511,30 +525,40 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         allow_long  = (regime in ("bullish", "neutral"))
         allow_short = (regime in ("bearish", "neutral"))
 
-        if not skip_entry_reason:
-            decisions = evaluate_batch(candles)
-            signals_seen = len(decisions)
-            buys  = [d for d in decisions if d.action == "BUY"]
-            sells = [d for d in decisions if d.action == "SELL"]
-            buys_found  = len(buys)
-            sells_found = len(sells)
+        # Always evaluate and log signals so the Signal History panel shows
+        # what was generated even during no-trade windows and STOPPED state.
+        decisions = evaluate_batch(candles)
+        signals_seen = len(decisions)
+        buys  = [d for d in decisions if d.action == "BUY"]
+        sells = [d for d in decisions if d.action == "SELL"]
+        buys_found  = len(buys)
+        sells_found = len(sells)
 
-            # Persist raw signals
-            with get_conn() as conn:
-                for d in decisions:
-                    conn.execute(
-                        """INSERT INTO signals
-                           (ts, ticker, action, strategy, technical_score, fundamental_score,
-                            sentiment_score, composite_score, price, reason)
-                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                        (
-                            datetime.utcnow().isoformat(),
-                            d.ticker, d.action, _top_strategy(d),
-                            d.technical_score, d.fundamental_score,
-                            d.sentiment_score, d.composite_score,
-                            d.price, " | ".join(d.reasons),
-                        ),
-                    )
+        # Persist raw signals regardless of no-trade window or bot status.
+        # threshold_at_time and mode_at_time let the dashboard badge each signal
+        # against the threshold/mode that was ACTIVE when the signal fired —
+        # not the current live settings (which the user may have changed since).
+        _threshold_now = float(state.get("min_composite_score", MIN_COMPOSITE_SCORE))
+        _mode_now = state.get("mode", "manual")
+        with get_conn() as conn:
+            for d in decisions:
+                conn.execute(
+                    """INSERT INTO signals
+                       (ts, ticker, action, strategy, technical_score, fundamental_score,
+                        sentiment_score, composite_score, price, reason,
+                        threshold_at_time, mode_at_time)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        datetime.utcnow().isoformat(),
+                        d.ticker, d.action, _top_strategy(d),
+                        d.technical_score, d.fundamental_score,
+                        d.sentiment_score, d.composite_score,
+                        d.price, " | ".join(d.reasons),
+                        _threshold_now, _mode_now,
+                    ),
+                )
+
+        if not skip_entry_reason:
 
             from engine.portfolio import get_cash
             cash = get_cash()
@@ -613,18 +637,12 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                         est = _broker_execute("BUY", d.price, qty)
                         cash += est.net  # est.net is negative on BUY-side
                 elif mode == "manual":
-                    if side == "LONG":
-                        enqueue_approval(d, qty, sl, tp)
-                        enqueued += 1
-                    else:
-                        # SHORT signals cannot be enqueued yet (pending_approvals
-                        # schema has no side column). Signal is logged to the DB
-                        # above; explicitly warn so the operator can act on it.
-                        log.info(
-                            "SHORT signal for %s (score=%.1f) skipped in manual mode "
-                            "— visible in signal log only",
-                            d.ticker, d.composite_score,
-                        )
+                    # Both LONG and SHORT signals go to pending_approvals.
+                    # The side column added to pending_approvals schema lets
+                    # the dashboard render SHORT approvals correctly and
+                    # execute_single_approval() can use it for the short path.
+                    enqueue_approval(d, qty, sl, tp, side=side)
+                    enqueued += 1
 
         # Always snapshot so the chart moves even when no trades happen
         snapshot(prices)

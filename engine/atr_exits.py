@@ -228,7 +228,7 @@ def nifty_regime(force_refresh: bool = False) -> tuple[str, str]:
             regime = "neutral"
         return regime, (
             f"NIFTY {last_close:.0f} vs EMA{NIFTY_TREND_EMA_PERIOD} "
-            f"{last_ema:.0f} ({delta_pct:+.2f}%) → {regime}"
+            f"{last_ema:.0f} ({delta_pct:+.2f}%) -> {regime}"
         )
     except Exception as e:
         log.warning("nifty_regime failed: %s", e)

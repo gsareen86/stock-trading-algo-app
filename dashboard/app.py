@@ -177,7 +177,7 @@ def _set_bot(**kwargs) -> None:
         return
     sets = ", ".join(f"{k}=?" for k in kwargs)
     vals = list(kwargs.values())
-    vals.append(datetime.utcnow().isoformat())
+    vals.append(datetime.now(timezone.utc).isoformat())
     with get_conn() as conn:
         conn.execute(
             f"UPDATE bot_control SET {sets}, updated_at=? WHERE id=1", vals
@@ -221,7 +221,14 @@ with st.sidebar:
     )
     st.markdown(f"**Mode:** `{mode.upper()}`")
 
-    if market_is_open():
+    _mkt_open = market_is_open()
+    # Fragment refresh cadence: only auto-poll when the market is open.
+    # When closed there is nothing changing, so fragments run once on page
+    # load and stay static until the user hits "Refresh now". This eliminates
+    # the Streamlit ⟳/Stop spinner that was firing every 15–30 s even at night.
+    _frag_refresh = 60 if _mkt_open else None
+
+    if _mkt_open:
         st.markdown('<div class="banner-ok">🕒 <b>NSE Market OPEN</b></div>',
                     unsafe_allow_html=True)
     else:
@@ -246,11 +253,7 @@ with st.sidebar:
     if st.button("🔄 Refresh now", width="stretch"):
         st.rerun()
 
-    # Live status pill — fragment so it updates without page rerun.
-    # Interval bumped from 10s → 30s to reduce server load (each tick is
-    # a server-side rerun of this block; 4 fragments at 10s was making
-    # the rest of the UI feel laggy).
-    @st.fragment(run_every=30)
+    # Last-cycle chip — only auto-refreshes when market is open.
     def _sidebar_cycle_chip():
         row = runner_mod.last_cycle_summary()
         if not row:
@@ -258,24 +261,33 @@ with st.sidebar:
             return
         try:
             started = pd.to_datetime(row.get("started_at"))
-            age = (pd.Timestamp.utcnow().tz_localize(None) - started).total_seconds()
+            age = (pd.Timestamp.now('UTC').tz_localize(None) - started).total_seconds()
         except Exception:
             age = None
-        status = row.get("status") or "?"
+        _s = row.get("status") or "?"
         status_emoji = {"RUNNING": "🟡", "DONE": "🟢",
-                        "ERROR": "🔴", "SKIPPED": "⚪"}.get(status, "•")
+                        "ERROR": "🔴", "SKIPPED": "⚪"}.get(_s, "•")
         if age is None:
-            st.caption(f"Last cycle: {status_emoji} {status}")
+            st.caption(f"Last cycle: {status_emoji} {_s}")
         else:
-            st.caption(f"Last cycle: {status_emoji} {status} · {int(age)}s ago")
+            st.caption(f"Last cycle: {status_emoji} {_s} · {int(age)}s ago")
 
-    _sidebar_cycle_chip()
+    st.fragment(run_every=_frag_refresh)(_sidebar_cycle_chip)()
 
-    # Live timestamp — also a fragment (30s; was 10s).
-    @st.fragment(run_every=30)
-    def _sidebar_clock():
-        st.caption(f"Dashboard time: {datetime.now().strftime('%H:%M:%S')}")
-    _sidebar_clock()
+    # Version indicator — shows which git branch/commit is running.
+    try:
+        import subprocess as _sp
+        _branch = _sp.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            stderr=_sp.DEVNULL, cwd=str(ROOT),
+        ).decode().strip()
+        _commit = _sp.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=_sp.DEVNULL, cwd=str(ROOT),
+        ).decode().strip()
+        st.caption(f"🔖 `{_branch}` · `{_commit}`")
+    except Exception:
+        pass
 
 
 # ------------------------------------------------------------------
@@ -284,7 +296,7 @@ with st.sidebar:
 
 (
     tab_ctrl, tab_overview, tab_pos, tab_news,
-    tab_fund, tab_analytics, tab_lt_research,
+    tab_fund, tab_analytics, tab_lt_research, tab_logs,
 ) = st.tabs([
     "🎛️ Control Panel",
     "📊 Overview",
@@ -293,6 +305,7 @@ with st.sidebar:
     "📈 Fundamentals",
     "📉 Analytics",
     "🔬 Long-Term Research",
+    "📋 Logs",
 ])
 
 
@@ -326,7 +339,7 @@ with tab_ctrl:
     # are taken/closed without forcing a full page rerun. Previously it
     # was rendered once at page load and showed a stale count (e.g. 0/10
     # while the Positions tab had 2 active positions).
-    @st.fragment(run_every=15)
+    @st.fragment(run_every=_frag_refresh)
     def _capacity_banner():
         with get_conn() as conn:
             n_open = conn.execute(
@@ -373,18 +386,13 @@ with tab_ctrl:
     # ----- Signal history with filters (so user can see WHY no trade was placed
     # and trace any historical signal — was previously hard-capped at 30) -----
     #
-    # BUG FIX: this used to live in the main page body — meaning it only
-    # re-queried the DB when Streamlit reran the whole page (e.g. when the
-    # user fiddled with a widget). The cycle scheduler writes to `signals`
-    # in a separate process; the dashboard had no idea fresh rows existed
-    # until the user typed in the Max-rows box. Wrapping in a fragment with
-    # `run_every=30` makes the expander pull fresh data every 30s WITHOUT
-    # touching the rest of the page.
-    @st.fragment(run_every=30)
+    # Signal history — only auto-refreshes when market is open (new signals
+    # only arrive during trading hours).
+    @st.fragment(run_every=_frag_refresh)
     def _signal_history_panel():
+        refresh_note = "auto-refreshes every 60s" if _frag_refresh else "market closed — use Refresh now"
         with st.expander(
-            "🧭 Signal history (filterable — see why each signal was/wasn't taken) "
-            "· auto-refreshes every 30s",
+            f"🧭 Signal history (filterable — see why each signal was/wasn't taken) · {refresh_note}",
             expanded=False,
         ):
             # Filters — added a Status filter as requested.
@@ -411,11 +419,12 @@ with tab_ctrl:
                 key="sig_limit_f",
             )
 
-            cutoff = (datetime.utcnow() - timedelta(hours=int(sig_hours))).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=int(sig_hours))).isoformat()
             params: list = [cutoff]
             sql = ("SELECT ts, ticker, action, strategy, composite_score, "
                    "technical_score, fundamental_score, sentiment_score, "
-                   "price, reason, taken FROM signals WHERE ts >= ?")
+                   "price, reason, taken, threshold_at_time, mode_at_time "
+                   "FROM signals WHERE ts >= ?")
             if sig_action != "All":
                 sql += " AND action = ?"
                 params.append(sig_action)
@@ -464,37 +473,57 @@ with tab_ctrl:
             for r in sig_rows:
                 cs = r["composite_score"] or 0.0
                 action = r["action"] or "-"
+                # Use threshold stored at signal-generation time if available,
+                # falling back to current live threshold. This prevents signals
+                # from showing "below threshold" when the user changed min_score
+                # AFTER the signal fired (the historical signal was taken/queued
+                # under the old threshold and should be shown accurately).
+                sig_threshold = r.get("threshold_at_time") or min_score
+                sig_mode = r.get("mode_at_time") or "unknown"
                 # Buckets line up with the Status filter dropdown above.
                 bucket = None
                 if r["taken"]:
                     why, bucket = "✅ taken", "Taken"
                 elif action == "BUY":
-                    if cs < min_score:
-                        why = f"🚫 score {cs:.0f} < threshold {min_score:.0f}"
+                    if cs < sig_threshold:
+                        why = (f"🚫 score {cs:.0f} < threshold {sig_threshold:.0f}"
+                               f" (at signal time)")
                         bucket = "Score below threshold"
                     elif current_regime == "bearish":
                         why = "🚫 long blocked (NIFTY bearish)"
                         bucket = "Blocked by regime"
+                    elif sig_mode == "manual":
+                        why = "⏳ queued for manual approval"
+                        bucket = "Pending / queued"
+                    elif sig_mode == "dry_run":
+                        why = "👁 dry-run (signal logged only)"
+                        bucket = "Not actionable (HOLD/SELL)"
                     elif live_open >= max_pos_now:
                         why = "🚫 at capacity"
                         bucket = "At capacity"
                     else:
-                        why = "⏳ pending / queued"
-                        bucket = "Pending / queued"
+                        why = "⚡ auto-executed (AUTO mode)"
+                        bucket = "Taken"
                 elif action == "SELL":
-                    # SELL = SHORT entry candidate under the new strategy.
-                    if cs < min_score:
-                        why = f"🚫 score {cs:.0f} < threshold {min_score:.0f}"
+                    if cs < sig_threshold:
+                        why = (f"🚫 score {cs:.0f} < threshold {sig_threshold:.0f}"
+                               f" (at signal time)")
                         bucket = "Score below threshold"
                     elif current_regime == "bullish":
                         why = "🚫 short blocked (NIFTY bullish)"
                         bucket = "Blocked by regime"
+                    elif sig_mode == "manual":
+                        why = "⏳ SHORT queued for manual approval"
+                        bucket = "Pending / queued"
+                    elif sig_mode == "dry_run":
+                        why = "👁 dry-run (signal logged only)"
+                        bucket = "Not actionable (HOLD/SELL)"
                     elif live_open >= max_pos_now:
                         why = "🚫 at capacity"
                         bucket = "At capacity"
                     else:
-                        why = "⏳ short pending / queued"
-                        bucket = "Pending / queued"
+                        why = "⚡ short auto-executed (AUTO mode)"
+                        bucket = "Taken"
                 else:
                     why, bucket = "— HOLD (no action)", "Not actionable (HOLD/SELL)"
 
@@ -515,6 +544,7 @@ with tab_ctrl:
                     "Tech": f"{(r['technical_score'] or 0):.0f}",
                     "Fund": f"{(r['fundamental_score'] or 0):.0f}",
                     "Sent": f"{(r['sentiment_score'] or 0):+.2f}",
+                    "Mode": sig_mode,
                     "Status": why,
                 })
             st.caption(
@@ -525,10 +555,7 @@ with tab_ctrl:
 
     _signal_history_panel()
 
-    # Holdings count freshness — the capacity banner above (line ~310) reads
-    # `open_positions()` once at page-render time. Add a tiny fragment so the
-    # user sees a fresh count without forcing a page rerun.
-    @st.fragment(run_every=30)
+    @st.fragment(run_every=_frag_refresh)
     def _live_holdings_chip():
         with get_conn() as conn:
             n_open = conn.execute(
@@ -626,7 +653,7 @@ with tab_ctrl:
     # of the page — see the auto-refresh section at the bottom of app.py.
     # ------------------------------------------------------------------
     with rcol2:
-        @st.fragment(run_every=20)
+        @st.fragment(run_every=_frag_refresh)
         def _last_cycle_panel():
             row = runner_mod.last_cycle_summary()
             if not row:
@@ -699,6 +726,48 @@ with tab_ctrl:
 
     st.divider()
 
+    # ------------------------------------------------------------------
+    # Positional trading control
+    # ------------------------------------------------------------------
+    st.subheader("📅 Positional Trading")
+    _pos_enabled = bool(bot.get("positional_enabled", 0))
+    _pos_col1, _pos_col2 = st.columns([2, 3])
+    with _pos_col1:
+        _new_pos_enabled = st.toggle(
+            "Enable positional module",
+            value=_pos_enabled,
+            help="When ON the positional runner scans at 08:45 IST and manages exits at 15:20 IST daily.",
+        )
+        if _new_pos_enabled != _pos_enabled:
+            _set_bot(positional_enabled=int(_new_pos_enabled))
+            st.toast(
+                f"Positional module {'enabled' if _new_pos_enabled else 'disabled'}.",
+                icon="📅",
+            )
+            st.rerun()
+    with _pos_col2:
+        try:
+            with get_conn() as _pc:
+                _n_pos = _pc.execute(
+                    "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN' AND trade_type='positional'"
+                ).fetchone()["n"]
+                _n_pos_pend = _pc.execute(
+                    "SELECT COUNT(*) AS n FROM pending_approvals WHERE status='PENDING' AND trade_type='positional'"
+                ).fetchone()["n"]
+            from config import POSITIONAL_MAX_POSITIONS, POSITIONAL_SCAN_TIME, POSITIONAL_EXIT_TIME
+            _pos_status = "🟢 ON" if _pos_enabled else "⚫ OFF"
+            st.markdown(
+                f"**Status:** {_pos_status} &nbsp;|&nbsp; "
+                f"**Open positions:** {_n_pos}/{POSITIONAL_MAX_POSITIONS} &nbsp;|&nbsp; "
+                f"**Pending approvals:** {_n_pos_pend}  \n"
+                f"Pre-market scan: `{POSITIONAL_SCAN_TIME} IST` &nbsp;·&nbsp; "
+                f"EOD exit check: `{POSITIONAL_EXIT_TIME} IST`"
+            )
+        except Exception:
+            st.caption("Positional status unavailable.")
+
+    st.divider()
+
     # Pending approvals queue
     st.subheader("📋 Pending Approvals")
     with get_conn() as conn:
@@ -714,14 +783,20 @@ with tab_ctrl:
         for r in pending_rows:
             r = dict(r)
             expires = datetime.fromisoformat(r["expires_at"])
-            remaining = expires - datetime.utcnow()
+            remaining = expires - datetime.now(timezone.utc).replace(tzinfo=None)
             mins = max(0, int(remaining.total_seconds() // 60))
             secs = max(0, int(remaining.total_seconds() % 60))
+            side_label = (r.get("side") or "LONG").upper()
+            side_chip = "🔻 SHORT" if side_label == "SHORT" else "🔺 LONG"
+            trade_type_label = (r.get("trade_type") or "intraday").upper()
             with st.container(border=True):
                 cols = st.columns([3, 1, 1])
                 with cols[0]:
                     st.markdown(
-                        f"**{r['action']} {r['quantity']} × {r['ticker']} @ ₹{r['price']:.2f}**"
+                        f"**{side_chip} {r['action']} {r['quantity']} × "
+                        f"{r['ticker']} @ ₹{r['price']:.2f}** "
+                        f"<sub>({trade_type_label})</sub>",
+                        unsafe_allow_html=True,
                     )
                     st.caption(
                         f"SL ₹{r['stop_loss']:.2f} | TP ₹{r['take_profit']:.2f} | "
@@ -737,7 +812,7 @@ with tab_ctrl:
                                 """UPDATE pending_approvals
                                       SET status='APPROVED', decided_at=?
                                     WHERE id=?""",
-                                (datetime.utcnow().isoformat(), int(r["id"])),
+                                (datetime.now(timezone.utc).isoformat(), int(r["id"])),
                             )
                         pos_id = runner_mod.execute_single_approval(int(r["id"]))
                         if pos_id:
@@ -752,7 +827,7 @@ with tab_ctrl:
                                 """UPDATE pending_approvals
                                       SET status='REJECTED', decided_at=?
                                     WHERE id=?""",
-                                (datetime.utcnow().isoformat(), int(r["id"])),
+                                (datetime.now(timezone.utc).isoformat(), int(r["id"])),
                             )
                         st.rerun()
 
@@ -798,6 +873,52 @@ with tab_ctrl:
             )
             st.success("Saved.")
             st.rerun()
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # DB Repair utilities — portfolio_snapshots total_value correction
+    # ------------------------------------------------------------------
+    with st.expander("🔧 DB Repair — fix portfolio_snapshots total_value", expanded=False):
+        st.markdown(
+            "If the portfolio `total_value` shows an incorrect figure (e.g. ₹1,12,565 "
+            "instead of the correct cash + equity sum), run the fix below. "
+            "This corrects rows where `total_value != cash + equity`."
+        )
+        _snap_preview = None
+        try:
+            with get_conn() as _rc:
+                _snap_preview = _rc.execute(
+                    """SELECT id, ts, cash, equity, total_value,
+                              (cash + equity) AS correct_total,
+                              ABS(total_value - (cash + equity)) AS drift
+                       FROM portfolio_snapshots
+                       ORDER BY id DESC LIMIT 10"""
+                ).fetchall()
+        except Exception as _re:
+            st.caption(f"Could not query snapshots: {_re}")
+
+        if _snap_preview:
+            _snap_df = pd.DataFrame([dict(r) for r in _snap_preview])
+            _bad = _snap_df[_snap_df["drift"] > 0.01]
+            if _bad.empty:
+                st.success("All snapshots look correct (total_value == cash + equity).")
+            else:
+                st.warning(f"{len(_bad)} snapshot(s) have incorrect total_value.")
+                render_table(_snap_df[["id", "ts", "cash", "equity",
+                                       "total_value", "correct_total", "drift"]])
+                if st.button("🔧 Fix total_value = cash + equity", key="fix_snapshots"):
+                    try:
+                        with get_conn() as _fc:
+                            _fc.execute(
+                                """UPDATE portfolio_snapshots
+                                      SET total_value = cash + equity
+                                    WHERE ABS(total_value - (cash + equity)) > 0.01"""
+                            )
+                        st.success("Fixed. Refresh the Overview tab to see the updated equity curve.")
+                        st.rerun()
+                    except Exception as _fe:
+                        st.error(f"Fix failed: {_fe}")
 
 
 # ==================================================================
@@ -896,7 +1017,7 @@ with tab_pos:
         help="Bypass the yfinance disk cache and re-pull 5-minute candles right now. "
              "Works even when auto-refresh is paused.",
     ):
-        st.session_state["op_force_refresh_at"] = datetime.utcnow().isoformat()
+        st.session_state["op_force_refresh_at"] = datetime.now(timezone.utc).isoformat()
         st.rerun()  # re-render the panel immediately to honour the click
 
     # Find the current label that matches the saved interval (fall back to 30s).
@@ -924,7 +1045,7 @@ with tab_pos:
         force_now = False
         if force_at:
             try:
-                age = (datetime.utcnow() - datetime.fromisoformat(force_at)).total_seconds()
+                age = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(force_at).replace(tzinfo=None)).total_seconds()
                 force_now = age < 5  # only honour the click for the next render
             except Exception:
                 force_now = False
@@ -1032,10 +1153,23 @@ with tab_pos:
     #     partial-T1). Useful when you need to audit a specific exit.
     # Date / direction / ticker filters apply to both views consistently.
     st.divider()
-    st.subheader("📑 Trade report")
+    _hcol, _bcol = st.columns([6, 1])
+    _hcol.subheader("📑 Trade report")
+    if _bcol.button("🔄 Refresh", key="trade_report_refresh",
+                    help="Re-query trades from DB (clears 30s cache)"):
+        st.cache_data.clear()
+        st.rerun()
 
-    rep = closed_positions_report()
-    raw_trades = trades_df()
+    @st.cache_data(ttl=30, show_spinner=False)
+    def _cached_closed_positions_report():
+        return closed_positions_report()
+
+    @st.cache_data(ttl=30, show_spinner=False)
+    def _cached_trades_df():
+        return trades_df()
+
+    rep = _cached_closed_positions_report()
+    raw_trades = _cached_trades_df()
 
     if (rep is None or rep.empty) and (raw_trades is None or raw_trades.empty):
         st.caption("No trades yet.")
@@ -1064,8 +1198,8 @@ with tab_pos:
                 rl["closed_at_ts"] = to_ist(rl["closed_at"])
                 rl["opened_at_ts"] = to_ist(rl["opened_at"])
                 mask = (
-                    (rl["closed_at_ts"].dt.tz_localize(None).dt.date >= start)
-                    & (rl["closed_at_ts"].dt.tz_localize(None).dt.date <= end)
+                    (rl["closed_at_ts"].dt.tz_convert(None).dt.date >= start)
+                    & (rl["closed_at_ts"].dt.tz_convert(None).dt.date <= end)
                 )
                 if side_f != "All":
                     mask &= rl["direction"] == side_f
@@ -1115,8 +1249,8 @@ with tab_pos:
                 rt = raw_trades.copy()
                 rt["ts_ist"] = to_ist(rt["ts"])
                 mask = (
-                    (rt["ts_ist"].dt.tz_localize(None).dt.date >= start)
-                    & (rt["ts_ist"].dt.tz_localize(None).dt.date <= end)
+                    (rt["ts_ist"].dt.tz_convert(None).dt.date >= start)
+                    & (rt["ts_ist"].dt.tz_convert(None).dt.date <= end)
                 )
                 # Direction filter: BUY+SELL = LONG legs, SHORT+COVER = SHORT
                 if side_f == "LONG":
@@ -1975,6 +2109,131 @@ with tab_lt_research:
                     st.caption("No coverage gaps recorded yet.")
             except Exception as e:
                 st.caption(f"(no universe table yet — {e})")
+
+
+# ==================================================================
+# 8. Logs tab
+# ==================================================================
+
+with tab_logs:
+    st.header("📋 Bot Logs")
+
+    from config import LOG_DIR as _LOG_DIR
+    _log_path = Path(_LOG_DIR) / "bot.log"
+
+    _lcol1, _lcol2, _lcol3 = st.columns([2, 1, 1])
+    _log_lines = _lcol1.number_input(
+        "Lines to display (most recent)", min_value=50, max_value=5000,
+        value=200, step=50, key="log_lines",
+    )
+    _log_level_filter = _lcol2.selectbox(
+        "Filter level", ["ALL", "ERROR", "WARNING", "INFO", "DEBUG"],
+        key="log_level_filter",
+    )
+
+    if _log_path.exists():
+        try:
+            raw_log = _log_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as _e:
+            raw_log = f"(could not read log file: {_e})"
+
+        # Download button — full log file
+        _lcol3.download_button(
+            "⬇ Download bot.log",
+            data=raw_log.encode("utf-8"),
+            file_name="bot.log",
+            mime="text/plain",
+            key="log_download",
+        )
+
+        # Filter by log level
+        lines = raw_log.splitlines()
+        if _log_level_filter != "ALL":
+            lines = [l for l in lines if _log_level_filter in l]
+
+        # Show the most recent N lines
+        display_lines = lines[-int(_log_lines):]
+        display_text = "\n".join(display_lines)
+
+        # Colour-code ERROR and WARNING lines
+        highlighted = []
+        for line in display_lines:
+            if " ERROR " in line or " CRITICAL " in line:
+                highlighted.append(
+                    f'<span style="color:#ff4b4b">{line}</span>'
+                )
+            elif " WARNING " in line:
+                highlighted.append(
+                    f'<span style="color:#ffc000">{line}</span>'
+                )
+            else:
+                highlighted.append(line)
+
+        st.markdown(
+            "<pre style='font-size:0.78rem; line-height:1.4; "
+            "overflow-x:auto; max-height:600px; overflow-y:auto; "
+            "background:rgba(0,0,0,0.05); padding:10px; border-radius:6px'>"
+            + "\n".join(highlighted) + "</pre>",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"Log file: `{_log_path}` · "
+            f"{len(lines)} lines total · showing last {min(len(lines), int(_log_lines))}."
+        )
+    else:
+        st.info(
+            f"No log file found at `{_log_path}`. "
+            "Start the bot via `python main.py` to begin logging."
+        )
+
+    # Recent DB cycle log (complementary to file log)
+    st.divider()
+    st.subheader("Cycle History (DB)")
+    try:
+        with get_conn() as _lc:
+            _cycle_rows = _lc.execute(
+                """SELECT started_at, finished_at, status, triggered_by, summary
+                   FROM cycle_log ORDER BY id DESC LIMIT 50"""
+            ).fetchall()
+        if _cycle_rows:
+            import json as _json
+            _cycle_view = []
+            for _cr in _cycle_rows:
+                try:
+                    _st_local = to_ist(_cr["started_at"]).strftime("%d %b %H:%M:%S IST")
+                except Exception:
+                    _st_local = (_cr["started_at"] or "")[:19]
+                _dur = "—"
+                if _cr["started_at"] and _cr["finished_at"]:
+                    try:
+                        _d0 = pd.to_datetime(_cr["started_at"])
+                        _d1 = pd.to_datetime(_cr["finished_at"])
+                        _dur = f"{(_d1 - _d0).total_seconds():.0f}s"
+                    except Exception:
+                        pass
+                _summ = ""
+                if _cr["summary"]:
+                    try:
+                        _s = (_json.loads(_cr["summary"])
+                              if isinstance(_cr["summary"], str) else _cr["summary"])
+                        _summ = (f"placed={_s.get('placed_long', 0)}L/"
+                                 f"{_s.get('placed_short', 0)}S "
+                                 f"signals={_s.get('signals', '?')} "
+                                 f"closed={_s.get('closed', '?')}")
+                    except Exception:
+                        _summ = str(_cr["summary"])[:80]
+                _cycle_view.append({
+                    "Started": _st_local,
+                    "Duration": _dur,
+                    "Status": _cr["status"] or "?",
+                    "By": _cr["triggered_by"] or "?",
+                    "Summary": _summ,
+                })
+            render_table(pd.DataFrame(_cycle_view))
+        else:
+            st.caption("No cycles recorded yet.")
+    except Exception as _le:
+        st.caption(f"Cycle log unavailable: {_le}")
 
 
 # ==================================================================

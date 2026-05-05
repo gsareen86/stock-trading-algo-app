@@ -124,7 +124,9 @@ CREATE TABLE IF NOT EXISTS signals (
     composite_score REAL,
     price REAL,
     reason TEXT,
-    taken INTEGER DEFAULT 0
+    taken INTEGER DEFAULT 0,
+    threshold_at_time REAL,
+    mode_at_time TEXT
 );
 
 CREATE TABLE IF NOT EXISTS news (
@@ -184,7 +186,8 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING',
     decided_at TEXT,
-    decision_note TEXT
+    decision_note TEXT,
+    side TEXT DEFAULT 'LONG'
 );
 
 CREATE TABLE IF NOT EXISTS lt_universe (
@@ -241,7 +244,37 @@ CREATE INDEX IF NOT EXISTS idx_news_ts ON news(ts);
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON pending_approvals(status);
 CREATE INDEX IF NOT EXISTS idx_lt_universe_in_universe ON lt_universe(in_universe);
 CREATE INDEX IF NOT EXISTS idx_lt_quality_total ON lt_quality(total_score);
+CREATE TABLE IF NOT EXISTS positional_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id INTEGER REFERENCES positions(id),
+    ticker TEXT NOT NULL,
+    quality_score REAL,
+    conviction TEXT DEFAULT 'medium',
+    expected_exit_date TEXT,
+    hold_days_limit INTEGER DEFAULT 30,
+    days_held INTEGER DEFAULT 0,
+    sector TEXT,
+    strategy_breakdown TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS positional_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scanned_at TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    action TEXT NOT NULL,
+    strategy TEXT NOT NULL,
+    score REAL,
+    price REAL,
+    reason TEXT,
+    quality_score REAL,
+    taken INTEGER DEFAULT 0,
+    meta TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_cycle_log_started ON cycle_log(started_at);
+CREATE INDEX IF NOT EXISTS idx_pos_positions_ticker ON positional_positions(ticker);
+CREATE INDEX IF NOT EXISTS idx_pos_signals_scanned ON positional_signals(scanned_at);
 """
 
 # Postgres schema. We keep ts columns as TEXT (ISO strings) to match the
@@ -311,7 +344,9 @@ CREATE TABLE IF NOT EXISTS signals (
     composite_score DOUBLE PRECISION,
     price DOUBLE PRECISION,
     reason TEXT,
-    taken INTEGER DEFAULT 0
+    taken INTEGER DEFAULT 0,
+    threshold_at_time DOUBLE PRECISION,
+    mode_at_time TEXT
 );
 
 CREATE TABLE IF NOT EXISTS news (
@@ -371,7 +406,8 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING',
     decided_at TEXT,
-    decision_note TEXT
+    decision_note TEXT,
+    side TEXT DEFAULT 'LONG'
 );
 
 CREATE TABLE IF NOT EXISTS lt_universe (
@@ -423,7 +459,37 @@ CREATE INDEX IF NOT EXISTS idx_news_ts ON news(ts);
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON pending_approvals(status);
 CREATE INDEX IF NOT EXISTS idx_lt_universe_in_universe ON lt_universe(in_universe);
 CREATE INDEX IF NOT EXISTS idx_lt_quality_total ON lt_quality(total_score);
+CREATE TABLE IF NOT EXISTS positional_positions (
+    id BIGSERIAL PRIMARY KEY,
+    position_id BIGINT REFERENCES positions(id),
+    ticker TEXT NOT NULL,
+    quality_score DOUBLE PRECISION,
+    conviction TEXT DEFAULT 'medium',
+    expected_exit_date TEXT,
+    hold_days_limit INTEGER DEFAULT 30,
+    days_held INTEGER DEFAULT 0,
+    sector TEXT,
+    strategy_breakdown JSONB,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS positional_signals (
+    id BIGSERIAL PRIMARY KEY,
+    scanned_at TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    action TEXT NOT NULL,
+    strategy TEXT NOT NULL,
+    score DOUBLE PRECISION,
+    price DOUBLE PRECISION,
+    reason TEXT,
+    quality_score DOUBLE PRECISION,
+    taken INTEGER DEFAULT 0,
+    meta JSONB
+);
+
 CREATE INDEX IF NOT EXISTS idx_cycle_log_started ON cycle_log(started_at);
+CREATE INDEX IF NOT EXISTS idx_pos_positions_ticker ON positional_positions(ticker);
+CREATE INDEX IF NOT EXISTS idx_pos_signals_scanned ON positional_signals(scanned_at);
 """
 
 
@@ -596,6 +662,39 @@ def _migrate_positions_atr_columns(conn) -> None:
         cur.execute(sql)
 
 
+def _migrate_positional_columns(conn) -> None:
+    """Add trade_type columns to positions and pending_approvals if missing."""
+    if BACKEND == "sqlite":
+        pos_cols = {r["name"] for r in conn.execute("PRAGMA table_info(positions)").fetchall()}
+        if "trade_type" not in pos_cols:
+            conn.execute("ALTER TABLE positions ADD COLUMN trade_type TEXT DEFAULT 'intraday'")
+        appr_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
+        if "trade_type" not in appr_cols:
+            conn.execute("ALTER TABLE pending_approvals ADD COLUMN trade_type TEXT DEFAULT 'intraday'")
+        if "positional_enabled" not in {r["name"] for r in conn.execute("PRAGMA table_info(bot_control)").fetchall()}:
+            conn.execute("ALTER TABLE bot_control ADD COLUMN positional_enabled INTEGER DEFAULT 0")
+        sig_cols = {r["name"] for r in conn.execute("PRAGMA table_info(signals)").fetchall()}
+        if "threshold_at_time" not in sig_cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN threshold_at_time REAL")
+        if "mode_at_time" not in sig_cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN mode_at_time TEXT")
+        pend_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
+        if "side" not in pend_cols:
+            conn.execute("ALTER TABLE pending_approvals ADD COLUMN side TEXT DEFAULT 'LONG'")
+        return
+
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    for sql in (
+        "ALTER TABLE positions ADD COLUMN IF NOT EXISTS trade_type TEXT DEFAULT 'intraday'",
+        "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS trade_type TEXT DEFAULT 'intraday'",
+        "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS positional_enabled INTEGER DEFAULT 0",
+        "ALTER TABLE signals ADD COLUMN IF NOT EXISTS threshold_at_time DOUBLE PRECISION",
+        "ALTER TABLE signals ADD COLUMN IF NOT EXISTS mode_at_time TEXT",
+        "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS side TEXT DEFAULT 'LONG'",
+    ):
+        cur.execute(sql)
+
+
 def init_db() -> None:
     """Create tables + seed bot_control row if absent."""
     if BACKEND == "sqlite":
@@ -603,6 +702,7 @@ def init_db() -> None:
         try:
             conn.executescript(_SQLITE_SCHEMA)
             _migrate_positions_atr_columns(conn)
+            _migrate_positional_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
                    VALUES (1, 'STOPPED', 'manual', ?)
@@ -620,6 +720,7 @@ def init_db() -> None:
                 # commands are separated by ;.
                 cur.execute(_POSTGRES_SCHEMA)
                 _migrate_positions_atr_columns(cur)
+                _migrate_positional_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
                        VALUES (1, 'STOPPED', 'manual', %s)

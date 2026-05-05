@@ -23,19 +23,34 @@ from pathlib import Path
 from config import DEFAULT_MODE, LOG_DIR, LOG_LEVEL
 from db.models import init_db
 from engine.portfolio import initialize_if_empty
+from positional.runner import run_positional_forever
 from scheduler.runner import run_forever, set_bot_state
 
 
 def _setup_logging():
+    import io
     log_path = Path(LOG_DIR) / "bot.log"
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    # FileHandler always UTF-8 so log file captures all Unicode chars.
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(fmt))
+    # Console on Windows may be cp1252 — wrap with UTF-8 and replace unmappable chars.
+    if hasattr(sys.stdout, "buffer"):
+        stdout_stream = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    else:
+        stdout_stream = sys.stdout
+    console_handler = logging.StreamHandler(stdout_stream)
+    console_handler.setFormatter(logging.Formatter(fmt))
     logging.basicConfig(
         level=getattr(logging, LOG_LEVEL, logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(log_path),
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=[file_handler, console_handler],
     )
+    # Third-party libraries that generate noisy INFO logs during normal
+    # operation (HuggingFace model resolution, HTTPX request traces).
+    # Cap them at WARNING so they only surface when something is wrong.
+    for _noisy in ("httpx", "httpcore", "huggingface_hub", "huggingface_hub.utils._http",
+                   "transformers.modeling_utils", "filelock"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
 def start_dashboard():
@@ -55,6 +70,8 @@ def main():
     parser.add_argument("--init", action="store_true", help="init DB and exit")
     parser.add_argument("--runner-only", action="store_true")
     parser.add_argument("--dashboard-only", action="store_true")
+    parser.add_argument("--positional-only", action="store_true",
+                        help="run positional runner only (no intraday, no dashboard)")
     parser.add_argument("--reset", action="store_true", help="wipe DB (destructive)")
     args = parser.parse_args()
 
@@ -72,6 +89,19 @@ def main():
     # (User toggles RUN from the dashboard).
     set_bot_state(status="STOPPED", mode=DEFAULT_MODE)
 
+    # Pre-warm FinBERT in a background thread so the first news-scrape cycle
+    # doesn't block for ~3 minutes while the 400 MB model downloads and loads.
+    # The load is idempotent (double-checked lock in _get_finbert) so this is
+    # safe to call even if FinBERT is disabled — it will simply return quickly.
+    try:
+        from config import ENABLE_FINBERT
+        if ENABLE_FINBERT:
+            import threading as _t
+            from nlp.sentiment import _get_finbert
+            _t.Thread(target=_get_finbert, daemon=True, name="finbert-prewarm").start()
+    except Exception:
+        pass  # non-fatal; first cycle will load on demand
+
     if args.init:
         print("DB initialized.")
         return
@@ -85,10 +115,17 @@ def main():
         run_forever()
         return
 
-    # Full mode: dashboard in a subprocess + runner in a thread
+    if args.positional_only:
+        run_positional_forever()
+        return
+
+    # Full mode: dashboard + intraday runner + positional runner
     dash_proc = start_dashboard()
     runner = threading.Thread(target=run_forever, daemon=True, name="bot-runner")
+    pos_runner = threading.Thread(target=run_positional_forever, daemon=True,
+                                  name="positional-runner")
     runner.start()
+    pos_runner.start()
 
     try:
         dash_proc.wait()

@@ -42,11 +42,35 @@ def get_cash() -> float:
 
 
 def realized_pnl_total() -> float:
+    """Total realised P&L = closed-position P&L + partial-T1 P&L on still-open
+    positions.
+
+    Previously this only summed ``positions.pnl`` (written on FULL close),
+    missing the partial-T1 SELL/COVER legs that book real P&L while the
+    position remains open. That made the dashboard's "Realized P&L" diverge
+    from cash by exactly the sum of those partial gains.
+    """
     with get_conn() as conn:
-        row = conn.execute(
+        closed_row = conn.execute(
             "SELECT COALESCE(SUM(pnl), 0) AS total FROM positions WHERE status='CLOSED'"
         ).fetchone()
-    return float(row["total"])
+        closed_pnl = float(closed_row["total"] or 0)
+
+        # Partial-T1 realised on still-open positions: every SELL or COVER row
+        # against an OPEN position is a closing leg. P&L per leg = net_value -
+        # entry_price*qty. (LONG SELL: net_value=+sale_proceeds-costs, subtract
+        # entry cost basis. SHORT COVER: partial_close stores net_value=
+        # entry*qty+pnl, so the same formula yields pnl exactly.)
+        partial_rows = conn.execute(
+            """SELECT t.quantity AS q, t.net_value AS nv, p.entry_price AS e
+               FROM trades t
+               JOIN positions p ON p.id = t.position_id
+               WHERE p.status = 'OPEN' AND t.side IN ('SELL', 'COVER')"""
+        ).fetchall()
+    partial_pnl = sum(
+        float(r["nv"]) - float(r["e"]) * int(r["q"]) for r in partial_rows
+    )
+    return closed_pnl + partial_pnl
 
 
 # ---------- Position queries ----------
@@ -359,7 +383,7 @@ def snapshots_df():
     import pandas as pd
     df = query_df("SELECT * FROM portfolio_snapshots ORDER BY ts")
     if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"])
+        df["ts"] = pd.to_datetime(df["ts"], format="mixed", utc=True)
     return df
 
 
@@ -367,5 +391,5 @@ def trades_df():
     import pandas as pd
     df = query_df("SELECT * FROM trades ORDER BY ts DESC")
     if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"])
+        df["ts"] = pd.to_datetime(df["ts"], format="mixed", utc=True)
     return df

@@ -121,7 +121,7 @@ class PairTradingStrategy(BaseStrategy):
             return Signal(
                 ticker, "SELL", self.name, score, price,
                 reason=(f"Pair short: {ticker}/{partner} z={z:+.2f} "
-                        f"≥ {self.z_entry:.2f} (ratio {ratio.iloc[-1]:.4f}, "
+                        f">= {self.z_entry:.2f} (ratio {ratio.iloc[-1]:.4f}, "
                         f"μ {mu:.4f}, σ {sd:.4f})"),
                 meta={"partner": partner, "z": z, "ratio": float(ratio.iloc[-1])},
             )
@@ -130,7 +130,7 @@ class PairTradingStrategy(BaseStrategy):
             return Signal(
                 ticker, "BUY", self.name, score, price,
                 reason=(f"Pair long: {ticker}/{partner} z={z:+.2f} "
-                        f"≤ -{self.z_entry:.2f}"),
+                        f"<= -{self.z_entry:.2f}"),
                 meta={"partner": partner, "z": z, "ratio": float(ratio.iloc[-1])},
             )
 

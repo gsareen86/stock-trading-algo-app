@@ -18,10 +18,13 @@ beautifulsoup4>=4.12.0
 requests>=2.31.0
 lxml>=4.9.0
 
-# Sentiment analysis (lightweight default)
+# Sentiment analysis
+# vaderSentiment is kept as a fallback if FinBERT load fails.
 vaderSentiment>=3.3.2
-# transformers>=4.36.0   # Uncomment for FinBERT (heavier, ~400MB)
-# torch>=2.0.0           # Uncomment for FinBERT
+# FinBERT (finance-tuned BERT) is the default in nlp/sentiment.py — much more
+# accurate on financial news than generic VADER. First call downloads ~400MB.
+transformers>=4.36.0
+torch>=2.0.0
 
 # Dashboard
 streamlit>=1.37.0   # need st.fragment (stable in 1.37) for non-blocking partial refresh

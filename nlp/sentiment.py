@@ -69,6 +69,35 @@ def score_text(text: str) -> float:
     return float(s["compound"])
 
 
+def _score_batch(texts: list[str]) -> list[float]:
+    """Batch-score a list of texts. Uses FinBERT in one forward pass when
+    enabled (much faster than per-item) and falls back to VADER per-item
+    otherwise."""
+    if not texts:
+        return []
+    if ENABLE_FINBERT and SENTIMENT_ENGINE == "finbert":
+        fb = _get_finbert()
+        if fb:
+            try:
+                # Truncate each to 512 chars to stay under FinBERT's token limit.
+                trimmed = [t[:512] if t else "" for t in texts]
+                results = fb(trimmed, batch_size=16)
+                out = []
+                for r in results:
+                    label = r["label"].lower()
+                    score = float(r["score"])
+                    if label == "positive":
+                        out.append(score)
+                    elif label == "negative":
+                        out.append(-score)
+                    else:
+                        out.append(0.0)
+                return out
+            except Exception as e:
+                log.warning("FinBERT batch failed, falling back to VADER: %s", e)
+    return [float(_vader.polarity_scores(t or "")["compound"]) for t in texts]
+
+
 def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
     """
     Score all unscored news items (or a specific set of ids).
@@ -86,15 +115,18 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
                 "SELECT id, title, summary FROM news WHERE processed=0"
             ).fetchall()
 
-        n = 0
-        for r in rows:
-            text = f"{r['title']}. {r['summary'] or ''}"
-            score = score_text(text)
+        if not rows:
+            log.info("scored 0 news items")
+            return 0
+
+        texts = [f"{r['title']}. {r['summary'] or ''}" for r in rows]
+        scores = _score_batch(texts)
+        for r, score in zip(rows, scores):
             conn.execute(
                 "UPDATE news SET sentiment=?, processed=1 WHERE id=?",
                 (score, r["id"]),
             )
-            n += 1
+    n = len(rows)
     log.info("scored %d news items", n)
     return n
 

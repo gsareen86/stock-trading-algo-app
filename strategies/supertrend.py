@@ -114,7 +114,7 @@ class SupertrendStrategy(BaseStrategy):
             score = self._clip(65 + min(dist_pct * 5, 25))
             return Signal(
                 ticker, "BUY", self.name, score, price,
-                reason=(f"Supertrend flip → LONG @ {price:.2f}, "
+                reason=(f"Supertrend flip -> LONG @ {price:.2f}, "
                         f"trail {st_level:.2f} ({dist_pct:.2f}%)"),
                 meta={"supertrend": st_level, "trend": 1},
             )
@@ -122,7 +122,7 @@ class SupertrendStrategy(BaseStrategy):
             score = self._clip(65 + min(dist_pct * 5, 25))
             return Signal(
                 ticker, "SELL", self.name, score, price,
-                reason=(f"Supertrend flip → SHORT @ {price:.2f}, "
+                reason=(f"Supertrend flip -> SHORT @ {price:.2f}, "
                         f"trail {st_level:.2f} ({dist_pct:.2f}%)"),
                 meta={"supertrend": st_level, "trend": -1},
             )
