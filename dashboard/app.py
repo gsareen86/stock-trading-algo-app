@@ -881,7 +881,7 @@ with tab_ctrl:
     # ------------------------------------------------------------------
     with st.expander("🔧 DB Repair — fix portfolio_snapshots total_value", expanded=False):
         st.markdown(
-            "If the portfolio total\_value shows an incorrect figure (e.g. ₹1,12,565 "
+            "If the portfolio `total_value` shows an incorrect figure (e.g. ₹1,12,565 "
             "instead of the correct cash + equity sum), run the fix below. "
             "This corrects rows where `total_value != cash + equity`."
         )

@@ -45,6 +45,12 @@ def _setup_logging():
         level=getattr(logging, LOG_LEVEL, logging.INFO),
         handlers=[file_handler, console_handler],
     )
+    # Third-party libraries that generate noisy INFO logs during normal
+    # operation (HuggingFace model resolution, HTTPX request traces).
+    # Cap them at WARNING so they only surface when something is wrong.
+    for _noisy in ("httpx", "httpcore", "huggingface_hub", "huggingface_hub.utils._http",
+                   "transformers.modeling_utils", "filelock"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
 def start_dashboard():
