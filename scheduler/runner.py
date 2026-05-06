@@ -443,6 +443,28 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         cycle_start_ist = datetime.now(IST)
         market_open = market_is_open(cycle_start_ist)
 
+        # Short-circuit when the market is closed. Fetching news + candles for
+        # 50 tickers and running every strategy on stale data wastes ~20-30 s
+        # per cycle and produces no actionable signals (no entries/exits are
+        # possible while NSE is shut). We only run light bookkeeping —
+        # expire stale approvals — and return.
+        if not market_open:
+            try:
+                expired = expire_stale_approvals()
+            except Exception as e:
+                log.warning("expire_stale_approvals failed: %s", e)
+                expired = 0
+            out = {
+                "ts": datetime.utcnow().isoformat(),
+                "market_open": False,
+                "skipped": True,
+                "reason": "market closed",
+                "expired": expired,
+            }
+            LAST_CYCLE, LAST_CYCLE_TS = out, datetime.utcnow()
+            _cycle_end(cycle_id, "SKIPPED", out)
+            return out
+
         # Refresh news + sentiment (throttled: every ~30 min)
         try:
             scrape_all()
@@ -676,11 +698,16 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
 
 
 def _next_poll_interval() -> int:
-    """Use the tighter near-close cadence between NEAR_CLOSE_START and 15:30
-    IST so intraday square-off fires within ≤NEAR_CLOSE_POLL_INTERVAL_SEC of
-    the cutoff instead of the default 15-min lag."""
-    now_ist = datetime.now(IST).strftime("%H:%M")
-    if NEAR_CLOSE_START <= now_ist <= "15:30":
+    """Adaptive poll cadence:
+      - market closed → 30 min idle poll (no fetches, just status)
+      - 15:00–15:30 IST → near-close cadence (5 min) so square-off fires fast
+      - otherwise default 15 min poll matching the 15-min candle interval
+    """
+    now = datetime.now(IST)
+    if not market_is_open(now):
+        return 1800  # 30 min idle poll when market closed
+    hhmm = now.strftime("%H:%M")
+    if NEAR_CLOSE_START <= hhmm <= "15:30":
         return NEAR_CLOSE_POLL_INTERVAL_SEC
     return SIGNAL_POLL_INTERVAL_SEC
 

@@ -49,8 +49,8 @@ def _setup_logging():
     # operation (HuggingFace model resolution, HTTPX request traces).
     # Cap them at WARNING so they only surface when something is wrong.
     for _noisy in ("httpx", "httpcore", "huggingface_hub", "huggingface_hub.utils._http",
-                   "transformers.modeling_utils", "filelock"):
-        logging.getLogger(_noisy).setLevel(logging.WARNING)
+                   "transformers", "transformers.modeling_utils", "filelock"):
+        logging.getLogger(_noisy).setLevel(logging.ERROR)
 
 
 def start_dashboard():
@@ -61,8 +61,17 @@ def start_dashboard():
         "--server.headless", "true",
         "--server.port", os.environ.get("STREAMLIT_PORT", "8501"),
         "--browser.gatherUsageStats", "false",
+        # Disable the local-sources file watcher. Without this, Streamlit walks
+        # every transitive module of `transformers` (loaded for FinBERT) and
+        # triggers lazy imports of vision models that depend on `torchvision` —
+        # which we don't install, so each one prints a ModuleNotFoundError
+        # traceback. Hundreds of these flood the terminal at startup. We
+        # don't need module hot-reload in a production bot.
+        "--server.fileWatcherType", "none",
     ]
-    return subprocess.Popen(cmd)
+    env = os.environ.copy()
+    env.setdefault("STREAMLIT_SERVER_FILE_WATCHER_TYPE", "none")
+    return subprocess.Popen(cmd, env=env)
 
 
 def main():
