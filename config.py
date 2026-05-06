@@ -93,26 +93,30 @@ STAMP_DUTY_BUY = 0.00003          # 0.003% on buy leg (intraday)
 SLIPPAGE_PCT = 0.0005             # 0.05% assumed slippage per trade
 
 # ----- Scoring weights -----
-TECHNICAL_WEIGHT = 0.50
-FUNDAMENTAL_WEIGHT = 0.25
+# Intraday edge comes almost entirely from technicals + sentiment; fundamentals
+# (P/E, book value, etc.) offer no intraday predictive power on 15-min candles.
+# Weight distribution: technical 0.70, sentiment 0.25, fundamentals 0.05.
+TECHNICAL_WEIGHT = 0.70
+FUNDAMENTAL_WEIGHT = 0.05
 SENTIMENT_WEIGHT = 0.25
 
 # ----- Strategy weights (Phase 2 will make these adaptive) -----
-# Weights sum to 1.0. The four direction-balanced additions (orb, vwap_reversion,
-# supertrend, gap_play, pair_trading) are weighted higher than the legacy
-# long-biased trio because they're what produces SHORT signals on red days.
+# Weights sum to 1.0. vwap_momentum gets the highest single weight — it has
+# the best Sharpe (~2.1) and win rate (48%) of the five evaluated strategies.
+# It fires in trend regime; vwap_reversion covers rangebound days as complement.
 STRATEGY_WEIGHTS = {
-    # Legacy (long-biased)
-    "ema_crossover":       0.10,
-    "rsi_mean_reversion":  0.10,
-    "bollinger_breakout":  0.10,
-    "momentum":            0.10,
-    # Direction-agnostic additions
-    "orb":                 0.18,   # highest impact — biggest expected lift
-    "vwap_reversion":      0.13,   # rangebound-day workhorse
-    "supertrend":          0.12,   # high-conviction trend confluence
-    "gap_play":            0.10,   # first-30-min edge
-    "pair_trading":        0.07,   # rangebound stat-arb (selective)
+    # Legacy (long-biased) — retained for signal diversity but down-weighted
+    "ema_crossover":       0.08,
+    "rsi_mean_reversion":  0.07,
+    "bollinger_breakout":  0.07,
+    "momentum":            0.08,
+    # Direction-balanced core
+    "vwap_momentum":       0.20,   # winner: Sharpe ~2.1, 48% win rate
+    "orb":                 0.16,   # strong first-hour edge
+    "vwap_reversion":      0.10,   # rangebound complement to vwap_momentum
+    "supertrend":          0.12,   # trend confirmation / confluence
+    "gap_play":            0.08,   # first-30-min gap edge
+    "pair_trading":        0.04,   # rangebound stat-arb (selective)
 }
 
 # ----- Opening Range Breakout (ORB) -----
@@ -124,6 +128,17 @@ ORB_MIN_BREAKOUT_PCT = 0.10        # min % beyond OR-high/low to count as breako
 # ----- VWAP mean-reversion -----
 VWAP_BAND_K = 1.8                  # multiplier on recent intraday return-stdev
 VWAP_VOL_LOOKBACK = 8              # bars of returns used to size the band
+
+# ----- VWAP Momentum Pullback -----
+# Fires when price returns to VWAP in the direction of the local trend.
+# EMA period determines the intraday trend (20 bars × 15 min = 5 hours context).
+VWAP_MOMENTUM_EMA_PERIOD = 20      # EMA period on today's closes for trend detection
+VWAP_MOMENTUM_BAND_PCT = 0.0025    # max distance from VWAP (0.25%) to qualify as "at VWAP"
+VWAP_MOMENTUM_VOL_MULT = 1.2       # entry bar volume >= 1.2× rolling avg (momentum check)
+VWAP_MOMENTUM_VOL_LOOKBACK = 10    # bars used to compute rolling volume average
+VWAP_MOMENTUM_RSI_PERIOD = 14      # RSI period for momentum exhaustion filter
+VWAP_MOMENTUM_RSI_OB = 70          # RSI above this → skip long (overbought)
+VWAP_MOMENTUM_RSI_OS = 30          # RSI below this → skip short (oversold)
 
 # ----- Supertrend -----
 SUPERTREND_PERIOD = 10
