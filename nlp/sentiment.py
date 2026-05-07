@@ -11,7 +11,7 @@ from typing import Iterable, Optional
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-from config import ENABLE_FINBERT, SENTIMENT_ENGINE
+from config import ENABLE_FINBERT, LLM_ENABLE_SENTIMENT, SENTIMENT_ENGINE
 from db.models import get_conn
 
 log = logging.getLogger(__name__)
@@ -120,7 +120,42 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
             return 0
 
         texts = [f"{r['title']}. {r['summary'] or ''}" for r in rows]
-        scores = _score_batch(texts)
+
+        if LLM_ENABLE_SENTIMENT:
+            from llm.sentiment import score_text_llm  # lazy — keeps dep optional
+            # Attempt LLM per item; collect indices that need fallback.
+            scores: list[float] = []
+            fallback_indices: list[int] = []
+            tickers_per_row = []
+            for i, r in enumerate(rows):
+                # Extract first ticker from the tickers field if present.
+                tickers_field = r["title"]  # title used as proxy; we pull ticker below
+                tickers_per_row.append(None)
+            # Re-query with tickers column.
+            id_list = [r["id"] for r in rows]
+            qmarks = ",".join("?" * len(id_list))
+            ticker_rows = conn.execute(
+                f"SELECT id, tickers FROM news WHERE id IN ({qmarks})", tuple(id_list)
+            ).fetchall()
+            ticker_map = {tr["id"]: (tr["tickers"] or "").split(",")[0].strip() for tr in ticker_rows}
+
+            for i, (r, text) in enumerate(zip(rows, texts)):
+                ticker = ticker_map.get(r["id"]) or None
+                llm_score = score_text_llm(ticker, r["title"], r["summary"] or "")
+                if llm_score is not None:
+                    scores.append(llm_score)
+                else:
+                    fallback_indices.append(i)
+                    scores.append(0.0)  # placeholder
+
+            if fallback_indices:
+                fallback_texts = [texts[i] for i in fallback_indices]
+                fallback_scores = _score_batch(fallback_texts)
+                for i, fs in zip(fallback_indices, fallback_scores):
+                    scores[i] = fs
+        else:
+            scores = _score_batch(texts)
+
         for r, score in zip(rows, scores):
             conn.execute(
                 "UPDATE news SET sentiment=?, processed=1 WHERE id=?",

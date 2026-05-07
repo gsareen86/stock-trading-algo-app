@@ -26,6 +26,16 @@ from strategies import all_strategies, Signal
 
 log = logging.getLogger(__name__)
 
+# Cycle-local weight override. Set via set_strategy_weights() at the start of
+# each cycle when LLM_ENABLE_META_WEIGHTS is on. Defaults to the static config.
+_active_weights: dict = dict(STRATEGY_WEIGHTS)
+
+
+def set_strategy_weights(weights: dict) -> None:
+    """Replace the per-cycle strategy weights used by _aggregate_technical."""
+    global _active_weights
+    _active_weights = weights
+
 
 @dataclass
 class CompositeDecision:
@@ -60,7 +70,7 @@ def _aggregate_technical(signals: List[Signal]) -> tuple[str, float, List[str]]:
     hold_score = 0.0
     reasons = []
     for sig in signals:
-        w = STRATEGY_WEIGHTS.get(sig.strategy, 0.25)
+        w = _active_weights.get(sig.strategy, 0.25)
         if sig.action == "BUY":
             buy_score += sig.score * w
             reasons.append(f"[{sig.strategy} +{sig.score:.0f} w={w:.2f}] {sig.reason}")

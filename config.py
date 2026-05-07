@@ -304,3 +304,25 @@ STAMP_DUTY_DELIVERY_PCT = 0.00015
 ENABLE_ML_META_MODEL = False      # Phase 2
 ENABLE_ADAPTIVE_WEIGHTS = False   # Phase 2
 ENABLE_FINBERT = True             # ProsusAI/finbert via transformers — finance-tuned
+
+# ----- LLM (Claude) integration -----
+# Master switches — set to False to disable individual features without removing code.
+# Requires ANTHROPIC_API_KEY env var. Missing key auto-disables all LLM features.
+LLM_ENABLE_SENTIMENT    = True   # Replace/augment FinBERT with Claude sentiment
+LLM_ENABLE_VETO         = True   # Pre-trade quality gate (PROCEED / REDUCE / SKIP)
+LLM_ENABLE_REGIME       = True   # Narrative market regime (BULLISH/BEARISH/VOLATILE/AVOID)
+LLM_ENABLE_EVENTS       = True   # Earnings / corporate-action extraction from news
+LLM_ENABLE_EOD_REVIEW   = True   # End-of-day trade analysis + parameter recommendations
+LLM_ENABLE_META_WEIGHTS = True   # Hourly adaptive strategy weight rebalancing
+
+# Model selection — cheap fast model for per-cycle calls; smarter model for daily review
+LLM_DEFAULT_MODEL    = "claude-haiku-4-5"    # fallback if no per-feature model set
+LLM_SENTIMENT_MODEL  = "claude-haiku-4-5"    # called per news item (cache mitigates cost)
+LLM_VETO_MODEL       = "claude-haiku-4-5"    # called per trade candidate
+LLM_REGIME_MODEL     = "claude-haiku-4-5"    # called once per cycle
+LLM_EVENTS_MODEL     = "claude-haiku-4-5"    # called per ticker per day (cached)
+LLM_EOD_MODEL        = "claude-sonnet-4-6"   # once daily — better pattern recognition
+LLM_META_MODEL       = "claude-haiku-4-5"    # once per hour
+
+LLM_MAX_RETRIES      = 2     # SDK-level retries on 429 / 5xx
+LLM_REQUEST_TIMEOUT_S = 30   # per-request timeout in seconds
