@@ -6,6 +6,15 @@ import os
 from datetime import timezone, timedelta
 from pathlib import Path
 
+# Load .env BEFORE any os.environ.get() calls so that env vars set in .env
+# are visible when module-level config values are computed at import time.
+# This must stay at the top of this file.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(Path(__file__).parent / ".env", override=False)
+except ImportError:
+    pass  # dotenv optional; env vars must be set another way
+
 # Indian Standard Time offset (+05:30). Use datetime.now(IST) instead of
 # datetime.now(timezone.utc) + timedelta(hours=5, minutes=30) everywhere.
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -343,3 +352,10 @@ else:
 
 LLM_MAX_RETRIES       = 2    # retries on 429 / 5xx
 LLM_REQUEST_TIMEOUT_S = 30   # per-request timeout in seconds
+
+# Emit a clear startup line so you can always verify which model/provider is active.
+import logging as _logging
+_logging.getLogger(__name__).debug(
+    "LLM config: provider=%s model=%s", LLM_PROVIDER, LLM_DEFAULT_MODEL
+)
+print(f"[config] LLM provider={LLM_PROVIDER}  model={LLM_DEFAULT_MODEL}", flush=True)
