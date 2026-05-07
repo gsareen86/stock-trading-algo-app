@@ -26,9 +26,12 @@ vaderSentiment>=3.3.2
 transformers>=4.36.0
 torch>=2.0.0
 
-# LLM integration (Claude via Anthropic SDK). Optional: missing key or package
-# silently disables all LLM features; the bot continues with FinBERT + VADER.
-anthropic>=0.40.0
+# LLM integration. Provider is selected via LLM_PROVIDER in .env.
+# Missing key or package silently disables all LLM features; bot falls back to FinBERT + VADER.
+#   openrouter (default) — uses openai SDK pointed at https://openrouter.ai/api/v1
+#   anthropic            — uses anthropic SDK directly
+openai>=1.30.0        # used for OpenRouter (OpenAI-compatible API)
+anthropic>=0.40.0     # only needed when LLM_PROVIDER=anthropic
 
 # Dashboard
 streamlit>=1.37.0   # need st.fragment (stable in 1.37) for non-blocking partial refresh

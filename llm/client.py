@@ -1,15 +1,17 @@
 """
-Shared Anthropic client + helpers for all LLM-powered features.
+Shared LLM client supporting multiple providers.
 
-Centralises:
-  - Lazy client init (so missing API key doesn't break imports / tests)
-  - JSON-only structured output via output_config.format
-  - Per-call retry budget (SDK already retries 429/5xx with backoff)
-  - Tiny disk cache for stable inputs (sentiment-by-text-hash, events-by-day)
+Supported providers (set LLM_PROVIDER in .env):
+  anthropic   — Claude models via Anthropic SDK (requires ANTHROPIC_API_KEY)
+  openrouter  — Any model via OpenRouter (requires OPENROUTER_API_KEY)
+                Default model: google/gemma-3-27b-it:free (free tier)
 
-We intentionally do NOT raise on API errors — every call returns None on
-failure and lets the caller fall back to its existing path. A trading cycle
-must never crash because the LLM gateway is down.
+Every call returns None on failure — callers always fall back to their
+existing non-LLM path. A trading cycle must never crash because the LLM
+gateway is down or rate-limited.
+
+Disk cache for stable inputs (sentiment-by-text-hash, events-by-day) so
+repeated identical prompts never hit the network.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from config import (
     CACHE_DIR,
     LLM_DEFAULT_MODEL,
     LLM_MAX_RETRIES,
+    LLM_PROVIDER,
     LLM_REQUEST_TIMEOUT_S,
 )
 
@@ -36,31 +39,64 @@ _client_lock = threading.Lock()
 _LLM_CACHE_DIR = Path(CACHE_DIR) / "llm"
 _LLM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# OpenRouter endpoint — OpenAI-compatible
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+_OPENROUTER_APP_TITLE = "IndianEquityBot"  # shown in OpenRouter usage dashboard
+
 
 def get_client():
-    """Lazy-initialised anthropic client. Returns None if SDK or key missing."""
+    """Lazy-initialised provider client. Returns None if SDK or key missing."""
     global _client
     if _client is not None:
         return _client if _client is not False else None
     with _client_lock:
         if _client is None:
-            try:
-                import anthropic  # lazy import — keeps optional dependency optional
-                api_key = os.environ.get("ANTHROPIC_API_KEY")
-                if not api_key:
-                    log.warning("ANTHROPIC_API_KEY not set — LLM features disabled")
-                    _client = False
-                    return None
-                _client = anthropic.Anthropic(
-                    api_key=api_key,
-                    timeout=LLM_REQUEST_TIMEOUT_S,
-                    max_retries=LLM_MAX_RETRIES,
-                )
-            except ImportError:
-                log.warning("anthropic package not installed — LLM features disabled")
-                _client = False
-                return None
+            _client = _init_client()
     return _client if _client is not False else None
+
+
+def _init_client():
+    if LLM_PROVIDER == "anthropic":
+        return _init_anthropic()
+    return _init_openrouter()
+
+
+def _init_anthropic():
+    try:
+        import anthropic
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            log.warning("ANTHROPIC_API_KEY not set — LLM features disabled")
+            return False
+        return anthropic.Anthropic(
+            api_key=api_key,
+            timeout=LLM_REQUEST_TIMEOUT_S,
+            max_retries=LLM_MAX_RETRIES,
+        )
+    except ImportError:
+        log.warning("anthropic package not installed — LLM features disabled")
+        return False
+
+
+def _init_openrouter():
+    try:
+        import openai
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            log.warning("OPENROUTER_API_KEY not set — LLM features disabled")
+            return False
+        return openai.OpenAI(
+            api_key=api_key,
+            base_url=_OPENROUTER_BASE_URL,
+            timeout=LLM_REQUEST_TIMEOUT_S,
+            max_retries=LLM_MAX_RETRIES,
+            default_headers={
+                "X-Title": _OPENROUTER_APP_TITLE,
+            },
+        )
+    except ImportError:
+        log.warning("openai package not installed — LLM features disabled (needed for OpenRouter)")
+        return False
 
 
 def call_json(
@@ -72,12 +108,12 @@ def call_json(
     max_tokens: int = 512,
     cache_key: Optional[str] = None,
 ) -> Optional[dict]:
-    """One-shot Claude call constrained to a JSON schema.
+    """One-shot LLM call constrained to a JSON schema.
 
     Returns the parsed dict, or None on any failure (caller falls back).
 
-    `cache_key`: if given, response is cached on disk. Use stable hashes only —
-    e.g. sha256(text) for sentiment. Don't cache time-sensitive inputs.
+    `cache_key`: if given, response is cached on disk. Use stable hashes only
+    (e.g. sha256(text) for sentiment). Don't cache time-sensitive inputs.
     """
     if cache_key:
         cached = _cache_get(cache_key)
@@ -89,6 +125,26 @@ def call_json(
         return None
 
     model = model or LLM_DEFAULT_MODEL
+    t0 = time.monotonic()
+
+    if LLM_PROVIDER == "anthropic":
+        result = _call_anthropic(client, prompt=prompt, schema=schema,
+                                 system=system, model=model, max_tokens=max_tokens)
+    else:
+        result = _call_openrouter(client, prompt=prompt, schema=schema,
+                                  system=system, model=model, max_tokens=max_tokens)
+
+    if result is None:
+        return None
+
+    log.debug("LLM call ok in %.2fs (%s/%s)", time.monotonic() - t0, LLM_PROVIDER, model)
+
+    if cache_key:
+        _cache_put(cache_key, result)
+    return result
+
+
+def _call_anthropic(client, *, prompt, schema, system, model, max_tokens) -> Optional[dict]:
     kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
@@ -99,28 +155,83 @@ def call_json(
     }
     if system:
         kwargs["system"] = system
-
     try:
-        t0 = time.monotonic()
         response = client.messages.create(**kwargs)
-    except Exception as e:
-        log.warning("LLM call failed (%s) — caller will fall back", e)
-        return None
-
-    try:
         text = next(b.text for b in response.content if b.type == "text")
-        parsed = json.loads(text)
-    except (StopIteration, json.JSONDecodeError, AttributeError) as e:
-        log.warning("LLM response parse failed: %s", e)
-        return None
+        return json.loads(text)
+    except StopIteration:
+        log.warning("Anthropic: no text block in response")
+    except json.JSONDecodeError as e:
+        log.warning("Anthropic: JSON parse failed: %s", e)
+    except Exception as e:
+        log.warning("Anthropic call failed: %s", e)
+    return None
 
-    log.debug("LLM call ok in %.2fs (%s, %d output tokens)",
-              time.monotonic() - t0, model,
-              getattr(response.usage, "output_tokens", -1))
 
-    if cache_key:
-        _cache_put(cache_key, parsed)
-    return parsed
+def _call_openrouter(client, *, prompt, schema, system, model, max_tokens) -> Optional[dict]:
+    # OpenRouter uses the OpenAI-compatible API. We request JSON output via
+    # response_format and embed the schema in the system prompt so the model
+    # knows what fields to produce. Not all free models support json_schema
+    # response_format, so we use json_object (broadly supported) + parse.
+    schema_hint = _schema_to_prompt_hint(schema)
+    sys_content = (system or "") + (
+        f"\n\nRespond with a valid JSON object only — no markdown, no explanation.\n"
+        f"Required structure:\n{schema_hint}"
+    )
+    messages = [
+        {"role": "system", "content": sys_content},
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+        )
+        text = response.choices[0].message.content or ""
+        return _extract_json(text)
+    except Exception as e:
+        log.warning("OpenRouter call failed (%s/%s): %s", LLM_PROVIDER, model, e)
+    return None
+
+
+def _schema_to_prompt_hint(schema: dict) -> str:
+    """Convert JSON schema properties to a simple field list for the prompt."""
+    props = schema.get("properties", {})
+    required = set(schema.get("required", []))
+    lines = []
+    for field, meta in props.items():
+        ftype = meta.get("type", "any")
+        desc = meta.get("description", "")
+        req = " (required)" if field in required else ""
+        lines.append(f'  "{field}": {ftype}{req}  — {desc}' if desc else f'  "{field}": {ftype}{req}')
+    return "{\n" + "\n".join(lines) + "\n}"
+
+
+def _extract_json(text: str) -> Optional[dict]:
+    """Parse JSON from model output, tolerating markdown code fences."""
+    text = text.strip()
+    # Strip ```json ... ``` or ``` ... ``` fences if present
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(
+            line for line in lines
+            if not line.strip().startswith("```")
+        ).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Try to find the first {...} block
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(text[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+    log.warning("LLM: could not parse JSON from response: %.120s", text)
+    return None
 
 
 def hash_text(text: str) -> str:

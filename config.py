@@ -2,6 +2,7 @@
 Central configuration for the virtual trading bot.
 All tunables live here so they can be safely edited without hunting through modules.
 """
+import os
 from datetime import timezone, timedelta
 from pathlib import Path
 
@@ -305,24 +306,40 @@ ENABLE_ML_META_MODEL = False      # Phase 2
 ENABLE_ADAPTIVE_WEIGHTS = False   # Phase 2
 ENABLE_FINBERT = True             # ProsusAI/finbert via transformers — finance-tuned
 
-# ----- LLM (Claude) integration -----
+# ----- LLM integration -----
 # Master switches — set to False to disable individual features without removing code.
-# Requires ANTHROPIC_API_KEY env var. Missing key auto-disables all LLM features.
-LLM_ENABLE_SENTIMENT    = True   # Replace/augment FinBERT with Claude sentiment
+LLM_ENABLE_SENTIMENT    = True   # Replace/augment FinBERT with LLM sentiment
 LLM_ENABLE_VETO         = True   # Pre-trade quality gate (PROCEED / REDUCE / SKIP)
 LLM_ENABLE_REGIME       = True   # Narrative market regime (BULLISH/BEARISH/VOLATILE/AVOID)
 LLM_ENABLE_EVENTS       = True   # Earnings / corporate-action extraction from news
 LLM_ENABLE_EOD_REVIEW   = True   # End-of-day trade analysis + parameter recommendations
 LLM_ENABLE_META_WEIGHTS = True   # Hourly adaptive strategy weight rebalancing
 
-# Model selection — cheap fast model for per-cycle calls; smarter model for daily review
-LLM_DEFAULT_MODEL    = "claude-haiku-4-5"    # fallback if no per-feature model set
-LLM_SENTIMENT_MODEL  = "claude-haiku-4-5"    # called per news item (cache mitigates cost)
-LLM_VETO_MODEL       = "claude-haiku-4-5"    # called per trade candidate
-LLM_REGIME_MODEL     = "claude-haiku-4-5"    # called once per cycle
-LLM_EVENTS_MODEL     = "claude-haiku-4-5"    # called per ticker per day (cached)
-LLM_EOD_MODEL        = "claude-sonnet-4-6"   # once daily — better pattern recognition
-LLM_META_MODEL       = "claude-haiku-4-5"    # once per hour
+# Provider selection — set LLM_PROVIDER=anthropic or LLM_PROVIDER=openrouter in .env
+# "openrouter" is the default (free models available, no Anthropic account needed).
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openrouter").lower()
 
-LLM_MAX_RETRIES      = 2     # SDK-level retries on 429 / 5xx
+if LLM_PROVIDER == "anthropic":
+    # Requires ANTHROPIC_API_KEY. Haiku for fast per-cycle calls; Sonnet for EOD review.
+    LLM_DEFAULT_MODEL    = "claude-haiku-4-5"
+    LLM_SENTIMENT_MODEL  = "claude-haiku-4-5"
+    LLM_VETO_MODEL       = "claude-haiku-4-5"
+    LLM_REGIME_MODEL     = "claude-haiku-4-5"
+    LLM_EVENTS_MODEL     = "claude-haiku-4-5"
+    LLM_EOD_MODEL        = "claude-sonnet-4-6"   # better pattern recognition for daily review
+    LLM_META_MODEL       = "claude-haiku-4-5"
+else:
+    # OpenRouter — requires OPENROUTER_API_KEY.
+    # Override any individual model via OPENROUTER_MODEL env var.
+    # Find model IDs at https://openrouter.ai/models (filter by :free for free tier).
+    _OR_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemma-3-27b-it:free")
+    LLM_DEFAULT_MODEL    = _OR_MODEL
+    LLM_SENTIMENT_MODEL  = _OR_MODEL
+    LLM_VETO_MODEL       = _OR_MODEL
+    LLM_REGIME_MODEL     = _OR_MODEL
+    LLM_EVENTS_MODEL     = _OR_MODEL
+    LLM_EOD_MODEL        = _OR_MODEL
+    LLM_META_MODEL       = _OR_MODEL
+
+LLM_MAX_RETRIES       = 2    # retries on 429 / 5xx
 LLM_REQUEST_TIMEOUT_S = 30   # per-request timeout in seconds
