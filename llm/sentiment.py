@@ -60,6 +60,68 @@ _SYSTEM = (
 )
 
 
+_BATCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scores": {
+            "type": "array",
+            "items": {"type": "number"},
+            "description": (
+                "One sentiment float per input item, same order. "
+                "-1.0 = very bearish, 0.0 = neutral, +1.0 = very bullish."
+            ),
+        }
+    },
+    "required": ["scores"],
+    "additionalProperties": False,
+}
+
+
+def score_batch_llm(items: list[dict]) -> Optional[list[float]]:
+    """Score a batch of news items in ONE LLM call.
+
+    `items`: list of {ticker, title, summary} dicts.
+    Returns a list of floats in the same order, or None on failure.
+    This is the preferred call path — use `score_text_llm` only for
+    single-item ad-hoc scoring.
+    """
+    if not items:
+        return []
+
+    lines = []
+    for i, it in enumerate(items, 1):
+        ticker = it.get("ticker") or ""
+        title  = (it.get("title") or "")[:200]
+        summ   = (it.get("summary") or "")[:100]
+        ticker_part = f"[{ticker}] " if ticker else ""
+        summ_part   = f" — {summ}" if summ else ""
+        lines.append(f"{i}. {ticker_part}{title}{summ_part}")
+
+    prompt = (
+        "Score the intraday sentiment of each news item for Indian equity trading.\n"
+        "Return exactly one float per item in the same order.\n\n"
+        + "\n".join(lines)
+        + "\n\nOutput ONLY the JSON object."
+    )
+
+    result = call_json(
+        prompt=prompt,
+        schema=_BATCH_SCHEMA,
+        system=_SYSTEM,
+        model=LLM_SENTIMENT_MODEL,
+        max_tokens=200 + len(items) * 15,
+    )
+    if result is None:
+        return None
+
+    raw = result.get("scores", [])
+    if not isinstance(raw, list) or len(raw) != len(items):
+        log.warning("LLM batch sentiment: expected %d scores, got %s", len(items), len(raw) if isinstance(raw, list) else type(raw))
+        return None
+
+    return [max(-1.0, min(1.0, float(s))) for s in raw]
+
+
 def score_text_llm(ticker: Optional[str], title: str, summary: str = "") -> Optional[float]:
     """Score one news item with Claude. Returns [-1, +1] or None on failure.
 

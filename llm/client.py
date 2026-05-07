@@ -89,7 +89,10 @@ def _init_openrouter():
             api_key=api_key,
             base_url=_OPENROUTER_BASE_URL,
             timeout=LLM_REQUEST_TIMEOUT_S,
-            max_retries=LLM_MAX_RETRIES,
+            # 0 retries: on free-tier rate limits the reset window is 60s, so
+            # retrying after <1s just burns 2 more slots and still fails.
+            # Fail fast and let the caller use its non-LLM fallback instead.
+            max_retries=0,
             default_headers={
                 "X-Title": _OPENROUTER_APP_TITLE,
             },

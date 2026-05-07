@@ -122,37 +122,19 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
         texts = [f"{r['title']}. {r['summary'] or ''}" for r in rows]
 
         if LLM_ENABLE_SENTIMENT:
-            from llm.sentiment import score_text_llm  # lazy — keeps dep optional
-            # Attempt LLM per item; collect indices that need fallback.
-            scores: list[float] = []
-            fallback_indices: list[int] = []
-            tickers_per_row = []
-            for i, r in enumerate(rows):
-                # Extract first ticker from the tickers field if present.
-                tickers_field = r["title"]  # title used as proxy; we pull ticker below
-                tickers_per_row.append(None)
-            # Re-query with tickers column.
-            id_list = [r["id"] for r in rows]
-            qmarks = ",".join("?" * len(id_list))
-            ticker_rows = conn.execute(
-                f"SELECT id, tickers FROM news WHERE id IN ({qmarks})", tuple(id_list)
-            ).fetchall()
-            ticker_map = {tr["id"]: (tr["tickers"] or "").split(",")[0].strip() for tr in ticker_rows}
-
-            for i, (r, text) in enumerate(zip(rows, texts)):
-                ticker = ticker_map.get(r["id"]) or None
-                llm_score = score_text_llm(ticker, r["title"], r["summary"] or "")
-                if llm_score is not None:
-                    scores.append(llm_score)
-                else:
-                    fallback_indices.append(i)
-                    scores.append(0.0)  # placeholder
-
-            if fallback_indices:
-                fallback_texts = [texts[i] for i in fallback_indices]
-                fallback_scores = _score_batch(fallback_texts)
-                for i, fs in zip(fallback_indices, fallback_scores):
-                    scores[i] = fs
+            from llm.sentiment import score_batch_llm  # lazy — keeps dep optional
+            # One LLM call for ALL items — avoids per-item rate-limit burn.
+            llm_items = [
+                {"ticker": "", "title": r["title"], "summary": r["summary"] or ""}
+                for r in rows
+            ]
+            llm_scores = score_batch_llm(llm_items)
+            if llm_scores is not None and len(llm_scores) == len(rows):
+                scores = llm_scores
+                log.debug("LLM batch sentiment: scored %d items", len(scores))
+            else:
+                log.debug("LLM batch sentiment failed or wrong length — falling back to FinBERT/VADER")
+                scores = _score_batch(texts)
         else:
             scores = _score_batch(texts)
 
