@@ -133,6 +133,7 @@ def run_eod_review() -> Optional[dict]:
         system=_SYSTEM,
         model=LLM_EOD_MODEL,
         max_tokens=1500,
+        caller="eod_review",
     )
     if review is None:
         return None

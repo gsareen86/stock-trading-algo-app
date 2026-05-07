@@ -296,7 +296,7 @@ with st.sidebar:
 
 (
     tab_ctrl, tab_overview, tab_pos, tab_news,
-    tab_fund, tab_analytics, tab_lt_research, tab_logs,
+    tab_fund, tab_analytics, tab_lt_research, tab_logs, tab_llm,
 ) = st.tabs([
     "🎛️ Control Panel",
     "📊 Overview",
@@ -306,6 +306,7 @@ with st.sidebar:
     "📉 Analytics",
     "🔬 Long-Term Research",
     "📋 Logs",
+    "🤖 LLM Observability",
 ])
 
 
@@ -2234,6 +2235,124 @@ with tab_logs:
             st.caption("No cycles recorded yet.")
     except Exception as _le:
         st.caption(f"Cycle log unavailable: {_le}")
+
+
+# ==================================================================
+# 9. LLM Observability
+# ==================================================================
+
+with tab_llm:
+    st.header("🤖 LLM Observability")
+
+    try:
+        from llm.observability import today_totals, today_by_caller, daily_summary, recent_calls
+        from config import LLM_PROVIDER, LLM_DEFAULT_MODEL
+
+        # ── Header: active config ──────────────────────────────────────
+        st.caption(f"Provider: **{LLM_PROVIDER}** · Model: `{LLM_DEFAULT_MODEL}`")
+
+        # ── Today's budget summary ─────────────────────────────────────
+        _totals = today_totals()
+        _FREE_DAY_LIMIT = 50  # OpenRouter free tier
+
+        if _totals:
+            _calls   = int(_totals.get("calls", 0))
+            _ok      = int(_totals.get("ok", 0))
+            _cached  = int(_totals.get("cached", 0))
+            _errors  = int(_totals.get("errors", 0))
+            _tokens  = int(_totals.get("tokens", 0))
+            _budget_pct = min(100, int(_calls / _FREE_DAY_LIMIT * 100)) if LLM_PROVIDER == "openrouter" else 0
+
+            _bc1, _bc2, _bc3, _bc4, _bc5 = st.columns(5)
+            _bc1.metric("Calls today",    _calls)
+            _bc2.metric("Successful",     _ok,     delta=f"{_cached} cached", delta_color="off")
+            _bc3.metric("Errors",         _errors, delta_color="inverse")
+            _bc4.metric("Tokens today",   f"{_tokens:,}")
+            if LLM_PROVIDER == "openrouter":
+                _bc5.metric("Free budget used", f"{_budget_pct}%",
+                            delta=f"{_FREE_DAY_LIMIT - _calls} remaining",
+                            delta_color="inverse" if _budget_pct > 80 else "normal")
+
+            if LLM_PROVIDER == "openrouter" and _budget_pct >= 80:
+                st.warning(
+                    f"⚠️ {_calls}/{_FREE_DAY_LIMIT} free requests used today "
+                    f"({_budget_pct}%). LLM features will fall back to FinBERT/VADER "
+                    "if the daily limit is hit."
+                )
+        else:
+            st.info("No LLM calls recorded yet today.")
+
+        st.divider()
+
+        # ── Today's calls by feature ───────────────────────────────────
+        st.subheader("Today — calls by feature")
+        _by_caller = today_by_caller()
+        if _by_caller:
+            import pandas as _pd
+            _df_caller = _pd.DataFrame(_by_caller)
+            _df_caller.columns = [c.replace("_", " ").title() for c in _df_caller.columns]
+            _df_caller["Avg Latency Ms"] = _df_caller["Avg Latency Ms"].apply(
+                lambda x: f"{int(x)} ms" if x else "—"
+            )
+            st.dataframe(_df_caller, use_container_width=True, hide_index=True)
+
+            # Mini bar chart: calls per feature
+            _chart_data = _pd.DataFrame({
+                "Feature": [r["caller"] for r in _by_caller],
+                "OK":      [r["ok"] for r in _by_caller],
+                "Cached":  [r["cached"] for r in _by_caller],
+                "Errors":  [r["errors"] for r in _by_caller],
+            }).set_index("Feature")
+            st.bar_chart(_chart_data, color=["#2196F3", "#4CAF50", "#F44336"])
+        else:
+            st.caption("No calls today.")
+
+        st.divider()
+
+        # ── 7-day daily summary ────────────────────────────────────────
+        st.subheader("7-day daily summary")
+        _daily = daily_summary(7)
+        if _daily:
+            import pandas as _pd
+            _df_daily = _pd.DataFrame(_daily)
+            _df_daily.columns = [c.replace("_", " ").title() for c in _df_daily.columns]
+            st.dataframe(_df_daily, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No history yet.")
+
+        st.divider()
+
+        # ── Recent call log ────────────────────────────────────────────
+        st.subheader("Recent calls (last 100)")
+        _n_recent = st.slider("Rows to show", 20, 100, 50, key="llm_obs_rows")
+        _recent = recent_calls(_n_recent)
+        if _recent:
+            import pandas as _pd
+            _df_recent = _pd.DataFrame(_recent)
+            # Friendly column names
+            _df_recent = _df_recent.rename(columns={
+                "ts": "Time (UTC)", "provider": "Provider", "model": "Model",
+                "caller": "Feature", "status": "Status",
+                "prompt_tokens": "Prompt Tok", "completion_tokens": "Completion Tok",
+                "total_tokens": "Total Tok", "latency_ms": "Latency ms",
+                "error_msg": "Error",
+            })
+            # Colour-code status column
+            def _status_colour(val):
+                colours = {"ok": "background-color:#1b5e20;color:white",
+                           "cached": "background-color:#1a237e;color:white",
+                           "rate_limited": "background-color:#e65100;color:white",
+                           "error": "background-color:#b71c1c;color:white"}
+                return colours.get(val, "")
+            st.dataframe(
+                _df_recent.style.applymap(_status_colour, subset=["Status"]),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.caption("No calls recorded.")
+
+    except Exception as _llm_obs_err:
+        st.error(f"LLM observability unavailable: {_llm_obs_err}")
 
 
 # ==================================================================

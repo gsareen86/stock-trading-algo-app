@@ -91,6 +91,7 @@ def adaptive_weights(
         model=LLM_META_MODEL,
         max_tokens=400,
         cache_key=_cache_key(),
+        caller="meta_weights",
     )
     if result is None:
         return dict(STRATEGY_WEIGHTS)

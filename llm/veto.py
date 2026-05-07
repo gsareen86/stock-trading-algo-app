@@ -112,6 +112,7 @@ def llm_veto(
         system=_SYSTEM,
         model=LLM_VETO_MODEL,
         max_tokens=300,
+        caller="veto",
     )
     if result is None:
         return VERDICT_PROCEED, "llm unavailable; fail open"

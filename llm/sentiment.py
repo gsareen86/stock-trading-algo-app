@@ -110,6 +110,7 @@ def score_batch_llm(items: list[dict]) -> Optional[list[float]]:
         system=_SYSTEM,
         model=LLM_SENTIMENT_MODEL,
         max_tokens=200 + len(items) * 15,
+        caller="sentiment_batch",
     )
     if result is None:
         return None
@@ -149,6 +150,7 @@ def score_text_llm(ticker: Optional[str], title: str, summary: str = "") -> Opti
         model=LLM_SENTIMENT_MODEL,
         max_tokens=200,
         cache_key=cache_key,
+        caller="sentiment",
     )
     if result is None:
         return None

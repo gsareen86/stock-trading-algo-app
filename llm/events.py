@@ -102,6 +102,7 @@ def _call_with_cache(prompt: str, cache_key: str) -> Optional[list[dict]]:
         model=LLM_EVENTS_MODEL,
         max_tokens=600,
         cache_key=cache_key,
+        caller="events",
     )
     if result is None:
         return None

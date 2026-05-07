@@ -31,7 +31,6 @@ from config import (
     LLM_PROVIDER,
     LLM_REQUEST_TIMEOUT_S,
 )
-
 log = logging.getLogger(__name__)
 
 _client = None
@@ -110,6 +109,7 @@ def call_json(
     model: Optional[str] = None,
     max_tokens: int = 512,
     cache_key: Optional[str] = None,
+    caller: str = "",               # feature name for observability (e.g. "sentiment")
 ) -> Optional[dict]:
     """One-shot LLM call constrained to a JSON schema.
 
@@ -117,37 +117,64 @@ def call_json(
 
     `cache_key`: if given, response is cached on disk. Use stable hashes only
     (e.g. sha256(text) for sentiment). Don't cache time-sensitive inputs.
+    `caller`: optional tag recorded in llm_call_log (e.g. "veto", "regime").
     """
+    from llm.observability import record as _obs_record
+
+    model = model or LLM_DEFAULT_MODEL
+
     if cache_key:
         cached = _cache_get(cache_key)
         if cached is not None:
+            _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
+                        status="cached", latency_ms=0)
             return cached
 
     client = get_client()
     if client is None:
         return None
 
-    model = model or LLM_DEFAULT_MODEL
     t0 = time.monotonic()
+    prompt_tokens = completion_tokens = None
+    error_msg = None
 
-    if LLM_PROVIDER == "anthropic":
-        result = _call_anthropic(client, prompt=prompt, schema=schema,
-                                 system=system, model=model, max_tokens=max_tokens)
-    else:
-        result = _call_openrouter(client, prompt=prompt, schema=schema,
-                                  system=system, model=model, max_tokens=max_tokens)
+    try:
+        if LLM_PROVIDER == "anthropic":
+            result, prompt_tokens, completion_tokens = _call_anthropic(
+                client, prompt=prompt, schema=schema,
+                system=system, model=model, max_tokens=max_tokens)
+        else:
+            result, prompt_tokens, completion_tokens = _call_openrouter(
+                client, prompt=prompt, schema=schema,
+                system=system, model=model, max_tokens=max_tokens)
+    except Exception as e:
+        result = None
+        error_msg = str(e)
+
+    latency_ms = int((time.monotonic() - t0) * 1000)
 
     if result is None:
+        # Classify the failure type for cleaner stats
+        status = "rate_limited" if "429" in (error_msg or "") else "error"
+        _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
+                    status=status, prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=latency_ms, error_msg=error_msg)
         return None
 
-    log.debug("LLM call ok in %.2fs (%s/%s)", time.monotonic() - t0, LLM_PROVIDER, model)
+    log.debug("LLM ok %.0fms %s/%s pt=%s ct=%s",
+              latency_ms, LLM_PROVIDER, model, prompt_tokens, completion_tokens)
+    _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
+                status="ok", prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens, latency_ms=latency_ms)
 
     if cache_key:
         _cache_put(cache_key, result)
     return result
 
 
-def _call_anthropic(client, *, prompt, schema, system, model, max_tokens) -> Optional[dict]:
+def _call_anthropic(client, *, prompt, schema, system, model, max_tokens):
+    """Returns (parsed_dict_or_None, prompt_tokens, completion_tokens)."""
     kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
@@ -160,22 +187,22 @@ def _call_anthropic(client, *, prompt, schema, system, model, max_tokens) -> Opt
         kwargs["system"] = system
     try:
         response = client.messages.create(**kwargs)
+        pt = getattr(getattr(response, "usage", None), "input_tokens", None)
+        ct = getattr(getattr(response, "usage", None), "output_tokens", None)
         text = next(b.text for b in response.content if b.type == "text")
-        return json.loads(text)
+        return json.loads(text), pt, ct
     except StopIteration:
         log.warning("Anthropic: no text block in response")
     except json.JSONDecodeError as e:
         log.warning("Anthropic: JSON parse failed: %s", e)
     except Exception as e:
         log.warning("Anthropic call failed: %s", e)
-    return None
+        raise
+    return None, None, None
 
 
-def _call_openrouter(client, *, prompt, schema, system, model, max_tokens) -> Optional[dict]:
-    # OpenRouter uses the OpenAI-compatible API. We request JSON output via
-    # response_format and embed the schema in the system prompt so the model
-    # knows what fields to produce. Not all free models support json_schema
-    # response_format, so we use json_object (broadly supported) + parse.
+def _call_openrouter(client, *, prompt, schema, system, model, max_tokens):
+    """Returns (parsed_dict_or_None, prompt_tokens, completion_tokens)."""
     schema_hint = _schema_to_prompt_hint(schema)
     sys_content = (system or "") + (
         f"\n\nRespond with a valid JSON object only — no markdown, no explanation.\n"
@@ -192,11 +219,16 @@ def _call_openrouter(client, *, prompt, schema, system, model, max_tokens) -> Op
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
         )
+        usage = getattr(response, "usage", None)
+        pt = getattr(usage, "prompt_tokens", None)
+        ct = getattr(usage, "completion_tokens", None)
         text = response.choices[0].message.content or ""
-        return _extract_json(text)
+        parsed = _extract_json(text)
+        return parsed, pt, ct
     except Exception as e:
         log.warning("OpenRouter call failed (%s/%s): %s", LLM_PROVIDER, model, e)
-    return None
+        raise
+    return None, None, None
 
 
 def _schema_to_prompt_hint(schema: dict) -> str:

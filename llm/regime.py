@@ -94,6 +94,7 @@ def classify_regime(
         system=_SYSTEM,
         model=LLM_REGIME_MODEL,
         max_tokens=200,
+        caller="regime",
     )
     if result is None:
         # Fail open — map technical regime to mood
