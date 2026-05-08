@@ -13,7 +13,7 @@ ts              TEXT     ISO timestamp (UTC)
 provider        TEXT     "anthropic" | "openrouter"
 model           TEXT     full model id
 caller          TEXT     feature name: sentiment|veto|regime|events|eod_review|meta_weights
-status          TEXT     "ok" | "cached" | "rate_limited" | "error"
+status          TEXT     "ok" | "cached" | "rate_limited" | "circuit_open" | "error"
 prompt_tokens   INTEGER  input tokens (None if unavailable)
 completion_tokens INTEGER output tokens (None if unavailable)
 total_tokens    INTEGER  sum (None if unavailable)
@@ -120,7 +120,7 @@ def daily_summary(days: int = 7) -> list[dict]:
                        COUNT(*)                   AS calls,
                        SUM(status='ok')            AS ok,
                        SUM(status='cached')        AS cached,
-                       SUM(status IN ('error','rate_limited')) AS errors,
+                       SUM(status IN ('error','rate_limited','circuit_open')) AS errors,
                        COALESCE(SUM(prompt_tokens),0)     AS prompt_tokens,
                        COALESCE(SUM(completion_tokens),0) AS completion_tokens
                    FROM llm_call_log
@@ -146,7 +146,7 @@ def today_by_caller() -> list[dict]:
                        COUNT(*)                   AS calls,
                        SUM(status='ok')            AS ok,
                        SUM(status='cached')        AS cached,
-                       SUM(status IN ('error','rate_limited')) AS errors,
+                       SUM(status IN ('error','rate_limited','circuit_open')) AS errors,
                        COALESCE(SUM(total_tokens),0) AS total_tokens,
                        COALESCE(AVG(CASE WHEN status='ok' THEN latency_ms END),0) AS avg_latency_ms
                    FROM llm_call_log
@@ -189,7 +189,7 @@ def today_totals() -> dict:
                        COUNT(*)                              AS calls,
                        SUM(status='ok')                      AS ok,
                        SUM(status='cached')                  AS cached,
-                       SUM(status IN ('error','rate_limited')) AS errors,
+                       SUM(status IN ('error','rate_limited','circuit_open')) AS errors,
                        COALESCE(SUM(total_tokens),0)         AS tokens
                    FROM llm_call_log
                    WHERE substr(ts,1,10) = date('now')""",

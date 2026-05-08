@@ -31,6 +31,21 @@ from config import (
     LLM_PROVIDER,
     LLM_REQUEST_TIMEOUT_S,
 )
+
+# ── Circuit breaker ───────────────────────────────────────────────────────────
+# After _CB_THRESHOLD consecutive 429 failures the breaker opens and all
+# call_json() calls return None immediately for _CB_COOLDOWN_S seconds.
+# This stops the bot wasting 8-10 seconds per cycle on doomed API attempts
+# and prevents burning whatever little rate-limit budget remains.
+# The breaker resets automatically after the cooldown window passes.
+import threading as _threading
+
+_CB_THRESHOLD  = 3     # consecutive 429s before opening the breaker
+_CB_COOLDOWN_S = 600   # 10-minute cooldown once opened
+
+_cb_lock              = _threading.Lock()
+_cb_consecutive_429s  = 0
+_cb_open_until        = 0.0   # monotonic timestamp; 0 = breaker closed
 log = logging.getLogger(__name__)
 
 _client = None
@@ -101,6 +116,43 @@ def _init_openrouter():
         return False
 
 
+def _cb_is_open() -> bool:
+    """True if the circuit breaker is currently open (skip all calls)."""
+    global _cb_open_until
+    with _cb_lock:
+        if _cb_open_until and time.monotonic() < _cb_open_until:
+            return True
+        if _cb_open_until and time.monotonic() >= _cb_open_until:
+            # Auto-reset after cooldown
+            _cb_open_until = 0.0
+            log.info("LLM circuit breaker RESET — will attempt calls again")
+        return False
+
+
+def _cb_record_429(model: str) -> None:
+    global _cb_consecutive_429s, _cb_open_until
+    with _cb_lock:
+        _cb_consecutive_429s += 1
+        if _cb_consecutive_429s >= _CB_THRESHOLD and not _cb_open_until:
+            _cb_open_until = time.monotonic() + _CB_COOLDOWN_S
+            resume = datetime.fromtimestamp(time.time() + _CB_COOLDOWN_S).strftime("%H:%M:%S")
+            log.warning(
+                "LLM circuit breaker OPEN after %d consecutive 429s on %s — "
+                "skipping all LLM calls for %d min (until ~%s). "
+                "Bot falls back to FinBERT/VADER/technical regime.",
+                _cb_consecutive_429s, model, _CB_COOLDOWN_S // 60, resume,
+            )
+
+
+def _cb_record_success() -> None:
+    global _cb_consecutive_429s, _cb_open_until
+    with _cb_lock:
+        if _cb_consecutive_429s:
+            log.info("LLM circuit breaker: consecutive failures reset after success")
+        _cb_consecutive_429s = 0
+        _cb_open_until = 0.0
+
+
 def call_json(
     *,
     prompt: str,
@@ -130,6 +182,13 @@ def call_json(
                         status="cached", latency_ms=0)
             return cached
 
+    # Circuit breaker: skip API call entirely when in cooldown
+    if _cb_is_open():
+        _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
+                    status="circuit_open", latency_ms=0,
+                    error_msg="circuit breaker open — skipping API call")
+        return None
+
     client = get_client()
     if client is None:
         return None
@@ -154,14 +213,18 @@ def call_json(
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     if result is None:
+        is_429 = "429" in (error_msg or "")
+        if is_429:
+            _cb_record_429(model)
         # Classify the failure type for cleaner stats
-        status = "rate_limited" if "429" in (error_msg or "") else "error"
+        status = "rate_limited" if is_429 else "error"
         _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
                     status=status, prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     latency_ms=latency_ms, error_msg=error_msg)
         return None
 
+    _cb_record_success()
     log.debug("LLM ok %.0fms %s/%s pt=%s ct=%s",
               latency_ms, LLM_PROVIDER, model, prompt_tokens, completion_tokens)
     _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,

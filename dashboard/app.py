@@ -282,6 +282,20 @@ with st.sidebar:
 
     st.fragment(run_every=_frag_refresh)(_sidebar_cycle_chip)()
 
+    # Bot-process start time — the single most useful staleness indicator.
+    # If the time shown here doesn't match when you started the app, your
+    # browser tab is stale: press Ctrl+Shift+R (hard refresh) to reconnect.
+    try:
+        with get_conn() as _sc:
+            _bc = _sc.execute(
+                "SELECT updated_at FROM bot_control WHERE id=1"
+            ).fetchone()
+        if _bc and _bc["updated_at"]:
+            _started_str = _bc["updated_at"][:16].replace("T", " ") + " UTC"
+            st.caption(f"Bot started: {_started_str}")
+    except Exception:
+        pass
+
     # Version indicator — shows which git branch/commit is running.
     try:
         import subprocess as _sp
