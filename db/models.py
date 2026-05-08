@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS fundamentals (
 CREATE TABLE IF NOT EXISTS bot_control (
     id INTEGER PRIMARY KEY CHECK (id=1),
     status TEXT NOT NULL DEFAULT 'STOPPED',
-    mode TEXT NOT NULL DEFAULT 'manual',
+    mode TEXT NOT NULL DEFAULT 'auto',
     updated_at TEXT,
     max_open_positions INTEGER DEFAULT 5,
     risk_per_trade_pct REAL DEFAULT 0.04,
@@ -382,7 +382,7 @@ CREATE TABLE IF NOT EXISTS fundamentals (
 CREATE TABLE IF NOT EXISTS bot_control (
     id INTEGER PRIMARY KEY CHECK (id=1),
     status TEXT NOT NULL DEFAULT 'STOPPED',
-    mode TEXT NOT NULL DEFAULT 'manual',
+    mode TEXT NOT NULL DEFAULT 'auto',
     updated_at TEXT,
     max_open_positions INTEGER DEFAULT 5,
     risk_per_trade_pct DOUBLE PRECISION DEFAULT 0.04,
@@ -705,7 +705,7 @@ def init_db() -> None:
             _migrate_positional_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
-                   VALUES (1, 'STOPPED', 'manual', ?)
+                   VALUES (1, 'STOPPED', 'auto', ?)
                    ON CONFLICT (id) DO NOTHING""",
                 (datetime.utcnow().isoformat(),),
             )
@@ -723,7 +723,7 @@ def init_db() -> None:
                 _migrate_positional_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
-                       VALUES (1, 'STOPPED', 'manual', %s)
+                       VALUES (1, 'STOPPED', 'auto', %s)
                        ON CONFLICT (id) DO NOTHING""",
                     (datetime.utcnow().isoformat(),),
                 )

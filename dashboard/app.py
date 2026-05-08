@@ -221,25 +221,33 @@ with st.sidebar:
     )
     st.markdown(f"**Mode:** `{mode.upper()}`")
 
-    _mkt_open = market_is_open()
-    # Fragment refresh cadence: only auto-poll when the market is open.
-    # When closed there is nothing changing, so fragments run once on page
-    # load and stay static until the user hits "Refresh now". This eliminates
-    # the Streamlit ⟳/Stop spinner that was firing every 15–30 s even at night.
-    _frag_refresh = 60 if _mkt_open else None
+    # Market status — always in a fragment so it refreshes every 60s and
+    # correctly transitions from CLOSED→OPEN at 09:15 without a manual refresh.
+    def _market_status_fragment():
+        _mkt_open = market_is_open()
+        if _mkt_open:
+            st.markdown('<div class="banner-ok">🕒 <b>NSE Market OPEN</b></div>',
+                        unsafe_allow_html=True)
+        else:
+            _now = _now_ist()
+            if _now.weekday() >= 5:  # Sat/Sun
+                next_open = "Monday 09:15 IST"
+            elif _now.strftime("%H:%M") < "09:15":
+                next_open = "Today 09:15 IST"
+            else:
+                next_open = "Tomorrow 09:15 IST"
+            st.markdown(
+                f'<div class="banner-warn">🕒 <b>NSE Market CLOSED</b><br>'
+                f'<sub>Next open: {next_open}</sub></div>',
+                unsafe_allow_html=True,
+            )
 
-    if _mkt_open:
-        st.markdown('<div class="banner-ok">🕒 <b>NSE Market OPEN</b></div>',
-                    unsafe_allow_html=True)
-    else:
-        next_open = "Monday 09:15 IST" if _now_ist().weekday() >= 4 else "Tomorrow 09:15 IST"
-        if _now_ist().weekday() < 5 and _now_ist().strftime("%H:%M") < "09:15":
-            next_open = "Today 09:15 IST"
-        st.markdown(
-            f'<div class="banner-warn">🕒 <b>NSE Market CLOSED</b><br>'
-            f'<sub>Next open: {next_open}</sub></div>',
-            unsafe_allow_html=True,
-        )
+    st.fragment(run_every=60)(_market_status_fragment)()
+
+    _mkt_open = market_is_open()
+    # Fragment refresh cadence: 60s when open so live panels tick; 120s when
+    # closed (just enough to catch the 09:15 open without hammering the server).
+    _frag_refresh = 60 if _mkt_open else 120
 
     # ------------------------------------------------------------------
     # Live updates

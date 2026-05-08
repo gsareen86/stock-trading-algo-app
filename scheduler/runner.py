@@ -139,7 +139,7 @@ def last_cycle_summary() -> dict | None:
 def get_bot_state() -> dict:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM bot_control WHERE id=1").fetchone()
-    return dict(row) if row else {"status": "STOPPED", "mode": "manual"}
+    return dict(row) if row else {"status": "STOPPED", "mode": "auto"}
 
 
 def set_bot_state(status: str | None = None, mode: str | None = None) -> None:

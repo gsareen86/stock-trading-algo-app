@@ -186,7 +186,7 @@ NO_TRADE_WINDOWS: list[tuple[str, str]] = [
 ]
 
 # ----- Bot control defaults -----
-DEFAULT_MODE = "manual"           # 'manual' | 'auto' | 'dry_run'  (user chose manual)
+DEFAULT_MODE = "auto"             # 'manual' | 'auto' | 'dry_run'
 APPROVAL_TIMEOUT_MIN = 10         # auto-reject pending approvals after N minutes
 SIGNAL_POLL_INTERVAL_SEC = 900    # 15 min - matches candle interval
 

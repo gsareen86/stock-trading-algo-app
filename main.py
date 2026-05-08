@@ -94,9 +94,16 @@ def main():
 
     init_db()
     initialize_if_empty()
-    # On first startup, default to user's chosen mode but STOPPED status
-    # (User toggles RUN from the dashboard).
-    set_bot_state(status="STOPPED", mode=DEFAULT_MODE)
+    # Auto-start: if market is currently open, set RUNNING immediately so the
+    # bot doesn't sit idle requiring a manual click. If market is closed, keep
+    # STOPPED — the run_forever loop will pick up automatically once open.
+    from data.fetcher import market_is_open as _market_is_open
+    from datetime import datetime as _dt
+    from config import IST as _IST
+    _auto_status = "RUNNING" if _market_is_open(_dt.now(_IST)) else "STOPPED"
+    set_bot_state(status=_auto_status, mode=DEFAULT_MODE)
+    print(f"[startup] Market {'OPEN' if _auto_status == 'RUNNING' else 'CLOSED'}"
+          f" — bot status set to {_auto_status}, mode={DEFAULT_MODE}", flush=True)
 
     # Pre-warm FinBERT in a background thread so the first news-scrape cycle
     # doesn't block for ~3 minutes while the 400 MB model downloads and loads.

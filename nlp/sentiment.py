@@ -121,9 +121,9 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
 
         texts = [f"{r['title']}. {r['summary'] or ''}" for r in rows]
 
-        if LLM_ENABLE_SENTIMENT:
+        _LLM_BATCH_MAX = 20  # cap per LLM call to protect rate-limit budget
+        if LLM_ENABLE_SENTIMENT and len(rows) <= _LLM_BATCH_MAX:
             from llm.sentiment import score_batch_llm  # lazy — keeps dep optional
-            # One LLM call for ALL items — avoids per-item rate-limit burn.
             llm_items = [
                 {"ticker": "", "title": r["title"], "summary": r["summary"] or ""}
                 for r in rows
@@ -133,9 +133,15 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
                 scores = llm_scores
                 log.debug("LLM batch sentiment: scored %d items", len(scores))
             else:
-                log.debug("LLM batch sentiment failed or wrong length — falling back to FinBERT/VADER")
+                log.debug("LLM batch failed — falling back to FinBERT/VADER")
                 scores = _score_batch(texts)
         else:
+            if LLM_ENABLE_SENTIMENT and len(rows) > _LLM_BATCH_MAX:
+                log.info(
+                    "sentiment: %d items exceeds LLM batch cap (%d) — "
+                    "using FinBERT/VADER to protect rate-limit budget",
+                    len(rows), _LLM_BATCH_MAX,
+                )
             scores = _score_batch(texts)
 
         for r, score in zip(rows, scores):
