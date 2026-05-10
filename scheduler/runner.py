@@ -23,6 +23,11 @@ from config import (
     APPROVAL_TIMEOUT_MIN,
     ATR_T1_PARTIAL_PCT,
     IST,
+    LLM_ENABLE_EOD_REVIEW,
+    LLM_ENABLE_EVENTS,
+    LLM_ENABLE_META_WEIGHTS,
+    LLM_ENABLE_REGIME,
+    LLM_ENABLE_VETO,
     MIN_COMPOSITE_SCORE,
     NEAR_CLOSE_POLL_INTERVAL_SEC,
     NEAR_CLOSE_START,
@@ -63,7 +68,7 @@ from engine.portfolio import (
 )
 from engine.risk_manager import can_open_new, position_size
 from nlp.sentiment import score_news_items
-from scoring.composite import evaluate_batch, CompositeDecision
+from scoring.composite import evaluate_batch, set_strategy_weights, CompositeDecision
 
 log = logging.getLogger(__name__)
 
@@ -134,7 +139,7 @@ def last_cycle_summary() -> dict | None:
 def get_bot_state() -> dict:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM bot_control WHERE id=1").fetchone()
-    return dict(row) if row else {"status": "STOPPED", "mode": "manual"}
+    return dict(row) if row else {"status": "STOPPED", "mode": "auto"}
 
 
 def set_bot_state(status: str | None = None, mode: str | None = None) -> None:
@@ -443,6 +448,28 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         cycle_start_ist = datetime.now(IST)
         market_open = market_is_open(cycle_start_ist)
 
+        # Short-circuit when the market is closed. Fetching news + candles for
+        # 50 tickers and running every strategy on stale data wastes ~20-30 s
+        # per cycle and produces no actionable signals (no entries/exits are
+        # possible while NSE is shut). We only run light bookkeeping —
+        # expire stale approvals — and return.
+        if not market_open:
+            try:
+                expired = expire_stale_approvals()
+            except Exception as e:
+                log.warning("expire_stale_approvals failed: %s", e)
+                expired = 0
+            out = {
+                "ts": datetime.utcnow().isoformat(),
+                "market_open": False,
+                "skipped": True,
+                "reason": "market closed",
+                "expired": expired,
+            }
+            LAST_CYCLE, LAST_CYCLE_TS = out, datetime.utcnow()
+            _cycle_end(cycle_id, "SKIPPED", out)
+            return out
+
         # Refresh news + sentiment (throttled: every ~30 min)
         try:
             scrape_all()
@@ -514,6 +541,43 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                 log.warning("nifty_regime crashed: %s", e)
                 regime, trend_reason = "neutral", f"regime error: {e}"
 
+        # ----- LLM narrative regime (augments technical regime) -----
+        llm_mood = None
+        size_multiplier = 1.0
+        if LLM_ENABLE_REGIME:
+            try:
+                from llm.regime import classify_regime, mood_to_gates
+                from data.fetcher import latest_price
+                nifty_price = latest_price("^NSEI") or 0.0
+                nifty_ema20_approx = nifty_price  # best-effort without refetch
+                with get_conn() as _conn:
+                    _headlines = [
+                        r["title"] for r in _conn.execute(
+                            "SELECT title FROM news ORDER BY ts DESC LIMIT 8"
+                        ).fetchall()
+                    ]
+                llm_mood, llm_reason = classify_regime(
+                    nifty_price=nifty_price,
+                    nifty_ema20=nifty_ema20_approx,
+                    technical_regime=regime,
+                    headlines=_headlines,
+                )
+                _allow_long, _allow_short, size_multiplier = mood_to_gates(llm_mood)
+                trend_reason = f"{trend_reason} | LLM: {llm_mood} — {llm_reason}"
+                log.info("LLM regime: %s (size_mult=%.1f)", llm_mood, size_multiplier)
+            except Exception as e:
+                log.warning("LLM regime failed: %s", e)
+
+        # ----- LLM adaptive strategy weights -----
+        if LLM_ENABLE_META_WEIGHTS:
+            try:
+                from llm.meta_weights import adaptive_weights
+                _nifty_chg = None
+                w = adaptive_weights(technical_regime=regime)
+                set_strategy_weights(w)
+            except Exception as e:
+                log.warning("LLM meta-weights failed: %s", e)
+
         signals_seen = 0
         buys_found = 0
         sells_found = 0
@@ -524,6 +588,12 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
 
         allow_long  = (regime in ("bullish", "neutral"))
         allow_short = (regime in ("bearish", "neutral"))
+        # LLM mood can further restrict direction (AVOID → both False)
+        if llm_mood is not None:
+            from llm.regime import mood_to_gates
+            _ll, _ls, _ = mood_to_gates(llm_mood)
+            allow_long  = allow_long  and _ll
+            allow_short = allow_short and _ls
 
         # Always evaluate and log signals so the Signal History panel shows
         # what was generated even during no-trade windows and STOPPED state.
@@ -617,6 +687,63 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                     t1 = None
                     atr_used = None
 
+                # ----- LLM corporate-event blocker -----
+                if LLM_ENABLE_EVENTS:
+                    try:
+                        from llm.events import extract_events, has_blocking_event
+                        with get_conn() as _conn:
+                            _news_rows = _conn.execute(
+                                """SELECT title, summary, ts, tickers FROM news
+                                   WHERE tickers LIKE ? ORDER BY ts DESC LIMIT 15""",
+                                (f"%{d.ticker}%",),
+                            ).fetchall()
+                        _news_items = [dict(r) for r in _news_rows]
+                        _events = extract_events(d.ticker, _news_items) or []
+                        _block = has_blocking_event(_events, side=side)
+                        if _block:
+                            log.info("LLM event block %s %s: %s", side, d.ticker, _block)
+                            continue
+                    except Exception as e:
+                        log.warning("LLM events check failed for %s: %s", d.ticker, e)
+
+                # ----- LLM pre-trade veto gate -----
+                if LLM_ENABLE_VETO:
+                    try:
+                        from llm.veto import llm_veto, apply_veto_to_qty
+                        with get_conn() as _conn:
+                            _recent_news = [
+                                dict(r) for r in _conn.execute(
+                                    """SELECT title, ts, sentiment FROM news
+                                       WHERE tickers LIKE ? ORDER BY ts DESC LIMIT 5""",
+                                    (f"%{d.ticker}%",),
+                                ).fetchall()
+                            ]
+                        _fired = [
+                            (s.strategy, s.action, s.score)
+                            for s in d.signals
+                            if s.action != "HOLD"
+                        ]
+                        _verdict, _vreason = llm_veto(
+                            ticker=d.ticker, side=side, price=d.price,
+                            composite_score=d.composite_score,
+                            technical_score=d.technical_score,
+                            sentiment_score=d.sentiment_score,
+                            fired_strategies=_fired,
+                            regime=regime, recent_news=_recent_news,
+                        )
+                        qty = apply_veto_to_qty(qty, _verdict)
+                        if qty == 0:
+                            log.info("LLM veto SKIP %s %s: %s", side, d.ticker, _vreason)
+                            continue
+                        if _verdict == "REDUCE":
+                            log.info("LLM veto REDUCE %s %s (50%%): %s", side, d.ticker, _vreason)
+                    except Exception as e:
+                        log.warning("LLM veto failed for %s: %s", d.ticker, e)
+
+                # Apply LLM size multiplier (from VOLATILE / AVOID mood)
+                if size_multiplier < 1.0:
+                    qty = max(1, int(qty * size_multiplier))
+
                 if mode == "dry_run":
                     continue
                 elif mode == "auto":
@@ -643,6 +770,18 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                     # execute_single_approval() can use it for the short path.
                     enqueue_approval(d, qty, sl, tp, side=side)
                     enqueued += 1
+
+        # ----- LLM EOD review (fires once daily around 16:00 IST) -----
+        if LLM_ENABLE_EOD_REVIEW:
+            _eod_hhmm = now_ist.strftime("%H:%M")
+            if "16:00" <= _eod_hhmm <= "16:15":
+                try:
+                    from llm.eod_review import run_eod_review
+                    _review = run_eod_review()
+                    if _review:
+                        log.info("EOD review complete: %s", _review.get("summary", ""))
+                except Exception as e:
+                    log.warning("EOD review failed: %s", e)
 
         # Always snapshot so the chart moves even when no trades happen
         snapshot(prices)
@@ -676,11 +815,16 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
 
 
 def _next_poll_interval() -> int:
-    """Use the tighter near-close cadence between NEAR_CLOSE_START and 15:30
-    IST so intraday square-off fires within ≤NEAR_CLOSE_POLL_INTERVAL_SEC of
-    the cutoff instead of the default 15-min lag."""
-    now_ist = datetime.now(IST).strftime("%H:%M")
-    if NEAR_CLOSE_START <= now_ist <= "15:30":
+    """Adaptive poll cadence:
+      - market closed → 30 min idle poll (no fetches, just status)
+      - 15:00–15:30 IST → near-close cadence (5 min) so square-off fires fast
+      - otherwise default 15 min poll matching the 15-min candle interval
+    """
+    now = datetime.now(IST)
+    if not market_is_open(now):
+        return 1800  # 30 min idle poll when market closed
+    hhmm = now.strftime("%H:%M")
+    if NEAR_CLOSE_START <= hhmm <= "15:30":
         return NEAR_CLOSE_POLL_INTERVAL_SEC
     return SIGNAL_POLL_INTERVAL_SEC
 

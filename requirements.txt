@@ -26,6 +26,13 @@ vaderSentiment>=3.3.2
 transformers>=4.36.0
 torch>=2.0.0
 
+# LLM integration. Provider is selected via LLM_PROVIDER in .env.
+# Missing key or package silently disables all LLM features; bot falls back to FinBERT + VADER.
+#   openrouter (default) — uses openai SDK pointed at https://openrouter.ai/api/v1
+#   anthropic            — uses anthropic SDK directly
+openai>=1.30.0        # used for OpenRouter (OpenAI-compatible API)
+anthropic>=0.40.0     # only needed when LLM_PROVIDER=anthropic
+
 # Dashboard
 streamlit>=1.37.0   # need st.fragment (stable in 1.37) for non-blocking partial refresh
 plotly>=5.18.0
@@ -44,3 +51,9 @@ psycopg[binary]>=3.2.0
 python-dotenv>=1.0.0
 tqdm>=4.66.0
 tabulate>=0.9.0
+
+# Positional trading module — Telegram notifications (optional; silently
+# skipped if TELEGRAM_BOT_TOKEN not set). Uses stdlib urllib for requests
+# so this entry is only needed if you prefer the full python-telegram-bot SDK.
+# The current alerts.py uses urllib directly to avoid the extra dependency.
+# python-telegram-bot>=20.0   # optional — uncomment if you want richer Telegram features

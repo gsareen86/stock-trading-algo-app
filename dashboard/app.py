@@ -221,25 +221,33 @@ with st.sidebar:
     )
     st.markdown(f"**Mode:** `{mode.upper()}`")
 
-    _mkt_open = market_is_open()
-    # Fragment refresh cadence: only auto-poll when the market is open.
-    # When closed there is nothing changing, so fragments run once on page
-    # load and stay static until the user hits "Refresh now". This eliminates
-    # the Streamlit ⟳/Stop spinner that was firing every 15–30 s even at night.
-    _frag_refresh = 60 if _mkt_open else None
+    # Market status — always in a fragment so it refreshes every 60s and
+    # correctly transitions from CLOSED→OPEN at 09:15 without a manual refresh.
+    def _market_status_fragment():
+        _mkt_open = market_is_open()
+        if _mkt_open:
+            st.markdown('<div class="banner-ok">🕒 <b>NSE Market OPEN</b></div>',
+                        unsafe_allow_html=True)
+        else:
+            _now = _now_ist()
+            if _now.weekday() >= 5:  # Sat/Sun
+                next_open = "Monday 09:15 IST"
+            elif _now.strftime("%H:%M") < "09:15":
+                next_open = "Today 09:15 IST"
+            else:
+                next_open = "Tomorrow 09:15 IST"
+            st.markdown(
+                f'<div class="banner-warn">🕒 <b>NSE Market CLOSED</b><br>'
+                f'<sub>Next open: {next_open}</sub></div>',
+                unsafe_allow_html=True,
+            )
 
-    if _mkt_open:
-        st.markdown('<div class="banner-ok">🕒 <b>NSE Market OPEN</b></div>',
-                    unsafe_allow_html=True)
-    else:
-        next_open = "Monday 09:15 IST" if _now_ist().weekday() >= 4 else "Tomorrow 09:15 IST"
-        if _now_ist().weekday() < 5 and _now_ist().strftime("%H:%M") < "09:15":
-            next_open = "Today 09:15 IST"
-        st.markdown(
-            f'<div class="banner-warn">🕒 <b>NSE Market CLOSED</b><br>'
-            f'<sub>Next open: {next_open}</sub></div>',
-            unsafe_allow_html=True,
-        )
+    st.fragment(run_every=60)(_market_status_fragment)()
+
+    _mkt_open = market_is_open()
+    # Fragment refresh cadence: 60s when open so live panels tick; 120s when
+    # closed (just enough to catch the 09:15 open without hammering the server).
+    _frag_refresh = 60 if _mkt_open else 120
 
     # ------------------------------------------------------------------
     # Live updates
@@ -274,6 +282,20 @@ with st.sidebar:
 
     st.fragment(run_every=_frag_refresh)(_sidebar_cycle_chip)()
 
+    # Bot-process start time — the single most useful staleness indicator.
+    # If the time shown here doesn't match when you started the app, your
+    # browser tab is stale: press Ctrl+Shift+R (hard refresh) to reconnect.
+    try:
+        with get_conn() as _sc:
+            _bc = _sc.execute(
+                "SELECT updated_at FROM bot_control WHERE id=1"
+            ).fetchone()
+        if _bc and _bc["updated_at"]:
+            _started_str = _bc["updated_at"][:16].replace("T", " ") + " UTC"
+            st.caption(f"Bot started: {_started_str}")
+    except Exception:
+        pass
+
     # Version indicator — shows which git branch/commit is running.
     try:
         import subprocess as _sp
@@ -296,7 +318,7 @@ with st.sidebar:
 
 (
     tab_ctrl, tab_overview, tab_pos, tab_news,
-    tab_fund, tab_analytics, tab_lt_research, tab_logs,
+    tab_fund, tab_analytics, tab_lt_research, tab_logs, tab_llm, tab_positional,
 ) = st.tabs([
     "🎛️ Control Panel",
     "📊 Overview",
@@ -306,6 +328,8 @@ with st.sidebar:
     "📉 Analytics",
     "🔬 Long-Term Research",
     "📋 Logs",
+    "🤖 LLM Observability",
+    "📈 Positional Trading",
 ])
 
 
@@ -2234,6 +2258,535 @@ with tab_logs:
             st.caption("No cycles recorded yet.")
     except Exception as _le:
         st.caption(f"Cycle log unavailable: {_le}")
+
+
+# ==================================================================
+# 9. LLM Observability
+# ==================================================================
+
+with tab_llm:
+    st.header("🤖 LLM Observability")
+
+    try:
+        from llm.observability import today_totals, today_by_caller, daily_summary, recent_calls
+        from config import LLM_PROVIDER, LLM_DEFAULT_MODEL
+
+        # ── Header: active config ──────────────────────────────────────
+        st.caption(f"Provider: **{LLM_PROVIDER}** · Model: `{LLM_DEFAULT_MODEL}`")
+
+        # ── Today's budget summary ─────────────────────────────────────
+        _totals = today_totals()
+        _FREE_DAY_LIMIT = 50  # OpenRouter free tier
+
+        if _totals:
+            _calls   = int(_totals.get("calls", 0))
+            _ok      = int(_totals.get("ok", 0))
+            _cached  = int(_totals.get("cached", 0))
+            _errors  = int(_totals.get("errors", 0))
+            _tokens  = int(_totals.get("tokens", 0))
+            _budget_pct = min(100, int(_calls / _FREE_DAY_LIMIT * 100)) if LLM_PROVIDER == "openrouter" else 0
+
+            _bc1, _bc2, _bc3, _bc4, _bc5 = st.columns(5)
+            _bc1.metric("Calls today",    _calls)
+            _bc2.metric("Successful",     _ok,     delta=f"{_cached} cached", delta_color="off")
+            _bc3.metric("Errors",         _errors, delta_color="inverse")
+            _bc4.metric("Tokens today",   f"{_tokens:,}")
+            if LLM_PROVIDER == "openrouter":
+                _bc5.metric("Free budget used", f"{_budget_pct}%",
+                            delta=f"{_FREE_DAY_LIMIT - _calls} remaining",
+                            delta_color="inverse" if _budget_pct > 80 else "normal")
+
+            if LLM_PROVIDER == "openrouter" and _budget_pct >= 80:
+                st.warning(
+                    f"⚠️ {_calls}/{_FREE_DAY_LIMIT} free requests used today "
+                    f"({_budget_pct}%). LLM features will fall back to FinBERT/VADER "
+                    "if the daily limit is hit."
+                )
+        else:
+            st.info("No LLM calls recorded yet today.")
+
+        st.divider()
+
+        # ── Today's calls by feature ───────────────────────────────────
+        st.subheader("Today — calls by feature")
+        _by_caller = today_by_caller()
+        if _by_caller:
+            import pandas as _pd
+            _df_caller = _pd.DataFrame(_by_caller)
+            _df_caller.columns = [c.replace("_", " ").title() for c in _df_caller.columns]
+            _df_caller["Avg Latency Ms"] = _df_caller["Avg Latency Ms"].apply(
+                lambda x: f"{int(x)} ms" if x else "—"
+            )
+            st.dataframe(_df_caller, use_container_width=True, hide_index=True)
+
+            # Mini bar chart: calls per feature
+            _chart_data = _pd.DataFrame({
+                "Feature": [r["caller"] for r in _by_caller],
+                "OK":      [r["ok"] for r in _by_caller],
+                "Cached":  [r["cached"] for r in _by_caller],
+                "Errors":  [r["errors"] for r in _by_caller],
+            }).set_index("Feature")
+            st.bar_chart(_chart_data, color=["#2196F3", "#4CAF50", "#F44336"])
+        else:
+            st.caption("No calls today.")
+
+        st.divider()
+
+        # ── 7-day daily summary ────────────────────────────────────────
+        st.subheader("7-day daily summary")
+        _daily = daily_summary(7)
+        if _daily:
+            import pandas as _pd
+            _df_daily = _pd.DataFrame(_daily)
+            _df_daily.columns = [c.replace("_", " ").title() for c in _df_daily.columns]
+            st.dataframe(_df_daily, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No history yet.")
+
+        st.divider()
+
+        # ── Recent call log ────────────────────────────────────────────
+        st.subheader("Recent calls (last 100)")
+        _n_recent = st.slider("Rows to show", 20, 100, 50, key="llm_obs_rows")
+        _recent = recent_calls(_n_recent)
+        if _recent:
+            import pandas as _pd
+            _df_recent = _pd.DataFrame(_recent)
+            # Friendly column names
+            _df_recent = _df_recent.rename(columns={
+                "ts": "Time (UTC)", "provider": "Provider", "model": "Model",
+                "caller": "Feature", "status": "Status",
+                "prompt_tokens": "Prompt Tok", "completion_tokens": "Completion Tok",
+                "total_tokens": "Total Tok", "latency_ms": "Latency ms",
+                "error_msg": "Error",
+            })
+            # Colour-code status column
+            def _status_colour(val):
+                colours = {"ok": "background-color:#1b5e20;color:white",
+                           "cached": "background-color:#1a237e;color:white",
+                           "rate_limited": "background-color:#e65100;color:white",
+                           "error": "background-color:#b71c1c;color:white"}
+                return colours.get(val, "")
+            st.dataframe(
+                _df_recent.style.applymap(_status_colour, subset=["Status"]),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.caption("No calls recorded.")
+
+    except Exception as _llm_obs_err:
+        st.error(f"LLM observability unavailable: {_llm_obs_err}")
+
+
+# ==================================================================
+# 10. Positional Trading (Minervini VCP)
+# ==================================================================
+
+with tab_positional:
+    st.header("📈 Positional Trading — Minervini VCP Strategy")
+    st.caption(
+        "EOD scanner based on Mark Minervini's Trend Template + VCP. "
+        "Runs daily at 4:00 PM IST. Separate ₹1,00,000 capital pool."
+    )
+
+    try:
+        from positional.market_regime import get_latest_regime, compute_market_regime
+        from positional.universe import universe_stats, get_universe_df, process_screener_csv
+        from positional.scanner import get_latest_scan_results, run_eod_scan as _run_pos_scan
+        from positional.runner import run_exit_checks as _run_pos_exits
+        from config import (
+            POSITIONAL_CAPITAL, POSITIONAL_MAX_POSITIONS, POSITIONAL_HARD_STOP_PCT,
+            POSITIONAL_SCAN_TIME, POSITIONAL_ALERT_TIME, POSITIONAL_BROKER,
+            POSITIONAL_FUND_MIN_ROCE, POSITIONAL_FUND_MIN_ROE,
+            POSITIONAL_FUND_MIN_SALES_GROWTH, POSITIONAL_FUND_MAX_DE,
+        )
+
+        # ── Enable/Disable toggle ─────────────────────────────────────────
+        try:
+            with get_conn() as _pc:
+                _pos_ctrl = _pc.execute(
+                    "SELECT positional_enabled FROM bot_control WHERE id=1"
+                ).fetchone()
+            _pos_on = bool(_pos_ctrl and _pos_ctrl["positional_enabled"])
+        except Exception:
+            _pos_on = False
+
+        _pe_col1, _pe_col2 = st.columns([3, 1])
+        with _pe_col1:
+            st.markdown(
+                f"**Status:** {'🟢 Enabled' if _pos_on else '🔴 Disabled'}  &nbsp;|&nbsp; "
+                f"Capital: ₹{POSITIONAL_CAPITAL:,.0f}  &nbsp;|&nbsp; "
+                f"Max positions: {POSITIONAL_MAX_POSITIONS}  &nbsp;|&nbsp; "
+                f"Hard stop: {POSITIONAL_HARD_STOP_PCT:.0%}  &nbsp;|&nbsp; "
+                f"Broker: `{POSITIONAL_BROKER}`"
+            )
+        with _pe_col2:
+            if st.button("Toggle Positional" + (" OFF" if _pos_on else " ON"),
+                         key="pos_toggle"):
+                try:
+                    with get_conn() as _pc:
+                        _pc.execute(
+                            "UPDATE bot_control SET positional_enabled=? WHERE id=1",
+                            (0 if _pos_on else 1,)
+                        )
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Toggle failed: {_e}")
+
+        st.divider()
+
+        # ── SECTION 1: Market Regime ──────────────────────────────────────
+        st.subheader("🌡️ Market Regime")
+        _regime = get_latest_regime()
+        _flag   = _regime.get("flag", "NEUTRAL")
+        _computed_at = _regime.get("computed_at")
+        _size_mult   = float(_regime.get("size_multiplier") or 0.70)
+
+        _flag_colors = {"DEFENSIVE": "#ff4b4b", "NEUTRAL": "#ffc000", "AGGRESSIVE": "#1bc47d"}
+        _flag_icons  = {"DEFENSIVE": "🔴", "NEUTRAL": "🟡", "AGGRESSIVE": "🟢"}
+        _flag_color  = _flag_colors.get(_flag, "#888")
+        _flag_icon   = _flag_icons.get(_flag, "⚪")
+
+        st.markdown(
+            f"<div style='background:rgba(128,128,128,0.1); border-left:5px solid {_flag_color}; "
+            f"padding:12px 16px; border-radius:6px; margin-bottom:12px'>"
+            f"<b style='font-size:1.2rem; color:{_flag_color}'>{_flag_icon} {_flag}</b> &nbsp; "
+            f"Position size multiplier: <b>{_size_mult:.0%}</b><br>"
+            f"<small>{_regime.get('notes', '')}</small></div>",
+            unsafe_allow_html=True
+        )
+
+        _r1, _r2, _r3, _r4 = st.columns(4)
+        _r1.metric("Nifty 18M ROC", f"{_regime.get('nifty_roc_18m') or 'N/A'}"
+                   + ("%" if _regime.get('nifty_roc_18m') is not None else ""),
+                   help="18-month Rate of Change for Nifty 50")
+        _r2.metric("Smallcap 20M ROC", f"{_regime.get('smallcap_roc_20m') or 'N/A'}"
+                   + ("%" if _regime.get('smallcap_roc_20m') is not None else ""),
+                   help="20-month Rate of Change for Nifty Smallcap 250")
+        _r3.metric("Nifty/Gold Ratio", f"{_regime.get('nifty_gold_ratio') or 'N/A'}",
+                   help="Nifty 50 ÷ GOLDBEES.NS — outperformance indicator")
+        _r4.metric("Last Updated",
+                   to_ist(_computed_at).strftime("%d %b %H:%M") if _computed_at else "Never")
+
+        if st.button("🔄 Refresh Market Regime (monthly)", key="pos_regime_refresh"):
+            with st.spinner("Fetching 2 years of monthly data..."):
+                try:
+                    _new_regime = compute_market_regime()
+                    st.success(f"Regime updated: **{_new_regime['flag']}** — {_new_regime['notes']}")
+                    st.rerun()
+                except Exception as _re:
+                    st.error(f"Regime computation failed: {_re}")
+
+        st.divider()
+
+        # ── SECTION 2: Universe Manager ───────────────────────────────────
+        st.subheader("🗂️ Fundamental Universe (Screener.in)")
+
+        _stats = universe_stats()
+        _u1, _u2, _u3 = st.columns(3)
+        _u1.metric("Stocks in Universe", _stats.get("active", 0),
+                   help="Stocks passing all fundamental filters")
+        _u2.metric("Total Imported", _stats.get("total", 0))
+        _last_imp = _stats.get("last_import")
+        _u3.metric("Last Import",
+                   to_ist(_last_imp).strftime("%d %b %Y %H:%M") if _last_imp else "Never")
+
+        st.markdown(
+            f"**Active filters:** ROCE ≥ {POSITIONAL_FUND_MIN_ROCE}%  |  "
+            f"ROE ≥ {POSITIONAL_FUND_MIN_ROE}%  |  "
+            f"Sales Growth ≥ {POSITIONAL_FUND_MIN_SALES_GROWTH}%  |  "
+            f"Debt/Equity ≤ {POSITIONAL_FUND_MAX_DE}"
+        )
+
+        with st.expander("📤 Upload Screener.in CSV", expanded=(_stats.get("active", 0) == 0)):
+            st.markdown("""
+**Steps to export from Screener.in:**
+1. Go to [screener.in/explore/](https://www.screener.in/explore/)
+2. Apply filters: `ROCE % > 15`, `ROE % > 15`, `Sales growth 3Years > 15`, `Debt to equity < 1`
+3. Click **Export to Excel/CSV** (top right)
+4. Upload the downloaded CSV file here ↓
+            """)
+            _uploaded = st.file_uploader(
+                "Upload Screener.in export CSV",
+                type=["csv"],
+                key="pos_universe_upload",
+                help="Export from screener.in with ROCE, ROE, Sales Growth, D/E columns"
+            )
+            if _uploaded is not None:
+                with st.spinner(f"Processing {_uploaded.name}..."):
+                    try:
+                        _result = process_screener_csv(
+                            _uploaded.read(), filename=_uploaded.name
+                        )
+                        if _result["errors"]:
+                            for _err in _result["errors"]:
+                                st.warning(_err)
+                        st.success(
+                            f"✅ Processed {_result['total_rows']} rows — "
+                            f"**{_result['passed']} stocks** passed filters, "
+                            f"{_result['failed']} filtered out."
+                        )
+                        st.rerun()
+                    except Exception as _ue:
+                        st.error(f"Upload failed: {_ue}")
+
+        if _stats.get("active", 0) > 0:
+            with st.expander(f"View Universe ({_stats.get('active', 0)} stocks)", expanded=False):
+                _udf = get_universe_df()
+                if not _udf.empty:
+                    _active_df = _udf[_udf["in_universe"] == 1].copy()
+                    _active_df = _active_df.drop(columns=["in_universe", "filter_reason"],
+                                                  errors="ignore")
+                    for _col in ["roce", "roe", "sales_growth", "debt_to_equity"]:
+                        if _col in _active_df.columns:
+                            _active_df[_col] = _active_df[_col].apply(
+                                lambda x: f"{x:.1f}" if pd.notna(x) else "-"
+                            )
+                    st.markdown(
+                        _active_df.to_html(index=False, classes="dashtable"),
+                        unsafe_allow_html=True
+                    )
+
+        st.divider()
+
+        # ── SECTION 3: EOD Scan Results ───────────────────────────────────
+        st.subheader("🔍 Latest EOD Scan")
+
+        _pos_sa, _pos_sb = st.columns([2, 1])
+        with _pos_sa:
+            st.caption(f"Scans run daily at {POSITIONAL_SCAN_TIME} IST after market close")
+        with _pos_sb:
+            if st.button("▶ Run EOD Scan Now", key="pos_run_scan"):
+                with st.spinner("Running Minervini scan on fundamental universe..."):
+                    try:
+                        _sr = _run_pos_scan()
+                        st.success(
+                            f"Scan complete: {_sr.get('buy_alerts',0)} BUY alerts, "
+                            f"{_sr.get('universe_size',0)} tickers scanned."
+                        )
+                        st.rerun()
+                    except Exception as _se:
+                        st.error(f"Scan failed: {_se}")
+
+        _scan_rows = get_latest_scan_results(limit=30)
+        if _scan_rows:
+            import pandas as pd
+            _sdf = pd.DataFrame(_scan_rows)
+            _sdf["scanned_at"] = to_ist(_sdf["scanned_at"]).dt.strftime("%d %b %H:%M")
+
+            def _alert_badge(a):
+                if a == "BUY":   return "🔔 BUY"
+                if a == "WATCH": return "👀 WATCH"
+                return a
+
+            _sdf["alert_type"]     = _sdf["alert_type"].apply(_alert_badge)
+            _sdf["trend_template"] = _sdf["trend_template"].apply(lambda x: "✓" if x else "✗")
+            _sdf["vcp_detected"]   = _sdf["vcp_detected"].apply(lambda x: "✓" if x else "")
+            _sdf["score"]          = _sdf["score"].apply(lambda x: f"{x:.0f}")
+            _sdf["proximity_52w_pct"] = _sdf["proximity_52w_pct"].apply(
+                lambda x: f"{x:.1f}%" if pd.notna(x) else "-"
+            )
+            _sdf["price"] = _sdf["price"].apply(lambda x: f"₹{x:,.2f}" if pd.notna(x) else "-")
+
+            _display_cols = ["scanned_at", "ticker", "price", "score", "alert_type",
+                             "trend_template", "vcp_detected", "proximity_52w_pct",
+                             "ema21", "ema50", "ema200"]
+            _display_cols = [c for c in _display_cols if c in _sdf.columns]
+            st.markdown(
+                _sdf[_display_cols].rename(columns={
+                    "scanned_at":       "Scanned",
+                    "trend_template":   "Trend ✓",
+                    "vcp_detected":     "VCP",
+                    "proximity_52w_pct":"52W dist",
+                    "alert_type":       "Alert",
+                }).to_html(index=False, classes="dashtable"),
+                unsafe_allow_html=True
+            )
+        else:
+            st.info("No scan results yet. Click **Run EOD Scan Now** or wait for the 4 PM scheduled scan.")
+
+        st.divider()
+
+        # ── SECTION 4: Open Positional Positions ─────────────────────────
+        st.subheader("💼 Open Positions")
+
+        try:
+            with get_conn() as _pconn:
+                _open_pos = _pconn.execute(
+                    "SELECT * FROM pos_positions WHERE status='OPEN' ORDER BY entry_date DESC"
+                ).fetchall()
+            _open_pos = [dict(p) for p in _open_pos]
+        except Exception:
+            _open_pos = []
+
+        _act1, _act2 = st.columns([2, 1])
+        with _act2:
+            if st.button("🔄 Run Exit Check", key="pos_exit_check"):
+                with st.spinner("Checking exits..."):
+                    try:
+                        _er = _run_pos_exits()
+                        st.success(
+                            f"Exit check done: {_er.get('exited',0)} exited, "
+                            f"{_er.get('updated',0)} updated."
+                        )
+                        st.rerun()
+                    except Exception as _ee:
+                        st.error(f"Exit check failed: {_ee}")
+
+        if _open_pos:
+            import pandas as pd
+            _odf = pd.DataFrame(_open_pos)
+            _odf["entry_date"] = to_ist(_odf["entry_date"]).dt.strftime("%d %b")
+            for _c in ["entry_price", "hard_stop", "ema_trail_stop", "target_price"]:
+                if _c in _odf.columns:
+                    _odf[_c] = _odf[_c].apply(
+                        lambda x: f"₹{x:,.2f}" if pd.notna(x) and x else "-"
+                    )
+            _pnl_col = "pnl"
+            _odf["days_held"] = _odf.get("days_held", 0)
+            _odf["below_ema"] = _odf["below_ema_consecutive"].apply(
+                lambda x: f"⚠️ {x}d" if x and int(x) >= 1 else ""
+            )
+
+            _pos_display = ["ticker", "entry_date", "entry_price", "quantity",
+                            "hard_stop", "ema_trail_stop", "target_price",
+                            "days_held", "below_ema", "regime_at_entry"]
+            _pos_display = [c for c in _pos_display if c in _odf.columns]
+            st.markdown(
+                _odf[_pos_display].rename(columns={
+                    "entry_date":       "Entry",
+                    "entry_price":      "Buy Price",
+                    "hard_stop":        "Hard SL",
+                    "ema_trail_stop":   "21 EMA",
+                    "target_price":     "Target",
+                    "days_held":        "Days",
+                    "below_ema":        "Below EMA",
+                    "regime_at_entry":  "Regime",
+                }).to_html(index=False, classes="dashtable"),
+                unsafe_allow_html=True
+            )
+        else:
+            _num_universe = _stats.get("active", 0)
+            if _num_universe == 0:
+                st.info("No open positions. Upload a Screener.in CSV first to populate the universe.")
+            else:
+                st.info("No open positions. Run the EOD scan to find BUY setups.")
+
+        st.divider()
+
+        # ── SECTION 5: Positional Analytics ──────────────────────────────
+        st.subheader("📉 Positional Analytics")
+
+        try:
+            import pandas as pd
+            with get_conn() as _pac:
+                _closed = _pac.execute(
+                    "SELECT * FROM pos_positions WHERE status='CLOSED' ORDER BY exit_date DESC"
+                ).fetchall()
+            _closed = [dict(p) for p in _closed]
+        except Exception:
+            _closed = []
+
+        if _closed:
+            _cdf = pd.DataFrame(_closed)
+            total_trades = len(_cdf)
+            winners      = _cdf[_cdf["pnl"] > 0]
+            losers       = _cdf[_cdf["pnl"] <= 0]
+            win_rate     = len(winners) / total_trades * 100
+            total_pnl    = float(_cdf["pnl"].sum())
+            avg_winner   = float(winners["pnl"].mean()) if len(winners) else 0
+            avg_loser    = float(losers["pnl"].mean())  if len(losers)  else 0
+            rr = abs(avg_winner / avg_loser) if avg_loser != 0 else 0
+            total_invested = POSITIONAL_CAPITAL
+            total_return_pct = total_pnl / total_invested * 100
+
+            _an1, _an2, _an3, _an4, _an5 = st.columns(5)
+            _an1.metric("Total Trades",   total_trades)
+            _an2.metric("Win Rate",       f"{win_rate:.1f}%",
+                        delta_color="normal" if win_rate >= 50 else "inverse")
+            _an3.metric("Total P&L",      f"₹{total_pnl:+,.2f}",
+                        delta=f"{total_return_pct:+.1f}% on ₹1L",
+                        delta_color="normal" if total_pnl >= 0 else "inverse")
+            _an4.metric("Avg Winner",     f"₹{avg_winner:+,.2f}")
+            _an5.metric("Reward/Risk",    f"{rr:.1f}x",
+                        help="Average winner ÷ average loser (target >2x)")
+
+            # Closed trades table
+            with st.expander(f"Closed Trades ({total_trades})", expanded=False):
+                _cdf_disp = _cdf[["ticker", "entry_date", "exit_date", "entry_price",
+                                   "exit_price", "quantity", "pnl", "pnl_pct",
+                                   "exit_reason"]].copy()
+                for _tc in ["entry_price", "exit_price"]:
+                    _cdf_disp[_tc] = _cdf_disp[_tc].apply(
+                        lambda x: f"₹{x:,.2f}" if pd.notna(x) else "-"
+                    )
+                _cdf_disp["pnl"] = _cdf_disp["pnl"].apply(
+                    lambda x: f"₹{x:+,.2f}" if pd.notna(x) else "-"
+                )
+                _cdf_disp["pnl_pct"] = _cdf_disp["pnl_pct"].apply(
+                    lambda x: f"{x:+.1f}%" if pd.notna(x) else "-"
+                )
+                st.markdown(
+                    _cdf_disp.rename(columns={
+                        "entry_date":  "Entry Date",
+                        "exit_date":   "Exit Date",
+                        "entry_price": "Buy",
+                        "exit_price":  "Sell",
+                        "pnl":         "P&L (₹)",
+                        "pnl_pct":     "P&L %",
+                        "exit_reason": "Exit Reason",
+                    }).to_html(index=False, classes="dashtable"),
+                    unsafe_allow_html=True
+                )
+
+            # P&L chart
+            if len(_closed) >= 2:
+                import plotly.graph_objects as _pgo
+                _cdf_sorted = pd.DataFrame(_closed).sort_values("exit_date")
+                _cdf_sorted["cumulative_pnl"] = _cdf_sorted["pnl"].fillna(0).cumsum()
+                _fig_pos = _pgo.Figure()
+                _fig_pos.add_trace(_pgo.Scatter(
+                    x=_cdf_sorted["exit_date"],
+                    y=_cdf_sorted["cumulative_pnl"],
+                    mode="lines+markers",
+                    name="Cumulative P&L",
+                    line=dict(color="#1bc47d", width=2),
+                ))
+                _fig_pos.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+                _fig_pos.update_layout(
+                    title="Positional P&L — Cumulative",
+                    xaxis_title="Exit Date", yaxis_title="P&L (₹)",
+                    height=350, margin=dict(l=0, r=0, t=40, b=0),
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(_fig_pos, use_container_width=True)
+        else:
+            st.info("No closed positional trades yet.")
+
+        # ── SECTION 6: Telegram Test ──────────────────────────────────────
+        st.divider()
+        with st.expander("🔔 Telegram Notifications"):
+            from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                st.success(f"Telegram configured ✅  (chat_id: `{TELEGRAM_CHAT_ID}`)")
+                if st.button("Send test message", key="pos_tg_test"):
+                    from positional.alerts import test_connection
+                    if test_connection():
+                        st.success("Test message sent successfully!")
+                    else:
+                        st.error("Failed to send. Check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
+            else:
+                st.warning(
+                    "Telegram not configured. Add to `.env`:\n"
+                    "```\nTELEGRAM_BOT_TOKEN=123456:ABC...\n"
+                    "TELEGRAM_CHAT_ID=-100123456789\n```\n"
+                    "Get a token from @BotFather on Telegram."
+                )
+
+    except Exception as _pos_tab_err:
+        st.error(f"Positional tab error: {_pos_tab_err}")
+        import traceback
+        st.code(traceback.format_exc())
 
 
 # ==================================================================

@@ -11,7 +11,7 @@ from typing import Iterable, Optional
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-from config import ENABLE_FINBERT, SENTIMENT_ENGINE
+from config import ENABLE_FINBERT, LLM_ENABLE_SENTIMENT, SENTIMENT_ENGINE
 from db.models import get_conn
 
 log = logging.getLogger(__name__)
@@ -120,7 +120,30 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
             return 0
 
         texts = [f"{r['title']}. {r['summary'] or ''}" for r in rows]
-        scores = _score_batch(texts)
+
+        _LLM_BATCH_MAX = 20  # cap per LLM call to protect rate-limit budget
+        if LLM_ENABLE_SENTIMENT and len(rows) <= _LLM_BATCH_MAX:
+            from llm.sentiment import score_batch_llm  # lazy — keeps dep optional
+            llm_items = [
+                {"ticker": "", "title": r["title"], "summary": r["summary"] or ""}
+                for r in rows
+            ]
+            llm_scores = score_batch_llm(llm_items)
+            if llm_scores is not None and len(llm_scores) == len(rows):
+                scores = llm_scores
+                log.debug("LLM batch sentiment: scored %d items", len(scores))
+            else:
+                log.debug("LLM batch failed — falling back to FinBERT/VADER")
+                scores = _score_batch(texts)
+        else:
+            if LLM_ENABLE_SENTIMENT and len(rows) > _LLM_BATCH_MAX:
+                log.info(
+                    "sentiment: %d items exceeds LLM batch cap (%d) — "
+                    "using FinBERT/VADER to protect rate-limit budget",
+                    len(rows), _LLM_BATCH_MAX,
+                )
+            scores = _score_batch(texts)
+
         for r, score in zip(rows, scores):
             conn.execute(
                 "UPDATE news SET sentiment=?, processed=1 WHERE id=?",

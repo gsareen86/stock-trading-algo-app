@@ -49,8 +49,8 @@ def _setup_logging():
     # operation (HuggingFace model resolution, HTTPX request traces).
     # Cap them at WARNING so they only surface when something is wrong.
     for _noisy in ("httpx", "httpcore", "huggingface_hub", "huggingface_hub.utils._http",
-                   "transformers.modeling_utils", "filelock"):
-        logging.getLogger(_noisy).setLevel(logging.WARNING)
+                   "transformers", "transformers.modeling_utils", "filelock"):
+        logging.getLogger(_noisy).setLevel(logging.ERROR)
 
 
 def start_dashboard():
@@ -61,8 +61,17 @@ def start_dashboard():
         "--server.headless", "true",
         "--server.port", os.environ.get("STREAMLIT_PORT", "8501"),
         "--browser.gatherUsageStats", "false",
+        # Disable the local-sources file watcher. Without this, Streamlit walks
+        # every transitive module of `transformers` (loaded for FinBERT) and
+        # triggers lazy imports of vision models that depend on `torchvision` —
+        # which we don't install, so each one prints a ModuleNotFoundError
+        # traceback. Hundreds of these flood the terminal at startup. We
+        # don't need module hot-reload in a production bot.
+        "--server.fileWatcherType", "none",
     ]
-    return subprocess.Popen(cmd)
+    env = os.environ.copy()
+    env.setdefault("STREAMLIT_SERVER_FILE_WATCHER_TYPE", "none")
+    return subprocess.Popen(cmd, env=env)
 
 
 def main():
@@ -85,9 +94,16 @@ def main():
 
     init_db()
     initialize_if_empty()
-    # On first startup, default to user's chosen mode but STOPPED status
-    # (User toggles RUN from the dashboard).
-    set_bot_state(status="STOPPED", mode=DEFAULT_MODE)
+    # Auto-start: if market is currently open, set RUNNING immediately so the
+    # bot doesn't sit idle requiring a manual click. If market is closed, keep
+    # STOPPED — the run_forever loop will pick up automatically once open.
+    from data.fetcher import market_is_open as _market_is_open
+    from datetime import datetime as _dt
+    from config import IST as _IST
+    _auto_status = "RUNNING" if _market_is_open(_dt.now(_IST)) else "STOPPED"
+    set_bot_state(status=_auto_status, mode=DEFAULT_MODE)
+    print(f"[startup] Market {'OPEN' if _auto_status == 'RUNNING' else 'CLOSED'}"
+          f" — bot status set to {_auto_status}, mode={DEFAULT_MODE}", flush=True)
 
     # Pre-warm FinBERT in a background thread so the first news-scrape cycle
     # doesn't block for ~3 minutes while the 400 MB model downloads and loads.
