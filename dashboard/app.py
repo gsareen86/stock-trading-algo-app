@@ -2392,8 +2392,8 @@ with tab_positional:
     try:
         from positional.market_regime import get_latest_regime, compute_market_regime
         from positional.universe import universe_stats, get_universe_df, process_screener_csv
-        from positional.scanner import get_latest_scan_results, run_eod_scan as _run_pos_scan
-        from positional.runner import run_exit_checks as _run_pos_exits
+        from positional.scanner import get_latest_scan_results
+        from positional.runner import run_eod_scan as _run_pos_scan, run_exit_checks as _run_pos_exits
         from config import (
             POSITIONAL_CAPITAL, POSITIONAL_MAX_POSITIONS, POSITIONAL_HARD_STOP_PCT,
             POSITIONAL_SCAN_TIME, POSITIONAL_ALERT_TIME, POSITIONAL_BROKER,
@@ -2542,25 +2542,60 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                 help="Combined CSV from screener.in — non-financial + banks/NBFCs"
             )
             if _uploaded is not None:
-                with st.spinner(f"Processing {_uploaded.name}..."):
-                    try:
-                        _result = process_screener_csv(
-                            _uploaded.read(), filename=_uploaded.name
-                        )
-                        if _result["errors"]:
-                            for _err in _result["errors"]:
-                                st.warning(_err)
-                        _fin_passed = _result.get("fin_passed", 0)
-                        _non_fin    = _result["passed"] - _fin_passed
-                        st.success(
-                            f"✅ Processed {_result['total_rows']} rows — "
-                            f"**{_result['passed']} stocks** passed  "
-                            f"({_non_fin} non-financial + {_fin_passed} banks/NBFCs), "
-                            f"{_result['failed']} filtered out."
-                        )
-                        st.rerun()
-                    except Exception as _ue:
-                        st.error(f"Upload failed: {_ue}")
+                _upload_key = f"pos_upload_result_{_uploaded.name}_{_uploaded.size}"
+                if st.session_state.get(_upload_key) is None:
+                    with st.spinner(f"Processing {_uploaded.name}..."):
+                        try:
+                            import logging as _logging
+                            _ulog = _logging.getLogger("positional.universe")
+                            _ulog.info(
+                                "[universe] CSV upload started: %s (%d bytes)",
+                                _uploaded.name, _uploaded.size,
+                            )
+                            _result = process_screener_csv(
+                                _uploaded.read(), filename=_uploaded.name
+                            )
+                            st.session_state[_upload_key] = _result
+                            _fin_passed = _result.get("fin_passed", 0)
+                            _non_fin    = _result["passed"] - _fin_passed
+                            _ulog.info(
+                                "[universe] CSV upload complete: total=%d passed=%d "
+                                "(non-fin=%d banks=%d) failed=%d errors=%d",
+                                _result["total_rows"], _result["passed"],
+                                _non_fin, _fin_passed,
+                                _result["failed"], len(_result.get("errors", [])),
+                            )
+                            st.rerun()
+                        except Exception as _ue:
+                            import logging as _logging
+                            _logging.getLogger("positional.universe").error(
+                                "[universe] CSV upload exception: %s", _ue
+                            )
+                            st.error(f"Upload failed: {_ue}")
+
+            _prev_result = None
+            for _k, _v in st.session_state.items():
+                if _k.startswith("pos_upload_result_"):
+                    _prev_result = _v
+                    break
+            if _prev_result is not None:
+                if _prev_result.get("errors"):
+                    for _err in _prev_result["errors"]:
+                        st.warning(_err)
+                if _prev_result["passed"] > 0:
+                    _fin_passed = _prev_result.get("fin_passed", 0)
+                    _non_fin    = _prev_result["passed"] - _fin_passed
+                    st.success(
+                        f"Last upload: {_prev_result['total_rows']} rows processed — "
+                        f"**{_prev_result['passed']} stocks** in universe  "
+                        f"({_non_fin} non-financial + {_fin_passed} banks/NBFCs), "
+                        f"{_prev_result['failed']} filtered out."
+                    )
+                elif _prev_result["total_rows"] > 0:
+                    st.error(
+                        f"Last upload: {_prev_result['total_rows']} rows processed but "
+                        f"0 stocks passed. Check the warnings above."
+                    )
 
         if _stats.get("active", 0) > 0:
             with st.expander(f"View Universe ({_stats.get('active', 0)} stocks)", expanded=False):
@@ -2592,12 +2627,27 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                 with st.spinner("Running Minervini scan on fundamental universe..."):
                     try:
                         _sr = _run_pos_scan()
-                        st.success(
-                            f"Scan complete: {_sr.get('buy_alerts',0)} BUY alerts, "
-                            f"{_sr.get('universe_size',0)} tickers scanned."
-                        )
+                        if _sr.get("skipped"):
+                            st.warning(f"Scan skipped: {_sr.get('reason', 'unknown reason')}. "
+                                       "You can still force-scan outside market hours by "
+                                       "enabling positional module first.")
+                        elif _sr.get("universe_size", 0) == 0:
+                            st.warning(
+                                "Scan ran but found 0 tickers in the fundamental universe. "
+                                "Please upload a Screener.in CSV first (Universe Manager above)."
+                            )
+                        else:
+                            st.success(
+                                f"Scan complete: **{_sr.get('buy_alerts', 0)} BUY alerts**, "
+                                f"{_sr.get('universe_size', 0)} tickers scanned, "
+                                f"{_sr.get('positions_opened', 0)} positions opened."
+                            )
                         st.rerun()
                     except Exception as _se:
+                        import logging as _logging
+                        _logging.getLogger("positional.scanner").error(
+                            "[scan] EOD scan error: %s", _se, exc_info=True
+                        )
                         st.error(f"Scan failed: {_se}")
 
         _scan_rows = get_latest_scan_results(limit=30)

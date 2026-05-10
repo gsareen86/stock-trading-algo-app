@@ -57,8 +57,11 @@ Upload workflow:
 """
 from __future__ import annotations
 
+import difflib
+import functools
 import io
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -87,15 +90,17 @@ _COL_MAP = {
     "roce":         ["roce %", "roce", "return on capital employed %",
                      "return on capital employed"],
     "roe":          ["roe %", "roe", "return on equity %", "return on equity"],
-    "sales_growth": ["sales growth %", "sales growth", "revenue growth %",
-                     "revenue growth", "sales growth 3yr cagr %",
-                     "sales growth 3yrs", "sales growth 3years"],
+    "sales_growth": ["sales var 3yrs %", "sales var 3yrs", "sales var 3years %",
+                     "sales growth 3yr cagr %", "sales growth 3yrs",
+                     "sales growth 3years", "sales growth %", "sales growth",
+                     "revenue growth %", "revenue growth"],
     "debt_to_equity": ["debt / equity", "debt to equity", "d/e", "de ratio",
                        "debt/equity"],
     "gross_npa":    ["gross npa %", "gross npa", "gnpa %", "gnpa"],
     "net_npa":      ["net npa %", "net npa", "nnpa %", "nnpa"],
-    "market_cap":   ["market capitalization", "market cap", "mcap",
-                     "market capitalization (cr)"],
+    "market_cap":   ["mar cap rs.cr.", "mar cap rs cr", "mar cap",
+                     "market capitalization", "market cap", "mcap",
+                     "market capitalization (cr)", "market cap (cr.)"],
     "pe_ratio":     ["p/e", "pe ratio", "pe", "price/earnings"],
 }
 
@@ -105,6 +110,74 @@ def _find_col(df_cols: list[str], variants: list[str]) -> Optional[str]:
     for v in variants:
         if v in lower_cols:
             return lower_cols[v]
+    return None
+
+
+_NSE_SUFFIX_RE = re.compile(
+    r"\b(limited|ltd\.?|private|pvt\.?|incorporated|inc\.?|"
+    r"corporation|corp\.?|company|co\.?|india|industries|"
+    r"enterprises|solutions|technologies|tech|group|holdings?)\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_name(name: str) -> str:
+    """Normalise a company name for fuzzy matching."""
+    s = _NSE_SUFFIX_RE.sub("", name.upper())
+    return re.sub(r"[^A-Z0-9 ]", " ", s).split()  # list of tokens
+
+
+@functools.lru_cache(maxsize=1)
+def _fetch_nse_symbol_map() -> dict:
+    """
+    Download NSE's public equity list and return {normalised_name: SYMBOL}.
+    Cached for the process lifetime. Returns {} on any error.
+    """
+    try:
+        import requests
+        resp = requests.get(
+            "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        resp.raise_for_status()
+        nse_df = pd.read_csv(io.StringIO(resp.text))
+        name_col = _find_col(list(nse_df.columns), ["name of company", "name"])
+        sym_col  = _find_col(list(nse_df.columns), ["symbol"])
+        if name_col is None or sym_col is None:
+            return {}
+        result = {}
+        for _, row in nse_df.iterrows():
+            sym  = str(row[sym_col]).strip().upper()
+            raw  = str(row[name_col]).strip()
+            key  = " ".join(_clean_name(raw))
+            if key:
+                result[key] = sym
+        log.info("[universe] NSE symbol map loaded: %d entries", len(result))
+        return result
+    except Exception as e:
+        log.warning("[universe] NSE equity list fetch failed: %s — "
+                    "name→symbol lookup unavailable", e)
+        return {}
+
+
+def _resolve_name_to_symbol(name: str, nse_map: dict) -> Optional[str]:
+    """
+    Try to match a Screener.in company name to an NSE symbol.
+    1. Exact normalised match.
+    2. difflib closest match (cutoff 0.72).
+    Returns None if no confident match.
+    """
+    if not nse_map:
+        return None
+    key = " ".join(_clean_name(name))
+    if not key:
+        return None
+    if key in nse_map:
+        return nse_map[key]
+    matches = difflib.get_close_matches(key, nse_map.keys(), n=1, cutoff=0.72)
+    if matches:
+        return nse_map[matches[0]]
     return None
 
 
@@ -180,14 +253,64 @@ def process_screener_csv(
     col_mcap    = _find_col(cols, _COL_MAP["market_cap"])
     col_pe      = _find_col(cols, _COL_MAP["pe_ratio"])
 
+    # ── Ticker resolution ────────────────────────────────────────────────
+    _name_to_sym: dict = {}   # populated if we need name-based lookup
+
     if col_ticker is None:
-        return {"total_rows": total_rows, "passed": 0, "failed": total_rows,
-                "financial_count": 0, "tickers": [],
-                "errors": [f"Ticker column not found. Columns: {cols}"]}
+        if col_name is None:
+            return {"total_rows": total_rows, "passed": 0, "failed": total_rows,
+                    "financial_count": 0, "tickers": [],
+                    "errors": ["Neither NSE Code/Symbol nor Name column found. "
+                               f"Columns in CSV: {cols}"]}
+        log.warning(
+            "[universe] No NSE Code/Symbol column found in %s. "
+            "Falling back to company-name → NSE symbol lookup via NSE equity list.",
+            filename,
+        )
+        errors.append(
+            "NSE Code/Symbol column not found in CSV. "
+            "Resolving company names to NSE symbols automatically — "
+            "unresolved names will be skipped. "
+            "Tip: copy the 'NSE Code' column from Screener.in to avoid this."
+        )
+        log.info("[universe] Fetching NSE equity list for name→symbol mapping...")
+        _name_to_sym = _fetch_nse_symbol_map()
+        if not _name_to_sym:
+            errors.append(
+                "Could not download NSE equity list (network error or NSE unreachable). "
+                "Please add the 'NSE Code' column to your Screener.in export manually."
+            )
+            return {"total_rows": total_rows, "passed": 0, "failed": total_rows,
+                    "financial_count": 0, "tickers": [], "errors": errors}
+        log.info("[universe] NSE symbol map ready (%d entries). Resolving %d names...",
+                 len(_name_to_sym), total_rows)
 
     # Build working frame
     work = pd.DataFrame()
-    work["ticker"]         = df[col_ticker].astype(str).str.strip().str.upper()
+    if col_ticker is not None:
+        work["ticker"] = df[col_ticker].astype(str).str.strip().str.upper()
+    else:
+        # Resolve company name → NSE symbol
+        names = df[col_name].astype(str).str.strip()
+        resolved, unresolved = [], []
+        for nm in names:
+            sym = _resolve_name_to_symbol(nm, _name_to_sym)
+            if sym:
+                resolved.append(sym)
+            else:
+                unresolved.append(nm)
+                resolved.append("")
+        work["ticker"] = resolved
+        if unresolved:
+            log.warning(
+                "[universe] Could not resolve %d company names to NSE symbols: %s",
+                len(unresolved), unresolved[:10],
+            )
+            errors.append(
+                f"{len(unresolved)} company name(s) could not be matched to an NSE symbol "
+                f"and will be excluded: {', '.join(unresolved[:5])}"
+                + (" …" if len(unresolved) > 5 else "")
+            )
     work["company_name"]   = df[col_name].astype(str).str.strip()     if col_name    else ""
     work["sector"]         = df[col_sector].astype(str).str.strip()   if col_sector  else ""
     work["industry"]       = df[col_industry].astype(str).str.strip() if col_industry else ""
