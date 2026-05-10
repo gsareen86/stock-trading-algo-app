@@ -263,11 +263,25 @@ POSITIONAL_NIFTY_TICKER = "^NSEI"
 POSITIONAL_SMALLCAP_TICKER = "^CNXSC"
 POSITIONAL_GOLD_TICKER = "GOLDBEES.NS"
 
-# Fundamental universe filters (applied to Screener.in CSV)
-POSITIONAL_FUND_MIN_ROCE = 15.0       # ROCE > 15%
-POSITIONAL_FUND_MIN_ROE = 15.0        # ROE > 15%
-POSITIONAL_FUND_MIN_SALES_GROWTH = 15.0  # Sales Growth YoY > 15%
-POSITIONAL_FUND_MAX_DE = 1.0          # Debt/Equity < 1
+# Fundamental universe filters — non-financial companies
+POSITIONAL_FUND_MIN_ROCE = 15.0          # ROCE > 15%
+POSITIONAL_FUND_MIN_ROE = 15.0           # ROE > 15%
+POSITIONAL_FUND_MIN_SALES_GROWTH = 15.0  # Sales Growth 3Y > 15%
+POSITIONAL_FUND_MAX_DE = 1.0             # Debt/Equity < 1
+
+# Fundamental universe filters — Banks & NBFCs
+# D/E and ROCE are not meaningful for financial companies (leverage is core to
+# the business model — bank deposits count as "debt"). Use asset quality instead.
+POSITIONAL_BANK_MIN_ROE = 15.0           # ROE > 15% (same bar as non-financial)
+POSITIONAL_BANK_MIN_SALES_GROWTH = 15.0  # Net Interest Income growth > 15%
+POSITIONAL_BANK_MAX_GNPA = 3.0           # Gross NPA % < 3% (asset quality gate)
+POSITIONAL_BANK_MAX_NNPA = 1.0           # Net NPA % < 1% (strict quality gate)
+
+# Sectors treated as financial (exempt from ROCE and D/E filters)
+POSITIONAL_FINANCIAL_SECTORS = {
+    "banks", "bank", "nbfc", "finance", "financial services",
+    "housing finance", "insurance", "microfinance",
+}
 
 # EOD schedule
 POSITIONAL_SCAN_TIME = "16:00"        # 4:00 PM IST — after market close

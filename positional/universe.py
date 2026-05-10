@@ -1,40 +1,75 @@
 """
 Fundamental Universe Manager — Screener.in CSV-based whitelist.
 
-Workflow:
-  1. User runs a query on https://screener.in/explore/ (Top 500/750 NSE stocks)
-     with these filters applied on the site:
-       - ROCE > 15%
-       - ROE  > 15%
-       - Sales Growth (3yr CAGR) > 15%
-       - Debt to Equity < 1
+Two-track fundamental filtering (applied when the CSV is uploaded):
 
-  2. User exports the results as a CSV file from Screener.in.
+  Track A — Non-financial companies (manufacturing, IT, FMCG, pharma, etc.)
+    ROCE         > 15%   (capital efficiency)
+    ROE          > 15%   (equity returns)
+    Sales Growth > 15%   (3-year revenue CAGR)
+    Debt/Equity  < 1     (balance-sheet health)
+    Market Cap   > 500 Cr
 
-  3. User uploads the CSV via the dashboard (Positional tab → Universe Manager).
-     The app calls process_screener_csv() which applies the filters in code
-     (double-check) and stores the whitelist in pos_universe.
+  Track B — Banks & NBFCs
+    D/E and ROCE are excluded — leverage IS the business model for financials.
+    ROE          > 15%   (profitability)
+    Revenue/NII  > 15%   (growth — maps to Sales Growth column in CSV)
+    Gross NPA    < 3%    (asset quality — primary bank health indicator)
+    Net NPA      < 1%    (strict credit quality gate)
+    Market Cap   > 500 Cr
 
-  4. The EOD scanner calls get_fundamental_universe() to get the list of
-     approved tickers for the daily technical scan.
+  Detection: a stock is treated as a bank/NBFC if:
+    - The Sector/Industry column contains a financial keyword, OR
+    - The CSV has a non-null "Gross NPA" / "Net NPA" column for that row
 
-Expected CSV columns (Screener.in export format):
-  Name, NSE Code (or Symbol), ROCE %, ROE %, Sales Growth %, Debt / Equity,
-  Market Capitalization, P/E, Sector (optional)
+Screener.in query to use (run two queries and combine the CSVs, OR use
+the single OR-query below if your Screener account supports it):
 
-Column names are matched case-insensitively and flexibly.
+  ── Query A (non-financial) ───────────────────────────────────────────
+  Return on capital employed > 15 AND
+  Return on equity > 15 AND
+  Sales growth 3Years > 15 AND
+  Debt to equity < 1 AND
+  Market Capitalization > 500
+
+  ── Query B (Banks & NBFCs) ───────────────────────────────────────────
+  Return on equity > 15 AND
+  Sales growth 3Years > 15 AND
+  Gross NPA < 3 AND
+  Net NPA < 1 AND
+  Market Capitalization > 500
+
+  ── Combined single query (if supported) ─────────────────────────────
+  Market Capitalization > 500 AND
+  Return on equity > 15 AND
+  Sales growth 3Years > 15 AND
+  (
+    (Return on capital employed > 15 AND Debt to equity < 1)
+    OR
+    (Gross NPA < 3 AND Net NPA < 1)
+  )
+
+Upload workflow:
+  1. Run query on screener.in → Export CSV
+  2. Upload the CSV via the dashboard Positional tab → Universe Manager
+  3. App auto-detects banks/NBFCs and applies Track B filters
+  4. The resulting whitelist feeds the daily EOD scanner
 """
 from __future__ import annotations
 
 import io
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
 from config import (
+    POSITIONAL_BANK_MAX_GNPA,
+    POSITIONAL_BANK_MAX_NNPA,
+    POSITIONAL_BANK_MIN_ROE,
+    POSITIONAL_BANK_MIN_SALES_GROWTH,
+    POSITIONAL_FINANCIAL_SECTORS,
     POSITIONAL_FUND_MAX_DE,
     POSITIONAL_FUND_MIN_ROCE,
     POSITIONAL_FUND_MIN_ROE,
@@ -47,23 +82,25 @@ log = logging.getLogger(__name__)
 _COL_MAP = {
     "ticker":       ["nse code", "symbol", "nse symbol", "ticker", "code"],
     "company_name": ["name", "company", "company name"],
+    "sector":       ["sector"],
+    "industry":     ["industry"],
     "roce":         ["roce %", "roce", "return on capital employed %",
                      "return on capital employed"],
     "roe":          ["roe %", "roe", "return on equity %", "return on equity"],
     "sales_growth": ["sales growth %", "sales growth", "revenue growth %",
                      "revenue growth", "sales growth 3yr cagr %",
-                     "sales growth 3yrs"],
+                     "sales growth 3yrs", "sales growth 3years"],
     "debt_to_equity": ["debt / equity", "debt to equity", "d/e", "de ratio",
-                        "debt/equity"],
+                       "debt/equity"],
+    "gross_npa":    ["gross npa %", "gross npa", "gnpa %", "gnpa"],
+    "net_npa":      ["net npa %", "net npa", "nnpa %", "nnpa"],
     "market_cap":   ["market capitalization", "market cap", "mcap",
                      "market capitalization (cr)"],
     "pe_ratio":     ["p/e", "pe ratio", "pe", "price/earnings"],
-    "sector":       ["sector"],
 }
 
 
 def _find_col(df_cols: list[str], variants: list[str]) -> Optional[str]:
-    """Case-insensitive match of column name against variant list."""
     lower_cols = {c.lower().strip(): c for c in df_cols}
     for v in variants:
         if v in lower_cols:
@@ -72,7 +109,6 @@ def _find_col(df_cols: list[str], variants: list[str]) -> Optional[str]:
 
 
 def _coerce_numeric(series: pd.Series) -> pd.Series:
-    """Strip commas, '%', whitespace and coerce to float."""
     return (
         series.astype(str)
               .str.replace(",", "", regex=False)
@@ -83,133 +119,168 @@ def _coerce_numeric(series: pd.Series) -> pd.Series:
     )
 
 
+def _is_financial(row: pd.Series) -> bool:
+    """
+    Return True if the row represents a bank or NBFC.
+    Detection priority:
+      1. Sector/industry column contains a financial keyword
+      2. Gross NPA or Net NPA column has a non-null value
+    """
+    for col in ("sector", "industry"):
+        val = str(row.get(col, "") or "").lower().strip()
+        if any(kw in val for kw in POSITIONAL_FINANCIAL_SECTORS):
+            return True
+    # NPA columns present and non-null → financial company
+    for col in ("gross_npa", "net_npa"):
+        v = row.get(col)
+        if v is not None and pd.notna(v):
+            return True
+    return False
+
+
 def process_screener_csv(
     file_content: bytes | str,
     filename: str = "screener_export.csv",
 ) -> dict:
     """
-    Parse a Screener.in CSV export, apply fundamental filters, and upsert
-    results into pos_universe.
+    Parse a Screener.in CSV export, apply dual-track fundamental filters,
+    and upsert results into pos_universe.
 
-    Args:
-        file_content: raw bytes or string content of the CSV file.
-        filename:     original filename (used for logging only).
+    Track A (non-financial): ROCE > 15, ROE > 15, SalesGrowth > 15, D/E < 1
+    Track B (banks/NBFCs):   ROE > 15, SalesGrowth > 15, GrossNPA < 3, NetNPA < 1
 
-    Returns:
-        {
-            "total_rows": int,
-            "passed": int,
-            "failed": int,
-            "tickers": list[str],
-            "errors": list[str],
-        }
+    Returns: {total_rows, passed, failed, financial_count, tickers, errors}
     """
     errors: list[str] = []
 
-    # Parse CSV
     try:
         if isinstance(file_content, bytes):
             df = pd.read_csv(io.BytesIO(file_content))
         else:
             df = pd.read_csv(io.StringIO(file_content))
     except Exception as e:
-        return {"total_rows": 0, "passed": 0, "failed": 0, "tickers": [],
-                "errors": [f"CSV parse failed: {e}"]}
+        return {"total_rows": 0, "passed": 0, "failed": 0, "financial_count": 0,
+                "tickers": [], "errors": [f"CSV parse failed: {e}"]}
 
     log.info("[universe] Loaded %d rows from %s — columns: %s",
              len(df), filename, list(df.columns))
     total_rows = len(df)
 
-    # Map columns
     cols = list(df.columns)
-    col_ticker = _find_col(cols, _COL_MAP["ticker"])
-    col_name   = _find_col(cols, _COL_MAP["company_name"])
-    col_roce   = _find_col(cols, _COL_MAP["roce"])
-    col_roe    = _find_col(cols, _COL_MAP["roe"])
-    col_sg     = _find_col(cols, _COL_MAP["sales_growth"])
-    col_de     = _find_col(cols, _COL_MAP["debt_to_equity"])
-    col_mcap   = _find_col(cols, _COL_MAP["market_cap"])
-    col_pe     = _find_col(cols, _COL_MAP["pe_ratio"])
-    col_sector = _find_col(cols, _COL_MAP["sector"])
+    col_ticker  = _find_col(cols, _COL_MAP["ticker"])
+    col_name    = _find_col(cols, _COL_MAP["company_name"])
+    col_sector  = _find_col(cols, _COL_MAP["sector"])
+    col_industry= _find_col(cols, _COL_MAP["industry"])
+    col_roce    = _find_col(cols, _COL_MAP["roce"])
+    col_roe     = _find_col(cols, _COL_MAP["roe"])
+    col_sg      = _find_col(cols, _COL_MAP["sales_growth"])
+    col_de      = _find_col(cols, _COL_MAP["debt_to_equity"])
+    col_gnpa    = _find_col(cols, _COL_MAP["gross_npa"])
+    col_nnpa    = _find_col(cols, _COL_MAP["net_npa"])
+    col_mcap    = _find_col(cols, _COL_MAP["market_cap"])
+    col_pe      = _find_col(cols, _COL_MAP["pe_ratio"])
 
     if col_ticker is None:
         return {"total_rows": total_rows, "passed": 0, "failed": total_rows,
-                "tickers": [],
+                "financial_count": 0, "tickers": [],
                 "errors": [f"Ticker column not found. Columns: {cols}"]}
 
     # Build working frame
     work = pd.DataFrame()
-    work["ticker"]  = df[col_ticker].astype(str).str.strip().str.upper()
-    work["company_name"]    = df[col_name].astype(str).str.strip()  if col_name   else ""
-    work["sector"]          = df[col_sector].astype(str).str.strip() if col_sector else ""
-    work["roce"]            = _coerce_numeric(df[col_roce])    if col_roce else None
-    work["roe"]             = _coerce_numeric(df[col_roe])     if col_roe  else None
-    work["sales_growth"]    = _coerce_numeric(df[col_sg])      if col_sg   else None
-    work["debt_to_equity"]  = _coerce_numeric(df[col_de])      if col_de   else None
-    work["market_cap"]      = _coerce_numeric(df[col_mcap])    if col_mcap else None
-    work["pe_ratio"]        = _coerce_numeric(df[col_pe])      if col_pe   else None
+    work["ticker"]         = df[col_ticker].astype(str).str.strip().str.upper()
+    work["company_name"]   = df[col_name].astype(str).str.strip()     if col_name    else ""
+    work["sector"]         = df[col_sector].astype(str).str.strip()   if col_sector  else ""
+    work["industry"]       = df[col_industry].astype(str).str.strip() if col_industry else ""
+    work["roce"]           = _coerce_numeric(df[col_roce])   if col_roce  else pd.Series([None] * len(df))
+    work["roe"]            = _coerce_numeric(df[col_roe])    if col_roe   else pd.Series([None] * len(df))
+    work["sales_growth"]   = _coerce_numeric(df[col_sg])    if col_sg    else pd.Series([None] * len(df))
+    work["debt_to_equity"] = _coerce_numeric(df[col_de])    if col_de    else pd.Series([None] * len(df))
+    work["gross_npa"]      = _coerce_numeric(df[col_gnpa])  if col_gnpa  else pd.Series([None] * len(df))
+    work["net_npa"]        = _coerce_numeric(df[col_nnpa])  if col_nnpa  else pd.Series([None] * len(df))
+    work["market_cap"]     = _coerce_numeric(df[col_mcap])  if col_mcap  else pd.Series([None] * len(df))
+    work["pe_ratio"]       = _coerce_numeric(df[col_pe])    if col_pe    else pd.Series([None] * len(df))
 
-    # Drop rows without a ticker
     work = work[work["ticker"].str.len() > 0].copy()
 
-    # Warn about missing filter columns
-    missing_filter_cols = []
-    if col_roce is None:   missing_filter_cols.append("ROCE")
-    if col_roe  is None:   missing_filter_cols.append("ROE")
-    if col_sg   is None:   missing_filter_cols.append("Sales Growth")
-    if col_de   is None:   missing_filter_cols.append("Debt/Equity")
-    if missing_filter_cols:
-        errors.append(f"Missing filter columns: {missing_filter_cols}. "
-                      "All stocks accepted as-is (no fundamental filter applied).")
-        log.warning("[universe] Missing filter columns: %s", missing_filter_cols)
+    # Warn on missing columns
+    if col_gnpa is None and col_nnpa is None:
+        errors.append(
+            "NPA columns (Gross NPA %, Net NPA %) not found in CSV. "
+            "Banks & NBFCs will be detected by sector name only — "
+            "NPA quality filter will not be applied to them."
+        )
 
-    # Apply fundamental filters
-    passed_mask = pd.Series([True] * len(work), index=work.index)
-    filter_reasons: dict[int, list[str]] = {}
+    # ── Apply filters row-by-row (dual-track logic) ───────────────────────
+    passed_rows:  list[dict] = []
+    failed_rows:  list[dict] = []
+    financial_count = 0
 
-    def _apply(mask_col: Optional[str], series_key: str,
-               op: str, threshold: float, label: str):
-        nonlocal passed_mask
-        if series_key not in work.columns:
-            return
-        col_series = work[series_key]
-        valid = col_series.notna()
-        if op == ">=":
-            fail = valid & (col_series < threshold)
-        else:  # "<="
-            fail = valid & (col_series > threshold)
-        for idx in work.index[fail]:
-            filter_reasons.setdefault(idx, []).append(label)
-        passed_mask &= ~fail
+    for idx, row in work.iterrows():
+        is_fin = _is_financial(row)
+        reasons: list[str] = []
 
-    _apply(col_roce, "roce",           ">=", POSITIONAL_FUND_MIN_ROCE,        f"ROCE<{POSITIONAL_FUND_MIN_ROCE}%")
-    _apply(col_roe,  "roe",            ">=", POSITIONAL_FUND_MIN_ROE,         f"ROE<{POSITIONAL_FUND_MIN_ROE}%")
-    _apply(col_sg,   "sales_growth",   ">=", POSITIONAL_FUND_MIN_SALES_GROWTH, f"SalesGrowth<{POSITIONAL_FUND_MIN_SALES_GROWTH}%")
-    _apply(col_de,   "debt_to_equity", "<=", POSITIONAL_FUND_MAX_DE,           f"D/E>{POSITIONAL_FUND_MAX_DE}")
+        if is_fin:
+            # ── Track B: Banks / NBFCs ────────────────────────────────────
+            financial_count += 1
+            roe = row.get("roe")
+            sg  = row.get("sales_growth")
+            gnpa= row.get("gross_npa")
+            nnpa= row.get("net_npa")
 
-    passed_df = work[passed_mask].copy()
-    failed_df = work[~passed_mask].copy()
+            if roe  is not None and pd.notna(roe)  and roe  < POSITIONAL_BANK_MIN_ROE:
+                reasons.append(f"ROE {roe:.1f}% < {POSITIONAL_BANK_MIN_ROE}%")
+            if sg   is not None and pd.notna(sg)   and sg   < POSITIONAL_BANK_MIN_SALES_GROWTH:
+                reasons.append(f"Growth {sg:.1f}% < {POSITIONAL_BANK_MIN_SALES_GROWTH}%")
+            if gnpa is not None and pd.notna(gnpa) and gnpa > POSITIONAL_BANK_MAX_GNPA:
+                reasons.append(f"GrossNPA {gnpa:.1f}% > {POSITIONAL_BANK_MAX_GNPA}%")
+            if nnpa is not None and pd.notna(nnpa) and nnpa > POSITIONAL_BANK_MAX_NNPA:
+                reasons.append(f"NetNPA {nnpa:.1f}% > {POSITIONAL_BANK_MAX_NNPA}%")
+        else:
+            # ── Track A: Non-financial companies ─────────────────────────
+            roce = row.get("roce")
+            roe  = row.get("roe")
+            sg   = row.get("sales_growth")
+            de   = row.get("debt_to_equity")
 
+            if roce is not None and pd.notna(roce) and roce < POSITIONAL_FUND_MIN_ROCE:
+                reasons.append(f"ROCE {roce:.1f}% < {POSITIONAL_FUND_MIN_ROCE}%")
+            if roe  is not None and pd.notna(roe)  and roe  < POSITIONAL_FUND_MIN_ROE:
+                reasons.append(f"ROE {roe:.1f}% < {POSITIONAL_FUND_MIN_ROE}%")
+            if sg   is not None and pd.notna(sg)   and sg   < POSITIONAL_FUND_MIN_SALES_GROWTH:
+                reasons.append(f"Growth {sg:.1f}% < {POSITIONAL_FUND_MIN_SALES_GROWTH}%")
+            if de   is not None and pd.notna(de)   and de   > POSITIONAL_FUND_MAX_DE:
+                reasons.append(f"D/E {de:.2f} > {POSITIONAL_FUND_MAX_DE}")
+
+        row_dict = row.to_dict()
+        row_dict["_is_financial"] = is_fin
+        row_dict["_filter_reason"] = "; ".join(reasons) if reasons else None
+
+        if reasons:
+            failed_rows.append(row_dict)
+        else:
+            passed_rows.append(row_dict)
+
+    # ── Persist to DB ─────────────────────────────────────────────────────
     now_ts = datetime.now(timezone.utc).isoformat()
     tickers_passed: list[str] = []
 
     try:
         from db.models import get_conn
         with get_conn() as conn:
-            # Mark all existing as out-of-universe first
             conn.execute("UPDATE pos_universe SET in_universe=0")
 
-            for _, row in passed_df.iterrows():
-                ticker = row["ticker"]
-                # Normalize: add .NS suffix if not present and looks like NSE symbol
+            for row in passed_rows:
+                ticker = str(row["ticker"])
                 if not ticker.endswith((".NS", ".BO")):
-                    ticker = ticker + ".NS"
+                    ticker += ".NS"
                 tickers_passed.append(ticker)
+                is_fin = row["_is_financial"]
                 conn.execute(
                     """INSERT INTO pos_universe
                        (ticker, company_name, sector, market_cap, roce, roe,
-                        sales_growth, debt_to_equity, pe_ratio, imported_at, in_universe)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,1)
+                        sales_growth, debt_to_equity, pe_ratio, imported_at,
+                        in_universe, filter_reason)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,1,NULL)
                        ON CONFLICT(ticker) DO UPDATE SET
                            company_name=excluded.company_name,
                            sector=excluded.sector,
@@ -224,22 +295,21 @@ def process_screener_csv(
                            filter_reason=NULL""",
                     (ticker,
                      str(row.get("company_name") or ""),
-                     str(row.get("sector") or ""),
+                     str(row.get("sector") or row.get("industry") or ""),
                      row.get("market_cap"),
                      row.get("roce"),
                      row.get("roe"),
                      row.get("sales_growth"),
-                     row.get("debt_to_equity"),
+                     row.get("debt_to_equity") if not is_fin else None,
                      row.get("pe_ratio"),
                      now_ts),
                 )
 
-            # Record failed with reason
-            for idx, row in failed_df.iterrows():
-                ticker = row["ticker"]
+            for row in failed_rows:
+                ticker = str(row["ticker"])
                 if not ticker.endswith((".NS", ".BO")):
-                    ticker = ticker + ".NS"
-                reason = "; ".join(filter_reasons.get(idx, ["filtered"]))
+                    ticker += ".NS"
+                is_fin = row["_is_financial"]
                 conn.execute(
                     """INSERT INTO pos_universe
                        (ticker, company_name, sector, market_cap, roce, roe,
@@ -247,39 +317,45 @@ def process_screener_csv(
                         in_universe, filter_reason)
                        VALUES (?,?,?,?,?,?,?,?,?,?,0,?)
                        ON CONFLICT(ticker) DO UPDATE SET
-                           in_universe=0, filter_reason=excluded.filter_reason,
+                           in_universe=0,
+                           filter_reason=excluded.filter_reason,
                            imported_at=excluded.imported_at""",
                     (ticker,
                      str(row.get("company_name") or ""),
-                     str(row.get("sector") or ""),
+                     str(row.get("sector") or row.get("industry") or ""),
                      row.get("market_cap"),
                      row.get("roce"),
                      row.get("roe"),
                      row.get("sales_growth"),
-                     row.get("debt_to_equity"),
+                     row.get("debt_to_equity") if not is_fin else None,
                      row.get("pe_ratio"),
-                     now_ts, "; ".join(filter_reasons.get(idx, []))),
+                     now_ts,
+                     row.get("_filter_reason")),
                 )
     except Exception as e:
         errors.append(f"DB write failed: {e}")
         log.error("[universe] DB write failed: %s", e)
 
-    log.info("[universe] CSV processed: total=%d passed=%d failed=%d",
-             total_rows, len(tickers_passed), len(failed_df))
+    non_fin_passed = sum(1 for r in passed_rows if not r["_is_financial"])
+    fin_passed     = sum(1 for r in passed_rows if r["_is_financial"])
+
+    log.info(
+        "[universe] CSV processed: total=%d passed=%d (non-fin=%d banks/nbfc=%d) failed=%d",
+        total_rows, len(passed_rows), non_fin_passed, fin_passed, len(failed_rows),
+    )
     return {
-        "total_rows": total_rows,
-        "passed": len(tickers_passed),
-        "failed": len(failed_df),
-        "tickers": tickers_passed,
-        "errors": errors,
+        "total_rows":      total_rows,
+        "passed":          len(tickers_passed),
+        "failed":          len(failed_rows),
+        "financial_count": financial_count,
+        "fin_passed":      fin_passed,
+        "tickers":         tickers_passed,
+        "errors":          errors,
     }
 
 
 def get_fundamental_universe() -> list[str]:
-    """
-    Return list of NSE tickers (with .NS suffix) from pos_universe
-    where in_universe = 1. Falls back to empty list if DB is cold.
-    """
+    """Return list of NSE tickers (with .NS) from pos_universe where in_universe=1."""
     try:
         from db.models import get_conn
         with get_conn() as conn:
@@ -299,9 +375,7 @@ def universe_stats() -> dict:
     try:
         from db.models import get_conn
         with get_conn() as conn:
-            total = conn.execute(
-                "SELECT COUNT(*) FROM pos_universe"
-            ).fetchone()[0]
+            total  = conn.execute("SELECT COUNT(*) FROM pos_universe").fetchone()[0]
             active = conn.execute(
                 "SELECT COUNT(*) FROM pos_universe WHERE in_universe=1"
             ).fetchone()[0]
@@ -322,7 +396,7 @@ def get_universe_df() -> pd.DataFrame:
             """SELECT ticker, company_name, sector, roce, roe, sales_growth,
                       debt_to_equity, market_cap, in_universe, filter_reason
                FROM pos_universe
-               ORDER BY in_universe DESC, roce DESC"""
+               ORDER BY in_universe DESC, roe DESC"""
         )
     except Exception:
         return pd.DataFrame()
