@@ -219,32 +219,93 @@ BENCHMARK_TICKER = "^NSEI"        # NIFTY 50
 # ----- Logging -----
 LOG_LEVEL = "INFO"
 
-# ----- Positional trading module -----
-POSITIONAL_ENABLED = False        # toggled via dashboard / bot_control.positional_enabled
-POSITIONAL_CAPITAL_PCT = 0.40     # 40% of INITIAL_CAPITAL reserved for positional pool
-POSITIONAL_MAX_POSITIONS = 5
-POSITIONAL_MAX_POSITION_PCT = 0.25   # max 25% of positional pool per trade
+# ─── Positional / Swing Trading Module (Minervini VCP Strategy) ──────────────
+# Operates as a separate EOD (End-of-Day) scanner with its own capital pool.
+# Capital is INDEPENDENT of the intraday pool — 1 Lakh dedicated to positional.
+
+POSITIONAL_ENABLED = False            # toggled via dashboard control panel
+
+# Capital — separate 1 Lakh pool (does not mix with intraday INITIAL_CAPITAL)
+POSITIONAL_CAPITAL = 100_000.0        # INR — 1 Lakh
+POSITIONAL_MAX_POSITIONS = 5          # concentrated portfolio: 1L ÷ 5 = 20K/trade
+POSITIONAL_MAX_POSITION_PCT = 0.20    # max 20% of positional capital per position
+
+# Hard stop & trailing stop (Minervini method)
+POSITIONAL_HARD_STOP_PCT = 0.08       # 8% below entry — configurable
+POSITIONAL_EMA_TRAIL_PERIOD = 21      # 21-day EMA for trailing stop
+POSITIONAL_EMA_TRAIL_CONSECUTIVE = 2  # closes below 21 EMA before SELL alert
+
+# Time stop
+POSITIONAL_TIME_STOP_DAYS = 15        # exit if <2% move after N trading days
+POSITIONAL_TIME_STOP_MIN_MOVE_PCT = 2.0
+
+# Re-entry window
+POSITIONAL_REENTRY_WINDOW_DAYS = 14   # check for re-entry within N days of exit
+POSITIONAL_REENTRY_VOL_MULT = 1.3     # re-entry: close above 21 EMA on high volume
+
+# Minervini Trend Template filters
+POSITIONAL_52W_PROXIMITY_PCT = 15.0   # price within 15% of 52-week high
+POSITIONAL_MIN_TREND_SCORE = 60       # minimum VCP/trend composite to qualify
+
+# VCP (Volatility Contraction Pattern) detection
+POSITIONAL_VCP_ATR_PERIOD = 10        # 10-day ATR for weekly ATR% comparison
+POSITIONAL_VCP_CONTRACTION_WEEKS = 3  # ATR% must shrink over N consecutive weeks
+POSITIONAL_VCP_CONTRACTION_RATIO = 0.85  # each week's ATR% < prev * this ratio
+POSITIONAL_VCP_VOLUME_DRY_PCT = 0.80  # down-day vol < 80% of 20-day avg vol
+
+# Market Regime Engine (Minervini macro filter)
+POSITIONAL_NIFTY_ROC_MONTHS = 18      # 18-month ROC for Nifty 50
+POSITIONAL_SMALLCAP_ROC_MONTHS = 20   # 20-month ROC for Nifty Smallcap 250
+POSITIONAL_NIFTY_ROC_DEFENSIVE = 45.0    # ROC > 45 → DEFENSIVE
+POSITIONAL_SMALLCAP_ROC_DEFENSIVE = 80.0 # ROC > 80 → DEFENSIVE
+POSITIONAL_DEFENSIVE_SIZE_MULT = 0.35    # size × 0.35 when DEFENSIVE
+POSITIONAL_NIFTY_TICKER = "^NSEI"
+POSITIONAL_SMALLCAP_TICKER = "^CNXSC"
+POSITIONAL_GOLD_TICKER = "GOLDBEES.NS"
+
+# Fundamental universe filters (applied to Screener.in CSV)
+POSITIONAL_FUND_MIN_ROCE = 15.0       # ROCE > 15%
+POSITIONAL_FUND_MIN_ROE = 15.0        # ROE > 15%
+POSITIONAL_FUND_MIN_SALES_GROWTH = 15.0  # Sales Growth YoY > 15%
+POSITIONAL_FUND_MAX_DE = 1.0          # Debt/Equity < 1
+
+# EOD schedule
+POSITIONAL_SCAN_TIME = "16:00"        # 4:00 PM IST — after market close
+POSITIONAL_ALERT_TIME = "16:30"       # 4:30 PM IST — send Telegram summary
+POSITIONAL_EXIT_TIME  = "15:20"       # 15:20 IST — intraday guard check
+POSITIONAL_APPROVAL_TIMEOUT_MIN = 120
+
+# Delivery costs (differ from intraday)
+STT_DELIVERY_BUY_PCT   = 0.001        # 0.1% on buy
+STT_DELIVERY_SELL_PCT  = 0.001        # 0.1% on sell
+STAMP_DUTY_DELIVERY_PCT = 0.00015     # 0.015% on buy
+
+# Broker selection for positional trades
+POSITIONAL_BROKER = os.environ.get("POSITIONAL_BROKER", "paper").lower()
+# "paper" — paper trading (default); "sharekhan" or "zerodha" when API keys added
+
+# Telegram notifications
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+# Legacy aliases kept for backward compat with old positional strategies code
+POSITIONAL_CAPITAL_PCT = 0.40
 POSITIONAL_MIN_COMPOSITE_SCORE = 65
-POSITIONAL_MIN_QUALITY_SCORE = 60    # lt_quality total_score floor
-POSITIONAL_MIN_FII_PCT = 5.0         # FII holding % floor for universe inclusion
+POSITIONAL_MIN_QUALITY_SCORE = 60
+POSITIONAL_MIN_FII_PCT = 5.0
 POSITIONAL_CANDLE_INTERVAL = "1d"
 POSITIONAL_LOOKBACK_DAYS = 365
-POSITIONAL_RISK_PCT = 0.02           # 2% of positional pool per trade
+POSITIONAL_RISK_PCT = 0.02
 POSITIONAL_ATR_PERIOD = 14
-POSITIONAL_ATR_STOP_MULT = 2.0       # initial stop = entry − 2×ATR
-POSITIONAL_ATR_T1_MULT = 1.5         # first target = entry + 1.5×ATR (50% out)
-POSITIONAL_ATR_TP_MULT = 4.0         # final target = entry + 4×ATR
-POSITIONAL_TRAIL_ATR_MULT = 1.5      # after T1 trail at hwm − 1.5×ATR
+POSITIONAL_ATR_STOP_MULT = 2.0
+POSITIONAL_ATR_T1_MULT = 1.5
+POSITIONAL_ATR_TP_MULT = 4.0
+POSITIONAL_TRAIL_ATR_MULT = 1.5
 POSITIONAL_T1_PARTIAL_PCT = 0.50
 POSITIONAL_MIN_HOLD_DAYS = 3
 POSITIONAL_MAX_HOLD_DAYS = 30
-POSITIONAL_TIME_STOP_DAYS = 10       # exit flat position after N days
-POSITIONAL_SCAN_TIME = "08:45"       # IST — pre-market daily scan
-POSITIONAL_EXIT_TIME = "15:20"       # IST — EOD exit management
-POSITIONAL_APPROVAL_TIMEOUT_MIN = 60
-POSITIONAL_EVENT_GUARD_DAYS = 2      # exit N days before earnings/dividends
+POSITIONAL_EVENT_GUARD_DAYS = 2
 
-# Positional strategy weights (sum to 1.0)
 POSITIONAL_STRATEGY_WEIGHTS = {
     "trend_following":   0.20,
     "breakout_retest":   0.20,
@@ -255,60 +316,38 @@ POSITIONAL_STRATEGY_WEIGHTS = {
     "earnings_momentum": 0.05,
 }
 
-# EMA ribbon (trend following)
+# Delivery STT / stamp legacy names
 POS_EMA_FAST = 9
-POS_EMA_MID = 21
+POS_EMA_MID  = 21
 POS_EMA_SLOW = 55
 POS_ADX_PERIOD = 14
 POS_ADX_THRESHOLD = 25
-
-# 52W breakout retest
 POS_BREAKOUT_52W_PROXIMITY_PCT = 2.0
-POS_BREAKOUT_MAX_PULLBACK_PCT = 5.0
+POS_BREAKOUT_MAX_PULLBACK_PCT  = 5.0
 POS_BREAKOUT_VOL_MULT = 1.5
-
-# Quality momentum
 POS_QUALITY_MIN_SCORE = 70
 POS_MOMENTUM_63D_MIN_PCT = 15
 POS_RSI_PERIOD = 14
 POS_RSI_ENTRY_LEVEL = 50
-
-# VCP (Volatility Contraction Pattern)
 POS_VCP_BASE_MIN_DAYS = 20
 POS_VCP_BASE_MAX_DAYS = 120
 POS_VCP_CONTRACTION_RATIO = 0.85
 POS_VCP_VOLUME_DRY_RATIO = 0.80
 POS_VCP_BREAKOUT_VOL_MULT = 1.5
-
-# Sector rotation
 SECTOR_INDEX_TICKERS = {
-    "IT":     "^CNXIT",
-    "Bank":   "^NSEBANK",
-    "FMCG":   "^CNXFMCG",
-    "Pharma": "^CNXPHARMA",
-    "Auto":   "^CNXAUTO",
-    "Metal":  "^CNXMETAL",
-    "Energy": "^CNXENERGY",
-    "Realty": "^CNXREALTY",
+    "IT": "^CNXIT", "Bank": "^NSEBANK", "FMCG": "^CNXFMCG",
+    "Pharma": "^CNXPHARMA", "Auto": "^CNXAUTO", "Metal": "^CNXMETAL",
+    "Energy": "^CNXENERGY", "Realty": "^CNXREALTY",
 }
 POS_SECTOR_LOOKBACK = 20
 POS_SECTOR_TOP_N = 3
-
-# Mean reversion
 POS_MR_BELOW_52W_MIN_PCT = 15
 POS_MR_BELOW_52W_MAX_PCT = 25
 POS_MR_RSI_THRESHOLD = 35
 POS_MR_VOL_SPIKE_MULT = 2.0
 POS_MR_MIN_QUALITY_SCORE = 65
-
-# Earnings momentum
 POS_EARNINGS_WINDOW_DAYS = 3
 POS_EARNINGS_MAX_GAP_PCT = 8.0
-
-# Delivery STT / stamp (differs from intraday)
-STT_DELIVERY_BUY_PCT = 0.001
-STT_DELIVERY_SELL_PCT = 0.001
-STAMP_DUTY_DELIVERY_PCT = 0.00015
 
 # ----- Feature flags (Phase 2) -----
 ENABLE_ML_META_MODEL = False      # Phase 2

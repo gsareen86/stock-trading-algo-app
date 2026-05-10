@@ -275,6 +275,103 @@ CREATE TABLE IF NOT EXISTS positional_signals (
 CREATE INDEX IF NOT EXISTS idx_cycle_log_started ON cycle_log(started_at);
 CREATE INDEX IF NOT EXISTS idx_pos_positions_ticker ON positional_positions(ticker);
 CREATE INDEX IF NOT EXISTS idx_pos_signals_scanned ON positional_signals(scanned_at);
+
+-- ── Positional / Swing Trading (Minervini VCP) ───────────────────────────────
+
+CREATE TABLE IF NOT EXISTS pos_market_regime (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    computed_at     TEXT NOT NULL,
+    nifty_roc_18m   REAL,
+    smallcap_roc_20m REAL,
+    nifty_gold_ratio REAL,
+    flag            TEXT NOT NULL,
+    size_multiplier REAL,
+    notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pos_universe (
+    ticker          TEXT PRIMARY KEY,
+    company_name    TEXT,
+    sector          TEXT,
+    market_cap      REAL,
+    roce            REAL,
+    roe             REAL,
+    sales_growth    REAL,
+    debt_to_equity  REAL,
+    pe_ratio        REAL,
+    imported_at     TEXT NOT NULL,
+    in_universe     INTEGER DEFAULT 1,
+    filter_reason   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pos_scans (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    scanned_at      TEXT NOT NULL,
+    ticker          TEXT NOT NULL,
+    price           REAL,
+    trend_template  INTEGER DEFAULT 0,
+    vcp_detected    INTEGER DEFAULT 0,
+    vcp_strength    REAL,
+    proximity_52w_pct REAL,
+    ema21           REAL,
+    ema50           REAL,
+    ema200          REAL,
+    atr_pct         REAL,
+    score           REAL,
+    alert_type      TEXT,
+    reason          TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pos_positions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker          TEXT NOT NULL,
+    entry_date      TEXT NOT NULL,
+    entry_price     REAL NOT NULL,
+    quantity        INTEGER NOT NULL,
+    hard_stop       REAL NOT NULL,
+    ema_trail_stop  REAL,
+    target_price    REAL,
+    status          TEXT NOT NULL DEFAULT 'OPEN',
+    exit_date       TEXT,
+    exit_price      REAL,
+    exit_reason     TEXT,
+    pnl             REAL,
+    pnl_pct         REAL,
+    peak_price      REAL,
+    below_ema_consecutive INTEGER DEFAULT 0,
+    days_held       INTEGER DEFAULT 0,
+    regime_at_entry TEXT,
+    scan_id         INTEGER,
+    notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pos_trades (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              TEXT NOT NULL,
+    ticker          TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    quantity        INTEGER NOT NULL,
+    price           REAL NOT NULL,
+    costs           REAL NOT NULL,
+    pnl             REAL,
+    reason          TEXT,
+    position_id     INTEGER REFERENCES pos_positions(id)
+);
+
+CREATE TABLE IF NOT EXISTS pos_watchlist (
+    ticker          TEXT PRIMARY KEY,
+    added_at        TEXT NOT NULL,
+    watch_reason    TEXT,
+    exit_date       TEXT,
+    exit_price      REAL,
+    reentry_eligible INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
+CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
+CREATE INDEX IF NOT EXISTS idx_pos_scans_tick     ON pos_scans(ticker);
+CREATE INDEX IF NOT EXISTS idx_pos_positions_stat ON pos_positions(status);
+CREATE INDEX IF NOT EXISTS idx_pos_trades_ts      ON pos_trades(ts);
 """
 
 # Postgres schema. We keep ts columns as TEXT (ISO strings) to match the
@@ -490,6 +587,103 @@ CREATE TABLE IF NOT EXISTS positional_signals (
 CREATE INDEX IF NOT EXISTS idx_cycle_log_started ON cycle_log(started_at);
 CREATE INDEX IF NOT EXISTS idx_pos_positions_ticker ON positional_positions(ticker);
 CREATE INDEX IF NOT EXISTS idx_pos_signals_scanned ON positional_signals(scanned_at);
+
+-- ── Positional / Swing Trading (Minervini VCP) ───────────────────────────────
+
+CREATE TABLE IF NOT EXISTS pos_market_regime (
+    id               BIGSERIAL PRIMARY KEY,
+    computed_at      TEXT NOT NULL,
+    nifty_roc_18m    DOUBLE PRECISION,
+    smallcap_roc_20m DOUBLE PRECISION,
+    nifty_gold_ratio DOUBLE PRECISION,
+    flag             TEXT NOT NULL,
+    size_multiplier  DOUBLE PRECISION,
+    notes            TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pos_universe (
+    ticker         TEXT PRIMARY KEY,
+    company_name   TEXT,
+    sector         TEXT,
+    market_cap     DOUBLE PRECISION,
+    roce           DOUBLE PRECISION,
+    roe            DOUBLE PRECISION,
+    sales_growth   DOUBLE PRECISION,
+    debt_to_equity DOUBLE PRECISION,
+    pe_ratio       DOUBLE PRECISION,
+    imported_at    TEXT NOT NULL,
+    in_universe    INTEGER DEFAULT 1,
+    filter_reason  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pos_scans (
+    id                BIGSERIAL PRIMARY KEY,
+    scanned_at        TEXT NOT NULL,
+    ticker            TEXT NOT NULL,
+    price             DOUBLE PRECISION,
+    trend_template    INTEGER DEFAULT 0,
+    vcp_detected      INTEGER DEFAULT 0,
+    vcp_strength      DOUBLE PRECISION,
+    proximity_52w_pct DOUBLE PRECISION,
+    ema21             DOUBLE PRECISION,
+    ema50             DOUBLE PRECISION,
+    ema200            DOUBLE PRECISION,
+    atr_pct           DOUBLE PRECISION,
+    score             DOUBLE PRECISION,
+    alert_type        TEXT,
+    reason            TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pos_positions (
+    id                    BIGSERIAL PRIMARY KEY,
+    ticker                TEXT NOT NULL,
+    entry_date            TEXT NOT NULL,
+    entry_price           DOUBLE PRECISION NOT NULL,
+    quantity              INTEGER NOT NULL,
+    hard_stop             DOUBLE PRECISION NOT NULL,
+    ema_trail_stop        DOUBLE PRECISION,
+    target_price          DOUBLE PRECISION,
+    status                TEXT NOT NULL DEFAULT 'OPEN',
+    exit_date             TEXT,
+    exit_price            DOUBLE PRECISION,
+    exit_reason           TEXT,
+    pnl                   DOUBLE PRECISION,
+    pnl_pct               DOUBLE PRECISION,
+    peak_price            DOUBLE PRECISION,
+    below_ema_consecutive INTEGER DEFAULT 0,
+    days_held             INTEGER DEFAULT 0,
+    regime_at_entry       TEXT,
+    scan_id               BIGINT,
+    notes                 TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pos_trades (
+    id          BIGSERIAL PRIMARY KEY,
+    ts          TEXT NOT NULL,
+    ticker      TEXT NOT NULL,
+    side        TEXT NOT NULL,
+    quantity    INTEGER NOT NULL,
+    price       DOUBLE PRECISION NOT NULL,
+    costs       DOUBLE PRECISION NOT NULL,
+    pnl         DOUBLE PRECISION,
+    reason      TEXT,
+    position_id BIGINT REFERENCES pos_positions(id)
+);
+
+CREATE TABLE IF NOT EXISTS pos_watchlist (
+    ticker           TEXT PRIMARY KEY,
+    added_at         TEXT NOT NULL,
+    watch_reason     TEXT,
+    exit_date        TEXT,
+    exit_price       DOUBLE PRECISION,
+    reentry_eligible INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
+CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
+CREATE INDEX IF NOT EXISTS idx_pos_scans_tick     ON pos_scans(ticker);
+CREATE INDEX IF NOT EXISTS idx_pos_positions_stat ON pos_positions(status);
+CREATE INDEX IF NOT EXISTS idx_pos_trades_ts      ON pos_trades(ts);
 """
 
 

@@ -1,593 +1,475 @@
 """
-Positional trading runner.
+Positional Trading Runner — EOD (End-of-Day) Scanner & Portfolio Manager.
 
-Two entry points called from the main scheduler:
-  run_positional_scan()      — pre-market (08:45 IST weekdays)
-  run_positional_exit_check()— EOD management (15:20 IST weekdays)
-  run_positional_forever()   — standalone daemon thread loop
+Daily schedule:
+  4:00 PM IST  — run_eod_scan():     scan fundamental universe, generate BUY alerts
+  4:30 PM IST  — send_eod_summary(): send full Telegram report
+  Monthly      — run_regime_check(): compute market regime (macro filter)
 
-Scan flow:
-  1. Check bot_control.positional_enabled flag.
-  2. Load positional universe from screener.
-  3. Fetch 1d daily candles for each ticker.
-  4. Run all 7 strategies, compute composite score.
-  5. Write qualifying signals (score ≥ threshold) to pending_approvals
-     with trade_type='positional'.
-  6. Log signals to positional_signals table for analytics.
+Position management (checked every day at EOD):
+  1. Hard stop:     price < entry × (1 - 0.08)   → auto-exit (paper) or SELL alert
+  2. EMA trailing:  2 consecutive closes below 21 EMA → SELL ALERT
+  3. Time stop:     <2% move over 15 trading days  → SELL ALERT
+  4. Re-entry:      exited within 14 days, reclaiming 21 EMA on high vol → alert
 
-Exit flow:
-  1. Load all OPEN positional positions.
-  2. For each: fetch latest daily close, compute days_held.
-  3. Check event guard (upcoming earnings).
-  4. Evaluate stop/T1/trail/time/max-hold exits via risk.check_positional_exits().
-  5. Execute exits (auto on DRY_RUN, queue approval on MANUAL).
-  6. Update high_water_mark and days_held on surviving positions.
+New entries (from EOD scan):
+  - Score ≥ 60 + Trend Template passes → queue as BUY
+  - Paper mode: auto-fill
+  - Sharekhan/Zerodha: place real order via broker API
+
+Capital: separate 1 Lakh pool (POSITIONAL_CAPITAL in config.py)
+         does NOT mix with the intraday portfolio cash.
 """
 from __future__ import annotations
 
-import json
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import List
 
 from config import (
     DEFAULT_MODE,
     IST,
-    INITIAL_CAPITAL,
-    POSITIONAL_APPROVAL_TIMEOUT_MIN,
-    POSITIONAL_CANDLE_INTERVAL,
-    POSITIONAL_CAPITAL_PCT,
-    POSITIONAL_EXIT_TIME,
-    POSITIONAL_LOOKBACK_DAYS,
-    POSITIONAL_MIN_COMPOSITE_SCORE,
+    POSITIONAL_ALERT_TIME,
     POSITIONAL_SCAN_TIME,
-    POSITIONAL_T1_PARTIAL_PCT,
 )
-from data.fetcher import fetch_candles
-from db.models import get_conn, insert_returning_id
-from engine.paper_broker import execute as _intraday_execute
-from positional.risk import (
-    can_open_positional,
-    check_event_guard,
-    check_positional_exits,
-    compute_atr_targets,
-    compute_daily_atr,
-    compute_delivery_costs,
-    delivery_fill_price,
-    get_positional_pool_cash,
-    is_correlated_to_open_positions,
-    positional_position_size,
-)
-from positional.scorer import evaluate_positional
-from positional.screener import get_positional_universe
-from positional.strategies import all_positional_strategies
 
 log = logging.getLogger(__name__)
 
 
-# ---------- Control helpers ----------
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _positional_enabled() -> bool:
     try:
+        from db.models import get_conn
         with get_conn() as conn:
             row = conn.execute(
-                "SELECT positional_enabled FROM bot_control WHERE id = 1"
+                "SELECT positional_enabled FROM bot_control WHERE id=1"
             ).fetchone()
         return bool(row and row["positional_enabled"])
     except Exception:
         return False
 
 
-def _bot_mode() -> str:
+def _is_trading_day() -> bool:
+    now = datetime.now(IST)
+    return now.weekday() < 5  # Mon-Fri
+
+
+def _fetch_daily_df(ticker: str):
+    """Fetch 14 months of daily data for a ticker. Returns DataFrame or None."""
+    try:
+        import yfinance as yf
+        t = ticker if ticker.endswith((".NS", ".BO")) else ticker + ".NS"
+        df = yf.download(t, period="14mo", interval="1d",
+                         auto_adjust=True, progress=False)
+        return df if df is not None and not df.empty else None
+    except Exception as e:
+        log.debug("[pos_runner] fetch failed for %s: %s", ticker, e)
+        return None
+
+
+# ── Open a new position ───────────────────────────────────────────────────────
+
+def _open_position(ticker: str, price: float, score: float,
+                   scan_id: int, regime_flag: str) -> bool:
+    """Place a BUY order and record in pos_positions + pos_trades."""
+    from positional.risk import (
+        positional_position_size, compute_hard_stop, compute_target,
+        compute_delivery_costs, delivery_fill_price,
+        get_positional_cash, can_open_position,
+    )
+    from positional.market_regime import current_size_multiplier
+    from positional.broker import get_broker
+    from db.models import get_conn, insert_returning_id
+
+    if not can_open_position():
+        log.info("[pos_runner] %s: max positions reached or no cash", ticker)
+        return False
+
+    size_mult = current_size_multiplier()
+    qty       = positional_position_size(price, size_multiplier=size_mult)
+    if qty <= 0:
+        log.info("[pos_runner] %s: qty=0 at price=%.2f (insufficient capital)", ticker, price)
+        return False
+
+    # Place order
+    broker = get_broker()
+    result = broker.place_order(ticker, "BUY", qty, price)
+    if not result.success:
+        log.warning("[pos_runner] %s: order failed — %s", ticker, result.message)
+        return False
+
+    fill       = result.fill_price
+    costs      = compute_delivery_costs("BUY", fill, qty)
+    hard_stop  = compute_hard_stop(fill)
+    target     = compute_target(fill)
+    entry_date = datetime.now(IST).isoformat()
+
     try:
         with get_conn() as conn:
-            row = conn.execute("SELECT mode FROM bot_control WHERE id=1").fetchone()
-        return (row["mode"] if row else DEFAULT_MODE).lower()
-    except Exception:
-        return DEFAULT_MODE
-
-
-def _is_market_day() -> bool:
-    from data.fetcher import market_is_open
-    now = datetime.now(IST)
-    if now.weekday() >= 5:  # Saturday / Sunday
+            pos_id = insert_returning_id(
+                conn,
+                """INSERT INTO pos_positions
+                   (ticker, entry_date, entry_price, quantity, hard_stop,
+                    ema_trail_stop, target_price, status, peak_price,
+                    below_ema_consecutive, days_held, regime_at_entry, scan_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,0,0,?,?)""",
+                (ticker, entry_date, fill, qty, hard_stop,
+                 None, target, "OPEN", fill, regime_flag, scan_id),
+            )
+            conn.execute(
+                """INSERT INTO pos_trades
+                   (ts, ticker, side, quantity, price, costs, pnl, reason, position_id)
+                   VALUES (?,?,?,?,?,?,0,?,?)""",
+                (entry_date, ticker, "BUY", qty, fill, costs,
+                 f"EOD scan entry score={score:.0f}", pos_id),
+            )
+    except Exception as e:
+        log.error("[pos_runner] DB write failed for %s: %s", ticker, e)
         return False
+
+    log.info("[pos_runner] OPENED: %s qty=%d fill=%.2f stop=%.2f target=%.2f broker=%s",
+             ticker, qty, fill, hard_stop, target, broker.name)
     return True
 
 
-# ---------- Signal persistence ----------
+# ── Close a position ──────────────────────────────────────────────────────────
 
-def _log_signal(ticker: str, strategy: str, action: str, score: float,
-                price: float, reason: str, quality_score: float, meta: dict) -> None:
-    ts = datetime.now(IST).isoformat()
+def _close_position(pos: dict, current_price: float, reason: str) -> bool:
+    """Place a SELL order and mark pos_positions as CLOSED."""
+    from positional.risk import compute_delivery_costs, delivery_fill_price
+    from positional.broker import get_broker
+    from db.models import get_conn, insert_returning_id
+
+    pos_id  = pos["id"]
+    ticker  = pos["ticker"]
+    qty     = int(pos["quantity"])
+    entry   = float(pos["entry_price"])
+
+    broker = get_broker()
+    result = broker.place_order(ticker, "SELL", qty, current_price)
+    fill   = result.fill_price if result.success else current_price
+
+    costs  = compute_delivery_costs("SELL", fill, qty)
+    pnl    = (fill - entry) * qty - costs
+    pnl_pct= (fill - entry) / entry * 100
+    ts     = datetime.now(IST).isoformat()
+
     try:
         with get_conn() as conn:
             conn.execute(
-                """INSERT INTO positional_signals
-                   (scanned_at, ticker, action, strategy, score, price,
-                    reason, quality_score, taken, meta)
-                   VALUES (?,?,?,?,?,?,?,?,0,?)""",
-                (ts, ticker, action, strategy, score, price, reason,
-                 quality_score, json.dumps(meta, default=str)),
+                """UPDATE pos_positions
+                   SET status='CLOSED', exit_date=?, exit_price=?,
+                       exit_reason=?, pnl=?, pnl_pct=?
+                   WHERE id=?""",
+                (ts, fill, reason, round(pnl, 2), round(pnl_pct, 2), pos_id),
+            )
+            insert_returning_id(
+                conn,
+                """INSERT INTO pos_trades
+                   (ts, ticker, side, quantity, price, costs, pnl, reason, position_id)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (ts, ticker, "SELL", qty, fill, costs, round(pnl, 2), reason, pos_id),
             )
     except Exception as e:
-        log.debug("positional_signals insert failed: %s", e)
+        log.error("[pos_runner] close DB write failed for %s: %s", ticker, e)
+        return False
+
+    pnl_tag = "+" if pnl >= 0 else ""
+    log.info("[pos_runner] CLOSED: %s qty=%d fill=%.2f pnl=%s%.2f (%.1f%%) reason=%s",
+             ticker, qty, fill, pnl_tag, pnl, pnl_pct, reason)
+
+    # Telegram SELL alert
+    try:
+        from positional.alerts import send_sell_alert
+        send_sell_alert(ticker, fill, reason, entry_price=entry)
+    except Exception:
+        pass
+
+    return True
 
 
-def _queue_approval(
-    ticker: str,
-    action: str,
-    qty: int,
-    price: float,
-    stop_loss: float,
-    take_profit: float,
-    strategy: str,
-    score: float,
-    reason: str,
-) -> int:
-    now = datetime.now(IST)
-    expires = now + timedelta(minutes=POSITIONAL_APPROVAL_TIMEOUT_MIN)
-    with get_conn() as conn:
-        return insert_returning_id(
-            conn,
-            """INSERT INTO pending_approvals
-               (created_at, expires_at, ticker, action, quantity, price,
-                stop_loss, take_profit, strategy, composite_score, reason,
-                status, trade_type)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending','positional')""",
-            (
-                now.isoformat(), expires.isoformat(),
-                ticker, action, qty, price,
-                stop_loss, take_profit, strategy, score, reason,
-            ),
-        )
+# ── EOD Exit Management ───────────────────────────────────────────────────────
 
-
-def _open_positional_position(
-    ticker: str,
-    price: float,
-    qty: int,
-    stop_loss: float,
-    t1_target: float,
-    tp_target: float,
-    atr: float,
-    strategy: str,
-    score: float,
-    quality_score: float,
-    sector: str,
-    strategy_breakdown: dict,
-    conviction: str,
-    hold_days: int,
-) -> int:
-    fill = delivery_fill_price("BUY", price)
-    costs = compute_delivery_costs("BUY", fill, qty)
-    ts = datetime.now(IST).isoformat()
-    today = datetime.now(IST).date()
-    expected_exit = (today + timedelta(days=hold_days)).isoformat()
-
-    with get_conn() as conn:
-        pos_id = insert_returning_id(
-            conn,
-            """INSERT INTO positions
-               (ticker, entry_ts, entry_price, quantity, stop_loss, take_profit,
-                strategy, composite_score, status, atr_at_entry, t1_target,
-                t1_taken, high_water_mark, initial_quantity, side, trade_type)
-               VALUES (?,?,?,?,?,?,?,?,'OPEN',?,?,0,?,?,?,?)""",
-            (
-                ticker, ts, fill, qty, stop_loss, tp_target,
-                strategy, score, atr, t1_target,
-                fill, qty, "LONG", "positional",
-            ),
-        )
-        conn.execute(
-            """INSERT INTO positional_positions
-               (position_id, ticker, quality_score, conviction,
-                expected_exit_date, hold_days_limit, days_held,
-                sector, strategy_breakdown, created_at)
-               VALUES (?,?,?,?,?,?,0,?,?,?)""",
-            (
-                pos_id, ticker, quality_score, conviction,
-                expected_exit, hold_days, sector,
-                json.dumps(strategy_breakdown, default=str), ts,
-            ),
-        )
-        conn.execute(
-            """INSERT INTO trades
-               (ts, ticker, side, quantity, price, value, costs, net_value,
-                strategy, reason, composite_score, mode, position_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                ts, ticker, "BUY", qty, fill, fill * qty,
-                costs, -(fill * qty + costs),
-                strategy, f"positional open Q={quality_score:.0f}", score,
-                "positional", pos_id,
-            ),
-        )
-
-    # Critical: deduct the position cost from portfolio cash via a fresh
-    # snapshot. Without this, the position is "free" — the dashboard's Cash
-    # column never decrements on positional opens and a phantom gain appears
-    # when the position eventually closes (close_position credits cash for
-    # exit but the entry was never debited).
-    from engine.portfolio import get_cash, _snapshot_row
-    new_cash = get_cash() - (fill * qty + costs)
-    _snapshot_row(new_cash, prices={ticker: fill})
-
-    log.info(
-        "POSITIONAL OPEN: %s qty=%d fill=%.2f stop=%.2f T1=%.2f TP=%.2f "
-        "ATR=%.2f strategy=%s score=%.1f",
-        ticker, qty, fill, stop_loss, t1_target, tp_target, atr, strategy, score,
-    )
-    return pos_id
-
-
-# ---------- Pre-market scan ----------
-
-def run_positional_scan() -> dict:
-    """Main pre-market scan. Returns summary dict."""
-    if not _positional_enabled():
-        log.debug("positional scan skipped — not enabled")
-        return {"skipped": True, "reason": "positional_enabled=0"}
-
-    if not _is_market_day():
+def run_exit_checks() -> dict:
+    """
+    Check all OPEN pos_positions for exit conditions.
+    Returns summary: {exited, sell_alerts, reentry_alerts, updated, errors}
+    """
+    if not _is_trading_day():
         return {"skipped": True, "reason": "non-trading day"}
 
-    log.info("=== POSITIONAL SCAN START ===")
-    mode = _bot_mode()
-    strategies = all_positional_strategies()
-    universe = get_positional_universe()
+    log.info("[pos_runner] === EXIT CHECK START ===")
+    from positional.risk import evaluate_exits, check_reentry, compute_ema21
+    from positional.alerts import send_sell_alert, send_reentry_alert
+    from db.models import get_conn
 
-    pool_cash = get_positional_pool_cash()
-    queued, skipped_corr, skipped_risk, errors = 0, 0, 0, 0
-
-    for ticker, quality_score, sector in universe:
-        if not can_open_positional(pool_cash):
-            log.info("positional: max positions reached or pool exhausted")
-            break
-        try:
-            df = fetch_candles(ticker, interval=POSITIONAL_CANDLE_INTERVAL,
-                               days=POSITIONAL_LOOKBACK_DAYS)
-            if df is None or df.empty or len(df) < 60:
-                skipped_risk += 1
-                continue
-
-            # Run all strategies
-            signals = [s.generate(ticker, df, quality_score=quality_score)
-                       for s in strategies]
-
-            # Log all non-HOLD signals
-            for sig in signals:
-                if sig.action != "HOLD":
-                    _log_signal(ticker, sig.strategy, sig.action, sig.score,
-                                sig.price or 0.0, sig.reason, quality_score, sig.meta)
-
-            decision = evaluate_positional(ticker, signals)
-
-            if decision.action == "HOLD":
-                continue
-
-            if decision.composite_score < POSITIONAL_MIN_COMPOSITE_SCORE:
-                continue
-
-            # Risk checks
-            if is_correlated_to_open_positions(ticker, df):
-                skipped_corr += 1
-                continue
-
-            price = decision.price
-            if not price:
-                price = float(df["Close"].iloc[-1])
-
-            atr = compute_daily_atr(df)
-            if atr <= 0:
-                skipped_risk += 1
-                continue
-
-            qty = positional_position_size(price, atr, pool_cash)
-            if qty <= 0:
-                skipped_risk += 1
-                continue
-
-            targets = compute_atr_targets(price, atr)
-            strategy_label = f"positional:{decision.conviction}"
-            breakdown = decision.strategy_scores
-
-            if mode in ("auto", "dry_run"):
-                _open_positional_position(
-                    ticker=ticker,
-                    price=price,
-                    qty=qty,
-                    stop_loss=targets["stop_loss"],
-                    t1_target=targets["t1_target"],
-                    tp_target=targets["tp_target"],
-                    atr=atr,
-                    strategy=strategy_label,
-                    score=decision.composite_score,
-                    quality_score=quality_score,
-                    sector=sector,
-                    strategy_breakdown=breakdown,
-                    conviction=decision.conviction,
-                    hold_days=decision.avg_hold_days,
-                )
-                pool_cash -= price * qty
-            else:
-                # MANUAL: queue approval
-                _queue_approval(
-                    ticker=ticker,
-                    action=decision.action,
-                    qty=qty,
-                    price=price,
-                    stop_loss=targets["stop_loss"],
-                    take_profit=targets["tp_target"],
-                    strategy=strategy_label,
-                    score=decision.composite_score,
-                    reason=(f"[Positional] {decision.top_reason} "
-                            f"Q={quality_score:.0f} conv={decision.conviction}"),
-                )
-                pool_cash -= price * qty  # reserve cash optimistically
-
-            queued += 1
-            log.info(
-                "POSITIONAL SIGNAL: %s %s score=%.1f conv=%s reason=%s",
-                decision.action, ticker, decision.composite_score,
-                decision.conviction, decision.top_reason[:80],
-            )
-
-        except Exception as e:
-            log.warning("positional scan error for %s: %s", ticker, e)
-            errors += 1
-
-    summary = {"queued": queued, "skipped_corr": skipped_corr,
-               "skipped_risk": skipped_risk, "errors": errors,
-               "universe_size": len(universe)}
-    log.info("=== POSITIONAL SCAN END: %s ===", summary)
-    return summary
-
-
-# ---------- EOD exit management ----------
-
-def run_positional_exit_check() -> dict:
-    """Check all open positional positions for exit conditions."""
-    if not _is_market_day():
-        return {"skipped": True}
-
-    log.info("=== POSITIONAL EXIT CHECK START ===")
-    mode = _bot_mode()
-    today = datetime.now(IST).date()
-    exited, t1_partial, updated, errors = 0, 0, 0, 0
+    exited = 0
+    sell_alerts_list: list[dict] = []
+    reentry_alerts_list: list[dict] = []
+    updated = 0
+    errors  = 0
 
     try:
         with get_conn() as conn:
             positions = conn.execute(
-                """SELECT p.*, pp.days_held, pp.hold_days_limit, pp.id AS pp_id
-                   FROM positions p
-                   LEFT JOIN positional_positions pp ON pp.position_id = p.id
-                   WHERE p.status = 'OPEN' AND p.trade_type = 'positional'"""
+                "SELECT * FROM pos_positions WHERE status='OPEN'"
             ).fetchall()
-        positions = [dict(r) for r in positions]
+        positions = [dict(p) for p in positions]
     except Exception as e:
-        log.error("positional exit check: DB read failed: %s", e)
+        log.error("[pos_runner] exit check DB read failed: %s", e)
         return {"errors": 1}
 
     for pos in positions:
         ticker = pos["ticker"]
-        pos_id = pos["id"]
-        pp_id = pos.get("pp_id")
-
         try:
-            df = fetch_candles(ticker, interval=POSITIONAL_CANDLE_INTERVAL,
-                               days=10, use_cache=False)
+            df = _fetch_daily_df(ticker)
             if df is None or df.empty:
-                log.warning("positional exit: no data for %s", ticker)
+                log.warning("[pos_runner] no data for %s — skipping exit check", ticker)
                 continue
 
             current_price = float(df["Close"].iloc[-1])
-            days_held = int(pos.get("days_held") or 0)
-            hwm = max(float(pos.get("high_water_mark") or current_price), current_price)
 
-            # Update high water mark
-            if current_price > float(pos.get("high_water_mark") or 0):
-                with get_conn() as conn:
-                    conn.execute(
-                        "UPDATE positions SET high_water_mark=? WHERE id=?",
-                        (current_price, pos_id),
-                    )
+            # Update peak price
+            peak = float(pos.get("peak_price") or current_price)
+            if current_price > peak:
+                peak = current_price
 
-            # Event guard: exit before earnings/dividends
-            event = check_event_guard(ticker)
-            if event:
-                _execute_positional_exit(
-                    pos, current_price, mode,
-                    reason=f"EVENT_GUARD: {event}",
-                )
-                exited += 1
-                continue
+            # Increment days_held
+            days_held = int(pos.get("days_held", 0)) + 1
 
-            exit_reason = check_positional_exits(
-                {**pos, "high_water_mark": hwm},
-                current_price,
-                days_held,
-            )
-
-            if exit_reason == "T1_PARTIAL":
-                _execute_t1_partial(pos, current_price, mode)
-                t1_partial += 1
-            elif exit_reason is not None:
-                _execute_positional_exit(pos, current_price, mode, reason=exit_reason)
+            # Evaluate exit
+            exit_reason = evaluate_exits(pos, df)
+            if exit_reason:
+                _close_position(pos, current_price, exit_reason)
+                sell_alerts_list.append({
+                    "ticker": ticker,
+                    "reason": exit_reason,
+                    "current_price": current_price,
+                })
                 exited += 1
             else:
-                # Update days_held
-                if pp_id:
+                # Update current EMA trail stop and counters
+                ema21_val = compute_ema21(df)
+                below_ema = int(pos.get("below_ema_consecutive", 0))
+                if current_price < ema21_val:
+                    below_ema += 1
+                else:
+                    below_ema = 0
+                try:
                     with get_conn() as conn:
                         conn.execute(
-                            "UPDATE positional_positions SET days_held=? WHERE id=?",
-                            (days_held + 1, pp_id),
+                            """UPDATE pos_positions
+                               SET peak_price=?, days_held=?,
+                                   ema_trail_stop=?, below_ema_consecutive=?
+                               WHERE id=?""",
+                            (peak, days_held, ema21_val, below_ema, pos["id"]),
                         )
+                except Exception as e:
+                    log.debug("[pos_runner] update failed for %s: %s", ticker, e)
                 updated += 1
 
+            # Re-entry check (applies to stocks not currently held)
         except Exception as e:
-            log.warning("positional exit error for %s: %s", ticker, e)
+            log.warning("[pos_runner] exit error for %s: %s", ticker, e)
             errors += 1
 
-    summary = {"exited": exited, "t1_partial": t1_partial,
-               "updated": updated, "errors": errors}
-    log.info("=== POSITIONAL EXIT CHECK END: %s ===", summary)
+    # Re-entry alerts for recently closed positions
+    try:
+        with get_conn() as conn:
+            cutoff = (datetime.now() - timedelta(days=14)).date().isoformat()
+            watchlist = conn.execute(
+                """SELECT DISTINCT ticker FROM pos_positions
+                   WHERE status='CLOSED' AND exit_date >= ?""",
+                (cutoff,),
+            ).fetchall()
+            open_tickers = {p["ticker"] for p in positions}
+        for row in watchlist:
+            ticker = row["ticker"]
+            if ticker in open_tickers:
+                continue
+            try:
+                df = _fetch_daily_df(ticker)
+                if df is None or df.empty:
+                    continue
+                from positional.risk import check_reentry
+                alert = check_reentry(ticker, df)
+                if alert:
+                    reentry_alerts_list.append({"ticker": ticker, "reason": alert})
+                    ema21 = float(df["Close"].astype(float).ewm(span=21, adjust=False).mean().iloc[-1])
+                    vol   = float(df["Volume"].iloc[-1])
+                    avg_v = float(df["Volume"].tail(20).mean())
+                    send_reentry_alert(ticker, float(df["Close"].iloc[-1]),
+                                       ema21, vol / avg_v if avg_v > 0 else 1.0)
+                    log.info("[pos_runner] RE-ENTRY: %s", alert)
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("[pos_runner] re-entry sweep failed: %s", e)
+
+    summary = {
+        "exited": exited,
+        "sell_alerts": sell_alerts_list,
+        "reentry_alerts": reentry_alerts_list,
+        "updated": updated,
+        "errors": errors,
+    }
+    log.info("[pos_runner] === EXIT CHECK END: exited=%d updated=%d errors=%d ===",
+             exited, updated, errors)
     return summary
 
 
-def _execute_positional_exit(pos: dict, price: float, mode: str, reason: str) -> None:
-    pos_id = pos["id"]
-    ticker = pos["ticker"]
-    qty = int(pos["quantity"])
-    entry_price = float(pos["entry_price"])
+# ── EOD Scan ─────────────────────────────────────────────────────────────────
 
-    if qty <= 0:
-        return
+def run_eod_scan() -> dict:
+    """
+    Main EOD scan: runs Minervini Trend Template + VCP on the fundamental universe.
+    Opens positions for BUY alerts (paper mode) or sends SELL/BUY alerts.
+    Returns summary dict.
+    """
+    if not _positional_enabled():
+        log.debug("[pos_runner] positional module disabled")
+        return {"skipped": True, "reason": "positional_enabled=0"}
+    if not _is_trading_day():
+        return {"skipped": True, "reason": "non-trading day"}
 
-    fill = delivery_fill_price("SELL", price)
-    costs = compute_delivery_costs("SELL", fill, qty)
-    pnl = (fill - entry_price) * qty - costs
-    pnl_pct = (fill - entry_price) / entry_price * 100
-    ts = datetime.now(IST).isoformat()
+    log.info("[pos_runner] === EOD SCAN START ===")
 
-    if mode == "manual":
-        # Queue exit approval
+    # Step 1: Market regime
+    from positional.market_regime import get_latest_regime
+    regime = get_latest_regime()
+    regime_flag  = regime.get("flag", "NEUTRAL")
+    size_mult    = float(regime.get("size_multiplier", 0.70))
+
+    if regime_flag == "DEFENSIVE":
+        log.info("[pos_runner] Regime=DEFENSIVE — reduced position sizes (%.0f%%)",
+                 size_mult * 100)
+
+    # Step 2: Exit management first
+    exit_result = run_exit_checks()
+    sell_alerts = exit_result.get("sell_alerts", [])
+    reentry_alerts = exit_result.get("reentry_alerts", [])
+
+    # Step 3: Technical scan
+    from positional.scanner import run_eod_scan as _scan
+    scan_results = _scan()
+    buy_alerts_scanned = [r for r in scan_results if r["alert_type"] == "BUY"]
+    buy_alerts_taken: list[dict] = []
+
+    for result in buy_alerts_scanned:
+        ticker = result["ticker"]
+        price  = result["price"]
+        score  = result["score"]
+
+        # Send Telegram alert for each BUY setup
         try:
-            _queue_approval(
-                ticker=ticker, action="SELL", qty=qty, price=fill,
-                stop_loss=0.0, take_profit=0.0,
-                strategy=pos.get("strategy", "positional"),
-                score=float(pos.get("composite_score") or 50.0),
-                reason=f"[Positional EXIT] {reason}",
+            from positional.alerts import send_buy_alert
+            send_buy_alert(result)
+        except Exception:
+            pass
+
+        # Open position in paper mode (or real broker if configured)
+        try:
+            opened = _open_position(
+                ticker=ticker,
+                price=price,
+                score=score,
+                scan_id=0,  # scan_id looked up from pos_scans in real use
+                regime_flag=regime_flag,
             )
+            if opened:
+                buy_alerts_taken.append(result)
         except Exception as e:
-            log.warning("positional exit approval queue failed for %s: %s", ticker, e)
-        return
+            log.warning("[pos_runner] open_position failed for %s: %s", ticker, e)
 
+    # Step 4: Send EOD Telegram summary
     try:
-        with get_conn() as conn:
-            conn.execute(
-                """UPDATE positions SET status='CLOSED', exit_ts=?, exit_price=?,
-                   pnl=?, pnl_pct=? WHERE id=?""",
-                (ts, fill, round(pnl, 2), round(pnl_pct, 2), pos_id),
-            )
-            conn.execute(
-                """INSERT INTO trades
-                   (ts, ticker, side, quantity, price, value, costs, net_value,
-                    strategy, reason, composite_score, mode, position_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    ts, ticker, "SELL", qty, fill, fill * qty,
-                    costs, fill * qty - costs,
-                    pos.get("strategy", "positional"), reason,
-                    float(pos.get("composite_score") or 50.0),
-                    "positional", pos_id,
-                ),
-            )
-        # Credit cash for the exit proceeds.
-        from engine.portfolio import get_cash, _snapshot_row
-        new_cash = get_cash() + (fill * qty - costs)
-        _snapshot_row(new_cash, prices={ticker: fill})
-        log.info("POSITIONAL EXIT: %s qty=%d fill=%.2f pnl=%.2f (%.2f%%) %s",
-                 ticker, qty, fill, pnl, pnl_pct, reason)
-    except Exception as e:
-        log.error("positional exit DB write failed for %s: %s", ticker, e)
-
-
-def _execute_t1_partial(pos: dict, price: float, mode: str) -> None:
-    pos_id = pos["id"]
-    ticker = pos["ticker"]
-    qty = int(pos["quantity"])
-    t1_qty = max(1, int(qty * POSITIONAL_T1_PARTIAL_PCT))
-    entry_price = float(pos["entry_price"])
-
-    if t1_qty >= qty:
-        _execute_positional_exit(pos, price, mode, reason="T1_FULL_EXIT")
-        return
-
-    fill = delivery_fill_price("SELL", price)
-    costs = compute_delivery_costs("SELL", fill, t1_qty)
-    partial_pnl = (fill - entry_price) * t1_qty - costs
-    ts = datetime.now(IST).isoformat()
-
-    if mode == "manual":
-        _queue_approval(
-            ticker=ticker, action="SELL", qty=t1_qty, price=fill,
-            stop_loss=0.0, take_profit=0.0,
-            strategy=pos.get("strategy", "positional"),
-            score=float(pos.get("composite_score") or 50.0),
-            reason=f"[Positional T1 PARTIAL] price reached T1 target",
+        from positional.alerts import send_eod_summary
+        time_stops = [s for s in sell_alerts if "TIME_STOP" in s.get("reason", "")]
+        ema_exits  = [s for s in sell_alerts if "EMA_TRAIL" in s.get("reason", "")]
+        hard_stops = [s for s in sell_alerts if "HARD_STOP" in s.get("reason", "")]
+        send_eod_summary(
+            regime=regime,
+            buy_alerts=buy_alerts_scanned,
+            sell_alerts=ema_exits + hard_stops,
+            time_stops=time_stops,
+            reentry_alerts=reentry_alerts,
         )
-        return
-
-    try:
-        remaining = qty - t1_qty
-        with get_conn() as conn:
-            conn.execute(
-                "UPDATE positions SET quantity=?, t1_taken=1 WHERE id=?",
-                (remaining, pos_id),
-            )
-            conn.execute(
-                """INSERT INTO trades
-                   (ts, ticker, side, quantity, price, value, costs, net_value,
-                    strategy, reason, composite_score, mode, position_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    ts, ticker, "SELL", t1_qty, fill, fill * t1_qty,
-                    costs, fill * t1_qty - costs,
-                    pos.get("strategy", "positional"),
-                    "T1_PARTIAL: first target hit",
-                    float(pos.get("composite_score") or 50.0),
-                    "positional", pos_id,
-                ),
-            )
-        # Credit cash for the partial exit proceeds.
-        from engine.portfolio import get_cash, _snapshot_row
-        new_cash = get_cash() + (fill * t1_qty - costs)
-        _snapshot_row(new_cash, prices={ticker: fill})
-        log.info("POSITIONAL T1 PARTIAL: %s sold %d @ %.2f pnl=%.2f remaining=%d",
-                 ticker, t1_qty, fill, partial_pnl, remaining)
     except Exception as e:
-        log.error("T1 partial DB write failed for %s: %s", ticker, e)
+        log.warning("[pos_runner] Telegram summary failed: %s", e)
+
+    summary = {
+        "regime": regime_flag,
+        "buy_alerts": len(buy_alerts_scanned),
+        "positions_opened": len(buy_alerts_taken),
+        "positions_exited": exit_result.get("exited", 0),
+        "reentry_alerts": len(reentry_alerts),
+        "universe_size": len(scan_results),
+    }
+    log.info("[pos_runner] === EOD SCAN END: %s ===", summary)
+    return summary
 
 
-# ---------- Daemon loop ----------
+def run_regime_check() -> dict:
+    """
+    Monthly macro regime computation. Call on the 1st trading day of each month.
+    Returns regime dict.
+    """
+    log.info("[pos_runner] === REGIME CHECK START ===")
+    from positional.market_regime import compute_market_regime
+    from positional.alerts import send_regime_alert
+    regime = compute_market_regime()
+    try:
+        send_regime_alert(regime)
+    except Exception:
+        pass
+    log.info("[pos_runner] === REGIME CHECK END: flag=%s ===", regime.get("flag"))
+    return regime
+
+
+# ── Daemon loop ────────────────────────────────────────────────────────────────
 
 def run_positional_forever() -> None:
-    """Standalone daemon: waits for the scan and exit-check times each day.
-
-    Uses >= comparison with per-date tracking so a scan is never missed if the
-    machine was asleep at the exact scheduled minute and wakes up later.
     """
-    log.info("positional runner started")
-    _last_scan_date: object = None   # date object or None
-    _last_exit_date: object = None
+    Background daemon thread: waits for scheduled scan times each day.
+    Tracks per-date so a scan is never missed if the process wakes up late.
+    Also runs a monthly regime check on the 1st trading day of the month.
+    """
+    log.info("[pos_runner] positional daemon started")
+    _last_scan_date:   object = None
+    _last_alert_date:  object = None
+    _last_regime_month: object = None
+
+    scan_h,  scan_m  = [int(x) for x in POSITIONAL_SCAN_TIME.split(":")]
+    alert_h, alert_m = [int(x) for x in POSITIONAL_ALERT_TIME.split(":")]
 
     while True:
         try:
-            now = datetime.now(IST)
+            now   = datetime.now(IST)
             today = now.date()
-            hhmm = now.strftime("%H:%M")
+            past_scan  = (now.hour, now.minute) >= (scan_h,  scan_m)
+            past_alert = (now.hour, now.minute) >= (alert_h, alert_m)
 
-            scan_h, scan_m = POSITIONAL_SCAN_TIME.split(":")
-            exit_h, exit_m = POSITIONAL_EXIT_TIME.split(":")
-            past_scan = (now.hour, now.minute) >= (int(scan_h), int(scan_m))
-            past_exit = (now.hour, now.minute) >= (int(exit_h), int(exit_m))
+            # Monthly regime check (first trading day of month)
+            if today.day <= 3 and today.weekday() < 5:
+                if _last_regime_month != today.month:
+                    _last_regime_month = today.month
+                    try:
+                        run_regime_check()
+                    except Exception as e:
+                        log.error("[pos_runner] regime check error: %s", e)
 
-            if past_scan and _last_scan_date != today:
+            # 4:00 PM: EOD scan
+            if past_scan and _is_trading_day() and _last_scan_date != today:
                 _last_scan_date = today
-                run_positional_scan()
-                time.sleep(60)
-                continue
-
-            if past_exit and _last_exit_date != today:
-                _last_exit_date = today
-                run_positional_exit_check()
-                time.sleep(60)
+                try:
+                    run_eod_scan()
+                except Exception as e:
+                    log.error("[pos_runner] EOD scan error: %s", e)
+                time.sleep(30)
                 continue
 
             time.sleep(30)
         except Exception as e:
-            log.error("positional runner loop error: %s", e)
+            log.error("[pos_runner] daemon loop error: %s", e)
             time.sleep(60)
