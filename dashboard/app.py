@@ -2491,26 +2491,55 @@ with tab_positional:
         _u3.metric("Last Import",
                    to_ist(_last_imp).strftime("%d %b %Y %H:%M") if _last_imp else "Never")
 
-        st.markdown(
-            f"**Active filters:** ROCE ≥ {POSITIONAL_FUND_MIN_ROCE}%  |  "
-            f"ROE ≥ {POSITIONAL_FUND_MIN_ROE}%  |  "
-            f"Sales Growth ≥ {POSITIONAL_FUND_MIN_SALES_GROWTH}%  |  "
-            f"Debt/Equity ≤ {POSITIONAL_FUND_MAX_DE}"
-        )
+        from config import POSITIONAL_BANK_MAX_GNPA, POSITIONAL_BANK_MAX_NNPA, POSITIONAL_BANK_MIN_ROE
+        _fa, _fb = st.columns(2)
+        with _fa:
+            st.markdown(
+                "**Non-financial companies** (IT, FMCG, Pharma, Infra…)\n\n"
+                f"- ROCE ≥ {POSITIONAL_FUND_MIN_ROCE}%\n"
+                f"- ROE ≥ {POSITIONAL_FUND_MIN_ROE}%\n"
+                f"- Sales Growth ≥ {POSITIONAL_FUND_MIN_SALES_GROWTH}%\n"
+                f"- Debt/Equity ≤ {POSITIONAL_FUND_MAX_DE}"
+            )
+        with _fb:
+            st.markdown(
+                "**Banks & NBFCs** *(D/E and ROCE excluded — leverage is the business model)*\n\n"
+                f"- ROE ≥ {POSITIONAL_BANK_MIN_ROE}%\n"
+                f"- Revenue Growth ≥ {POSITIONAL_FUND_MIN_SALES_GROWTH}%\n"
+                f"- Gross NPA < {POSITIONAL_BANK_MAX_GNPA}%\n"
+                f"- Net NPA < {POSITIONAL_BANK_MAX_NNPA}%"
+            )
 
         with st.expander("📤 Upload Screener.in CSV", expanded=(_stats.get("active", 0) == 0)):
             st.markdown("""
-**Steps to export from Screener.in:**
+**Run two queries on Screener.in and combine the CSV exports:**
+
+**Query A — Non-financial companies:**
+```
+Return on capital employed > 15 AND Return on equity > 15 AND
+Sales growth 3Years > 15 AND Debt to equity < 1 AND Market Capitalization > 500
+```
+
+**Query B — Banks & NBFCs:**
+```
+Return on equity > 15 AND Sales growth 3Years > 15 AND
+Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
+```
+
+**Steps:**
 1. Go to [screener.in/explore/](https://www.screener.in/explore/)
-2. Apply filters: `ROCE % > 15`, `ROE % > 15`, `Sales growth 3Years > 15`, `Debt to equity < 1`
-3. Click **Export to Excel/CSV** (top right)
-4. Upload the downloaded CSV file here ↓
+2. Enter Query A → Export CSV → save as `query_a.csv`
+3. Enter Query B → Export CSV → save as `query_b.csv`
+4. Combine both files into one CSV (open in Excel, copy rows from B into A, save)
+5. Upload the combined CSV here ↓
+
+*The app auto-detects banks/NBFCs by sector name or NPA column and applies the correct filter track.*
             """)
             _uploaded = st.file_uploader(
-                "Upload Screener.in export CSV",
+                "Upload Screener.in export CSV (Query A + B combined)",
                 type=["csv"],
                 key="pos_universe_upload",
-                help="Export from screener.in with ROCE, ROE, Sales Growth, D/E columns"
+                help="Combined CSV from screener.in — non-financial + banks/NBFCs"
             )
             if _uploaded is not None:
                 with st.spinner(f"Processing {_uploaded.name}..."):
@@ -2521,9 +2550,12 @@ with tab_positional:
                         if _result["errors"]:
                             for _err in _result["errors"]:
                                 st.warning(_err)
+                        _fin_passed = _result.get("fin_passed", 0)
+                        _non_fin    = _result["passed"] - _fin_passed
                         st.success(
                             f"✅ Processed {_result['total_rows']} rows — "
-                            f"**{_result['passed']} stocks** passed filters, "
+                            f"**{_result['passed']} stocks** passed  "
+                            f"({_non_fin} non-financial + {_fin_passed} banks/NBFCs), "
                             f"{_result['failed']} filtered out."
                         )
                         st.rerun()
