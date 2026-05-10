@@ -34,12 +34,17 @@ def _fetch_monthly_close(ticker: str, months: int) -> Optional[list[float]]:
         if df is None or df.empty:
             log.warning("market_regime: no data for %s", ticker)
             return None
-        closes = df["Close"].dropna().tolist()
+        # yfinance >=0.2.x may return multi-level columns; squeeze to Series
+        close_col = df["Close"]
+        if hasattr(close_col, "squeeze"):
+            close_col = close_col.squeeze()
+        closes = close_col.dropna().tolist()
         # Need at least months+1 data points to compute ROC
         if len(closes) < months + 1:
             log.warning("market_regime: insufficient data for %s (%d months)",
                         ticker, len(closes))
             return None
+        log.debug("market_regime: %s — %d monthly closes fetched", ticker, len(closes))
         return [float(c) for c in closes]
     except Exception as e:
         log.warning("market_regime: fetch failed for %s: %s", ticker, e)
