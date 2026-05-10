@@ -29,20 +29,33 @@ def _fetch_monthly_close(ticker: str, months: int) -> Optional[list[float]]:
     """Fetch monthly closing prices via yfinance. Returns list oldest→newest."""
     try:
         import yfinance as yf
-        df = yf.download(ticker, period="3y", interval="1mo",
+
+        # Use 5y to ensure enough bars — some NSE indices have limited monthly history
+        df = yf.download(ticker, period="5y", interval="1mo",
                          progress=False, auto_adjust=True)
+
         if df is None or df.empty:
-            log.warning("market_regime: no data for %s", ticker)
-            return None
+            # Fallback: daily data resampled to month-end closes
+            log.debug("market_regime: monthly data empty for %s — trying daily+resample", ticker)
+            df_d = yf.download(ticker, period="5y", interval="1d",
+                               progress=False, auto_adjust=True)
+            if df_d is None or df_d.empty:
+                log.warning("market_regime: no data for %s", ticker)
+                return None
+            import pandas as pd
+            close_daily = df_d["Close"].squeeze()
+            df = close_daily.resample("ME").last().to_frame("Close")
+
         # yfinance >=0.2.x may return multi-level columns; squeeze to Series
         close_col = df["Close"]
         if hasattr(close_col, "squeeze"):
             close_col = close_col.squeeze()
         closes = close_col.dropna().tolist()
+
         # Need at least months+1 data points to compute ROC
         if len(closes) < months + 1:
-            log.warning("market_regime: insufficient data for %s (%d months)",
-                        ticker, len(closes))
+            log.warning("market_regime: insufficient data for %s — got %d months, need %d",
+                        ticker, len(closes), months + 1)
             return None
         log.debug("market_regime: %s — %d monthly closes fetched", ticker, len(closes))
         return [float(c) for c in closes]

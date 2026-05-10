@@ -189,6 +189,94 @@ def _close_position(pos: dict, current_price: float, reason: str) -> bool:
     return True
 
 
+# ── Manual paper order (dashboard button) ────────────────────────────────────
+
+def place_manual_order(ticker: str, price: float,
+                       score: float = 0.0, qty_override: int = 0) -> dict:
+    """
+    Place a paper BUY order manually from the dashboard.
+
+    Called when the user clicks 'Place Paper Order' on a scan result.
+    Bypasses trading-day and positional_enabled checks — always executes
+    in paper mode, purely for tracking and analytics.
+
+    Args:
+        ticker:       NSE ticker (e.g. 'CUMMINSIND.NS')
+        price:        entry price (usually last scan price)
+        score:        Minervini composite score from the scan
+        qty_override: if > 0, override auto-calculated quantity
+
+    Returns: {success, message, quantity, hard_stop, target}
+    """
+    from positional.risk import (
+        positional_position_size, compute_hard_stop, compute_target,
+        compute_delivery_costs, delivery_fill_price,
+        get_positional_cash, can_open_position,
+    )
+    from positional.market_regime import current_size_multiplier, get_latest_regime
+    from positional.broker import get_broker
+    from db.models import get_conn, insert_returning_id
+
+    regime = get_latest_regime()
+    regime_flag = regime.get("flag", "NEUTRAL")
+    size_mult = float(regime.get("size_multiplier", 0.70))
+
+    if not can_open_position():
+        return {"success": False,
+                "message": "Max positions already open or insufficient capital."}
+
+    qty = qty_override if qty_override > 0 else positional_position_size(price, size_multiplier=size_mult)
+    if qty <= 0:
+        return {"success": False,
+                "message": f"Quantity 0 at ₹{price:,.2f} — insufficient capital in pool."}
+
+    broker = get_broker()
+    result = broker.place_order(ticker, "BUY", qty, price)
+    if not result.success:
+        return {"success": False, "message": f"Order rejected: {result.message}"}
+
+    fill      = result.fill_price
+    costs     = compute_delivery_costs("BUY", fill, qty)
+    hard_stop = compute_hard_stop(fill)
+    target    = compute_target(fill)
+    entry_date = datetime.now(IST).isoformat()
+
+    try:
+        with get_conn() as conn:
+            pos_id = insert_returning_id(
+                conn,
+                """INSERT INTO pos_positions
+                   (ticker, entry_date, entry_price, quantity, hard_stop,
+                    ema_trail_stop, target_price, status, peak_price,
+                    below_ema_consecutive, days_held, regime_at_entry, scan_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,0,0,?,0)""",
+                (ticker, entry_date, fill, qty, hard_stop,
+                 None, target, "OPEN", fill, regime_flag),
+            )
+            conn.execute(
+                """INSERT INTO pos_trades
+                   (ts, ticker, side, quantity, price, costs, pnl, reason, position_id)
+                   VALUES (?,?,?,?,?,?,0,'MANUAL_ENTRY',?)""",
+                (entry_date, ticker, "BUY", qty, fill, costs, pos_id),
+            )
+    except Exception as e:
+        log.error("[pos_runner] place_manual_order DB write failed: %s", e)
+        return {"success": False, "message": f"DB write failed: {e}"}
+
+    log.info(
+        "[pos_runner] Manual paper order: BUY %d × %s @ ₹%.2f | stop=₹%.2f target=₹%.2f",
+        qty, ticker, fill, hard_stop, target,
+    )
+    return {
+        "success":   True,
+        "message":   f"Paper BUY placed: {qty} × {ticker} @ ₹{fill:,.2f}",
+        "quantity":  qty,
+        "fill":      fill,
+        "hard_stop": hard_stop,
+        "target":    target,
+    }
+
+
 # ── EOD Exit Management ───────────────────────────────────────────────────────
 
 def run_exit_checks() -> dict:

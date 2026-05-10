@@ -37,8 +37,10 @@ def _configure_dashboard_logging(debug: bool) -> None:
         force=True,          # reconfigure even if already set up
     )
     # Always silence genuinely noisy libraries regardless of debug mode.
+    # 'peewee' is used by yfinance internally for timezone caching and
+    # generates hundreds of SQL debug lines per scan — always suppress it.
     for _noisy in ("httpx", "httpcore", "urllib3", "huggingface_hub",
-                   "transformers", "filelock", "yfinance"):
+                   "transformers", "filelock", "yfinance", "peewee"):
         logging.getLogger(_noisy).setLevel(logging.ERROR)
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -2425,7 +2427,8 @@ with tab_positional:
         from positional.market_regime import get_latest_regime, compute_market_regime
         from positional.universe import universe_stats, get_universe_df, process_screener_csv
         from positional.scanner import get_latest_scan_results, run_eod_scan as _scan_now
-        from positional.runner import run_exit_checks as _run_pos_exits
+        from positional.runner import (run_exit_checks as _run_pos_exits,
+                                       place_manual_order as _place_order)
         from config import (
             POSITIONAL_CAPITAL, POSITIONAL_MAX_POSITIONS, POSITIONAL_HARD_STOP_PCT,
             POSITIONAL_SCAN_TIME, POSITIONAL_ALERT_TIME, POSITIONAL_BROKER,
@@ -2745,6 +2748,74 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
             )
         else:
             st.info("No scan results yet. Click **Run EOD Scan Now** or wait for the 4 PM scheduled scan.")
+
+        # ── Manual Paper Order ────────────────────────────────────────────
+        _buy_rows = [r for r in _scan_rows if r.get("alert_type") == "BUY"]
+        _all_rows = _scan_rows  # include WATCH too
+        if _all_rows:
+            with st.expander(
+                f"📥 Place Manual Paper Order ({len(_buy_rows)} BUY · "
+                f"{len(_all_rows)-len(_buy_rows)} WATCH available)",
+                expanded=False,
+            ):
+                st.caption(
+                    "Select any scanned ticker to open a paper position now. "
+                    "Quantity is calculated from your ₹1L capital pool and regime multiplier."
+                )
+                _ticker_opts = [
+                    f"🔔 {r['ticker']}  score={r['score']:.0f}  ₹{r['price']:,.2f}"
+                    if r.get("alert_type") == "BUY"
+                    else f"👀 {r['ticker']}  score={r['score']:.0f}  ₹{r['price']:,.2f}"
+                    for r in _all_rows
+                ]
+                _selected_idx = st.selectbox(
+                    "Select ticker", range(len(_ticker_opts)),
+                    format_func=lambda i: _ticker_opts[i],
+                    key="pos_manual_ticker",
+                )
+                _sel = _all_rows[_selected_idx]
+                _po_c1, _po_c2, _po_c3 = st.columns(3)
+                with _po_c1:
+                    _entry_price = st.number_input(
+                        "Entry price (₹)", value=float(_sel["price"]),
+                        min_value=0.01, step=0.05, format="%.2f",
+                        key="pos_manual_price",
+                    )
+                with _po_c2:
+                    _stop_preview = _entry_price * (1 - 0.08)
+                    _target_preview = _entry_price * (1 + 0.16)
+                    st.metric("Hard stop (8%)", f"₹{_stop_preview:,.2f}")
+                with _po_c3:
+                    st.metric("Target (2:1 R/R)", f"₹{_target_preview:,.2f}")
+
+                _qty_override = st.number_input(
+                    "Qty override (0 = auto-size from capital pool)",
+                    min_value=0, value=0, step=1, key="pos_manual_qty",
+                )
+                if st.button("✅ Confirm Paper BUY Order", type="primary",
+                             key="pos_manual_confirm"):
+                    with st.spinner(f"Placing paper order for {_sel['ticker']}..."):
+                        try:
+                            _po_result = _place_order(
+                                ticker=_sel["ticker"],
+                                price=_entry_price,
+                                score=float(_sel.get("score", 0)),
+                                qty_override=int(_qty_override),
+                            )
+                            if _po_result["success"]:
+                                logging.getLogger("positional.runner").info(
+                                    "[pos_runner] Dashboard manual order: %s", _po_result["message"]
+                                )
+                                st.success(
+                                    f"✅ {_po_result['message']}  |  "
+                                    f"Stop: ₹{_po_result['hard_stop']:,.2f}  |  "
+                                    f"Target: ₹{_po_result['target']:,.2f}"
+                                )
+                                st.rerun()
+                            else:
+                                st.error(_po_result["message"])
+                        except Exception as _poe:
+                            st.error(f"Order failed: {_poe}")
 
         st.divider()
 
