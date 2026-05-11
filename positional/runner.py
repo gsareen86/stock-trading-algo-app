@@ -58,11 +58,18 @@ def _is_trading_day() -> bool:
 def _fetch_daily_df(ticker: str):
     """Fetch 14 months of daily data for a ticker. Returns DataFrame or None."""
     try:
+        import pandas as pd
         import yfinance as yf
         t = ticker if ticker.endswith((".NS", ".BO")) else ticker + ".NS"
         df = yf.download(t, period="14mo", interval="1d",
                          auto_adjust=True, progress=False)
-        return df if df is not None and not df.empty else None
+        if df is None or df.empty:
+            return None
+        # yfinance >=0.2.x returns MultiIndex columns for single-ticker downloads;
+        # flatten to a plain column index so downstream code gets Series, not DataFrames.
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df
     except Exception as e:
         log.debug("[pos_runner] fetch failed for %s: %s", ticker, e)
         return None

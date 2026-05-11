@@ -49,7 +49,8 @@ def _setup_logging():
     # operation (HuggingFace model resolution, HTTPX request traces).
     # Cap them at WARNING so they only surface when something is wrong.
     for _noisy in ("httpx", "httpcore", "huggingface_hub", "huggingface_hub.utils._http",
-                   "transformers", "transformers.modeling_utils", "filelock"):
+                   "transformers", "transformers.modeling_utils", "filelock",
+                   "yfinance", "peewee"):
         logging.getLogger(_noisy).setLevel(logging.ERROR)
 
 
