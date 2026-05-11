@@ -78,6 +78,24 @@ log = logging.getLogger(__name__)
 LAST_CYCLE: dict = {}
 LAST_CYCLE_TS: datetime | None = None
 
+# Regime stability: track the last N regime readings to suppress single-cycle
+# flips (e.g. Nifty briefly crossing EMA mid-day → one "neutral" cycle lets
+# through counter-trend LONGs on a bear day).
+_REGIME_HISTORY: list[str] = []
+_REGIME_HISTORY_LEN = 3  # require 3 consecutive identical readings to change
+
+
+def _stable_regime(new_regime: str) -> str:
+    """Return the stable (consensus) regime, ignoring single-cycle outliers."""
+    _REGIME_HISTORY.append(new_regime)
+    if len(_REGIME_HISTORY) > _REGIME_HISTORY_LEN:
+        _REGIME_HISTORY.pop(0)
+    # Only accept the new regime if the last N readings all agree
+    if len(_REGIME_HISTORY) == _REGIME_HISTORY_LEN and len(set(_REGIME_HISTORY)) == 1:
+        return new_regime
+    # Otherwise keep the previous stable regime (most common in recent history)
+    return max(set(_REGIME_HISTORY), key=_REGIME_HISTORY.count)
+
 
 # ---------- Cycle-log helpers (cross-process visibility) ----------
 
@@ -536,7 +554,10 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         regime, trend_reason = ("neutral", "trend filter disabled")
         if USE_NIFTY_TREND_FILTER:
             try:
-                regime, trend_reason = nifty_regime()
+                raw_regime, trend_reason = nifty_regime()
+                regime = _stable_regime(raw_regime)
+                if regime != raw_regime:
+                    log.debug("regime stability filter: raw=%s → stable=%s", raw_regime, regime)
             except Exception as e:
                 log.warning("nifty_regime crashed: %s", e)
                 regime, trend_reason = "neutral", f"regime error: {e}"
@@ -635,6 +656,23 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
             open_count = len(open_positions())
             mode = state["mode"]
 
+            # Same-day trade cooldown: don't re-enter a ticker that was already
+            # traded (opened + closed) today.  This prevents double-entries when
+            # the same gap_play signal fires in back-to-back cycles after a quick
+            # stop-loss.  is_open() only guards against *currently open* positions
+            # and has a tiny write-lag race window; this set closes that gap.
+            today_str = datetime.now(IST).strftime("%Y-%m-%d")
+            try:
+                with get_conn() as _tc:
+                    _today_traded = {
+                        r[0] for r in _tc.execute(
+                            "SELECT DISTINCT ticker FROM trades WHERE date(opened_at)=?",
+                            (today_str,),
+                        ).fetchall()
+                    }
+            except Exception:
+                _today_traded = set()
+
             # Build a unified, regime-filtered, score-sorted entry queue.
             entry_queue: list[tuple[CompositeDecision, str]] = []
             if allow_long:
@@ -651,6 +689,9 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                 if not can_open_new(open_count):
                     break
                 if is_open(d.ticker):
+                    continue
+                if d.ticker in _today_traded:
+                    log.debug("same-day cooldown: skipping %s (already traded today)", d.ticker)
                     continue
                 qty = position_size(cash, d.price)
                 if qty <= 0:

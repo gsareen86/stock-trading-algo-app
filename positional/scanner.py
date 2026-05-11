@@ -379,16 +379,19 @@ def get_latest_scan_results(limit: int = 50) -> list[dict]:
     try:
         from db.models import get_conn
         with get_conn() as conn:
-            # Get the most recent scan date
             latest_date = conn.execute(
-                "SELECT substr(scanned_at,1,10) AS d FROM pos_scans ORDER BY id DESC LIMIT 1"
+                "SELECT substr(MAX(scanned_at),1,10) AS d FROM pos_scans"
             ).fetchone()
             if not latest_date:
                 return []
             scan_date = dict(latest_date)["d"]
+            # If two scans ran on the same calendar date, GROUP BY ticker with
+            # MAX(scanned_at) deduplicates to the most recent result per ticker.
             rows = conn.execute(
-                """SELECT * FROM pos_scans
+                """SELECT *, MAX(scanned_at) AS scanned_at
+                   FROM pos_scans
                    WHERE substr(scanned_at,1,10) = ?
+                   GROUP BY ticker
                    ORDER BY score DESC LIMIT ?""",
                 (scan_date, limit),
             ).fetchall()
