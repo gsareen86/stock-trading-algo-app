@@ -28,7 +28,17 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-_TABLE_DDL = """
+
+_INDEXES_DDL = [
+    "CREATE INDEX IF NOT EXISTS ix_llm_call_log_ts     ON llm_call_log(ts)",
+    "CREATE INDEX IF NOT EXISTS ix_llm_call_log_caller ON llm_call_log(caller)",
+]
+
+_initialized = False
+
+# Backend-aware DDL: SQLite uses INTEGER PRIMARY KEY (implicit rowid autoincrement);
+# PostgreSQL requires SERIAL so the id column gets a sequence and auto-fills.
+_TABLE_DDL_SQLITE = """
 CREATE TABLE IF NOT EXISTS llm_call_log (
     id                INTEGER PRIMARY KEY,
     ts                TEXT    NOT NULL,
@@ -44,12 +54,21 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
 )
 """
 
-_INDEXES_DDL = [
-    "CREATE INDEX IF NOT EXISTS ix_llm_call_log_ts     ON llm_call_log(ts)",
-    "CREATE INDEX IF NOT EXISTS ix_llm_call_log_caller ON llm_call_log(caller)",
-]
-
-_initialized = False
+_TABLE_DDL_PG = """
+CREATE TABLE IF NOT EXISTS llm_call_log (
+    id                SERIAL  PRIMARY KEY,
+    ts                TEXT    NOT NULL,
+    provider          TEXT    NOT NULL,
+    model             TEXT    NOT NULL,
+    caller            TEXT    NOT NULL DEFAULT '',
+    status            TEXT    NOT NULL,
+    prompt_tokens     INTEGER,
+    completion_tokens INTEGER,
+    total_tokens      INTEGER,
+    latency_ms        INTEGER,
+    error_msg         TEXT
+)
+"""
 
 
 def _ensure_table() -> None:
@@ -57,9 +76,10 @@ def _ensure_table() -> None:
     if _initialized:
         return
     try:
-        from db.models import get_conn
+        from db.models import get_conn, BACKEND
+        ddl = _TABLE_DDL_PG if BACKEND == "postgres" else _TABLE_DDL_SQLITE
         with get_conn() as conn:
-            conn.execute(_TABLE_DDL)
+            conn.execute(ddl)
             for idx in _INDEXES_DDL:
                 conn.execute(idx)
         _initialized = True

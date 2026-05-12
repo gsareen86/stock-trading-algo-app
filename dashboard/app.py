@@ -1344,6 +1344,101 @@ with tab_pos:
                         f"trades_raw_{start}_to_{end}.csv", "text/csv",
                     )
 
+    # ── Day-wise P&L Summary ─────────────────────────────────────────────
+    st.divider()
+    st.subheader("📅 Day-wise P&L Summary")
+
+    _dw_col1, _dw_col2 = st.columns([3, 1])
+    _dw_days = _dw_col2.number_input(
+        "Sessions to show", min_value=1, max_value=252, value=20, step=5,
+        key="daily_pnl_days",
+        help="Number of trading sessions to display (most recent first).",
+    )
+
+    @st.cache_data(ttl=60, show_spinner=False)
+    def _daily_pnl_summary(n_days: int):
+        """Aggregate closed positions by calendar date (trade close date)."""
+        try:
+            from analytics.metrics import closed_positions_report
+            import json
+            rep = closed_positions_report()
+            if rep is None or rep.empty:
+                return pd.DataFrame()
+            rep = rep.copy()
+            rep["_date"] = pd.to_datetime(rep["closed_at"]).dt.tz_localize(None).dt.date
+            grp = (
+                rep.groupby("_date")
+                .apply(lambda g: pd.Series({
+                    "Trades":    len(g),
+                    "Shorts":    int((g["direction"] == "SHORT").sum()),
+                    "Longs":     int((g["direction"] == "LONG").sum()),
+                    "Win Rate":  f"{(g['pnl'] > 0).sum() / len(g) * 100:.1f}%",
+                    "Total P&L": float(g["pnl"].sum()),
+                }))
+                .reset_index()
+                .rename(columns={"_date": "Date"})
+                .sort_values("Date", ascending=False)
+                .head(n_days)
+            )
+            # Attach dominant regime for each date from cycle_log
+            try:
+                with get_conn() as _rc:
+                    _cl = _rc.execute(
+                        "SELECT started_at, summary FROM cycle_log WHERE summary IS NOT NULL"
+                    ).fetchall()
+                _regime_by_date: dict = {}
+                for _row in _cl:
+                    try:
+                        _d = str(_row["started_at"])[:10]
+                        _s = json.loads(_row["summary"] or "{}")
+                        _r = _s.get("regime")
+                        if _r:
+                            _regime_by_date.setdefault(_d, []).append(_r)
+                    except Exception:
+                        pass
+                def _dominant_regime(dt) -> str:
+                    key = str(dt)
+                    vals = _regime_by_date.get(key, [])
+                    return max(set(vals), key=vals.count).capitalize() if vals else "—"
+                grp.insert(1, "Regime", grp["Date"].apply(_dominant_regime))
+            except Exception:
+                grp.insert(1, "Regime", "—")
+            return grp
+        except Exception as _e:
+            return pd.DataFrame()
+
+    _dpnl = _daily_pnl_summary(int(_dw_days))
+    if _dpnl.empty:
+        st.caption("No closed trades yet.")
+    else:
+        # Colour rows: green total P&L positive, red negative
+        def _style_daily(row):
+            colour = "#1a3a1a" if row["Total P&L"] >= 0 else "#3a1a1a"
+            return [f"background-color: {colour}"] * len(row)
+
+        _dpnl_disp = _dpnl.copy()
+        _dpnl_disp["Date"] = _dpnl_disp["Date"].astype(str)
+        _dpnl_disp["Total P&L"] = _dpnl_disp["Total P&L"].map(
+            lambda x: f"₹+{x:,.2f}" if x >= 0 else f"₹{x:,.2f}"
+        )
+        st.dataframe(
+            _dpnl_disp.style.apply(_style_daily, axis=1),
+            use_container_width=True,
+            hide_index=True,
+        )
+        # Quick aggregate across shown period
+        _shown_raw = _daily_pnl_summary(int(_dw_days))
+        if not _shown_raw.empty:
+            _sm1, _sm2, _sm3, _sm4 = st.columns(4)
+            _sm1.metric("Days shown", len(_shown_raw))
+            _total = float(_shown_raw["Total P&L"].sum())
+            _sm2.metric("Period P&L", f"₹{_total:+,.2f}")
+            _pos_days = int((_shown_raw["Total P&L"] > 0).sum())
+            _sm3.metric("Winning days", f"{_pos_days}/{len(_shown_raw)}")
+            _best = _shown_raw["Total P&L"].max()
+            _worst = _shown_raw["Total P&L"].min()
+            _sm4.metric("Best / Worst", f"₹{_best:+,.0f} / ₹{_worst:+,.0f}")
+
 
 # ==================================================================
 # 4. News & Sentiment
@@ -2847,27 +2942,59 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
 
         if _open_pos:
             import pandas as pd
+            from datetime import date as _date_type
             _odf = pd.DataFrame(_open_pos)
+
+            # Days held: compute from entry_date → today so it's always correct
+            # even if the exit-check daemon hasn't updated days_held in the DB yet.
+            _today_date = _date_type.today()
+            def _days_from_entry(raw_date) -> int:
+                try:
+                    parsed = pd.to_datetime(raw_date, utc=True).date()
+                    return max(0, (_today_date - parsed).days)
+                except Exception:
+                    return int(raw_date) if raw_date else 0
+            _odf["days_held"] = _odf["entry_date"].apply(_days_from_entry)
+
+            # Fetch latest EOD prices from pos_scans (today's or yesterday's scan)
+            @st.cache_data(ttl=300, show_spinner=False)
+            def _latest_scan_prices():
+                try:
+                    with get_conn() as _sc:
+                        _rows = _sc.execute(
+                            """SELECT ticker, price FROM pos_scans
+                               WHERE substr(scanned_at,1,10) = (
+                                   SELECT substr(MAX(scanned_at),1,10) FROM pos_scans
+                               )
+                               GROUP BY ticker"""
+                        ).fetchall()
+                    return {r["ticker"]: r["price"] for r in _rows}
+                except Exception:
+                    return {}
+            _scan_prices = _latest_scan_prices()
+            _odf["eod_price"] = _odf["ticker"].apply(
+                lambda t: f"₹{_scan_prices[t]:,.2f}" if t in _scan_prices else "—"
+            )
+
             _odf["entry_date"] = to_ist(_odf["entry_date"]).dt.strftime("%d %b")
             for _c in ["entry_price", "hard_stop", "ema_trail_stop", "target_price"]:
                 if _c in _odf.columns:
                     _odf[_c] = _odf[_c].apply(
-                        lambda x: f"₹{x:,.2f}" if pd.notna(x) and x else "-"
+                        lambda x: f"₹{x:,.2f}" if pd.notna(x) and x else "—"
                     )
-            _pnl_col = "pnl"
-            _odf["days_held"] = _odf.get("days_held", 0)
             _odf["below_ema"] = _odf["below_ema_consecutive"].apply(
-                lambda x: f"⚠️ {x}d" if x and int(x) >= 1 else ""
+                lambda x: f"⚠️ {int(x)}d" if x and int(x) >= 1 else ""
             )
 
-            _pos_display = ["ticker", "entry_date", "entry_price", "quantity",
-                            "hard_stop", "ema_trail_stop", "target_price",
+            _pos_display = ["ticker", "entry_date", "entry_price", "eod_price",
+                            "quantity", "hard_stop", "ema_trail_stop", "target_price",
                             "days_held", "below_ema", "regime_at_entry"]
             _pos_display = [c for c in _pos_display if c in _odf.columns]
             st.markdown(
                 _odf[_pos_display].rename(columns={
                     "entry_date":       "Entry",
                     "entry_price":      "Buy Price",
+                    "eod_price":        "EOD Price",
                     "hard_stop":        "Hard SL",
                     "ema_trail_stop":   "21 EMA",
                     "target_price":     "Target",
