@@ -1411,18 +1411,20 @@ with tab_pos:
     if _dpnl.empty:
         st.caption("No closed trades yet.")
     else:
-        # Colour rows: green total P&L positive, red negative
+        # Style against the numeric "Total P&L" column, then format for display.
+        # Do NOT pre-convert to string — the styler function needs numeric values.
         def _style_daily(row):
             colour = "#1a3a1a" if row["Total P&L"] >= 0 else "#3a1a1a"
             return [f"background-color: {colour}"] * len(row)
 
         _dpnl_disp = _dpnl.copy()
         _dpnl_disp["Date"] = _dpnl_disp["Date"].astype(str)
-        _dpnl_disp["Total P&L"] = _dpnl_disp["Total P&L"].map(
-            lambda x: f"₹+{x:,.2f}" if x >= 0 else f"₹{x:,.2f}"
-        )
+        # Apply row colouring on the numeric frame, then format the P&L column
+        # as a string for display — order matters: style first, format second.
         st.dataframe(
-            _dpnl_disp.style.apply(_style_daily, axis=1),
+            _dpnl_disp.style
+                .apply(_style_daily, axis=1)
+                .format({"Total P&L": lambda x: f"₹+{x:,.2f}" if x >= 0 else f"₹{x:,.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
