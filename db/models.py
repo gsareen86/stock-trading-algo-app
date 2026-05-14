@@ -58,6 +58,12 @@ if BACKEND == "postgres" and not SUPABASE_DB_URL:
         "Add it to your .env or the environment."
     )
 
+# Effective backend: starts as BACKEND but silently falls back to "sqlite" if
+# the PostgreSQL host is unreachable at startup (network timeout, maintenance…).
+# Every get_conn() call uses _EFFECTIVE_BACKEND so the app keeps running on the
+# local SQLite file rather than crashing the dashboard.
+_EFFECTIVE_BACKEND: str = BACKEND
+
 
 # ---------- Schema (dialect-specific) ----------
 
@@ -807,10 +813,17 @@ class _PgConnWrapper:
 # ---------- Init ----------
 
 
-def _connect_pg():
+def _connect_pg(connect_timeout: int = 8):
+    """Open a psycopg connection with an explicit connect timeout (default 8s).
+
+    Passing connect_timeout prevents the default OS-level TCP timeout (~120s)
+    from hanging the dashboard for minutes when Supabase is briefly unreachable.
+    """
     import psycopg
     from psycopg.rows import dict_row
-    return psycopg.connect(SUPABASE_DB_URL, row_factory=dict_row)
+    from psycopg.conninfo import make_conninfo
+    conn_str = make_conninfo(SUPABASE_DB_URL, connect_timeout=connect_timeout)
+    return psycopg.connect(conn_str, row_factory=dict_row)
 
 
 def _connect_sqlite():
@@ -827,7 +840,7 @@ def _migrate_positions_atr_columns(conn) -> None:
     Backwards-compatible: positions opened before this migration will have
     NULL in the new columns and will fall back to the legacy fixed SL/TP path.
     """
-    if BACKEND == "sqlite":
+    if _EFFECTIVE_BACKEND == "sqlite":
         existing = {r["name"] for r in conn.execute("PRAGMA table_info(positions)").fetchall()}
         ddl = {
             "atr_at_entry":     "ALTER TABLE positions ADD COLUMN atr_at_entry REAL",
@@ -858,7 +871,7 @@ def _migrate_positions_atr_columns(conn) -> None:
 
 def _migrate_positional_columns(conn) -> None:
     """Add trade_type columns to positions and pending_approvals if missing."""
-    if BACKEND == "sqlite":
+    if _EFFECTIVE_BACKEND == "sqlite":
         pos_cols = {r["name"] for r in conn.execute("PRAGMA table_info(positions)").fetchall()}
         if "trade_type" not in pos_cols:
             conn.execute("ALTER TABLE positions ADD COLUMN trade_type TEXT DEFAULT 'intraday'")
@@ -891,7 +904,10 @@ def _migrate_positional_columns(conn) -> None:
 
 def init_db() -> None:
     """Create tables + seed bot_control row if absent."""
-    if BACKEND == "sqlite":
+    global _EFFECTIVE_BACKEND
+    import time as _time
+
+    if _EFFECTIVE_BACKEND == "sqlite":
         conn = _connect_sqlite()
         try:
             conn.executescript(_SQLITE_SCHEMA)
@@ -907,7 +923,51 @@ def init_db() -> None:
         finally:
             conn.close()
     else:
-        conn = _connect_pg()
+        # Try up to 3 times with backoff before falling back to SQLite.
+        # Each attempt uses an 8-second connect timeout so a single hung
+        # attempt doesn't block the dashboard for more than ~10 seconds.
+        _last_err: Exception | None = None
+        for _attempt in range(1, 4):
+            try:
+                conn = _connect_pg(connect_timeout=8)
+                break
+            except Exception as _e:
+                _last_err = _e
+                log.warning(
+                    "PostgreSQL connect attempt %d/3 failed (%s: %s)%s",
+                    _attempt,
+                    type(_e).__name__,
+                    _e,
+                    f" — retrying in {5 * _attempt}s…" if _attempt < 3 else "",
+                )
+                if _attempt < 3:
+                    _time.sleep(5 * _attempt)
+        else:
+            # All 3 attempts failed — run on local SQLite so the app stays up.
+            log.error(
+                "PostgreSQL unreachable after 3 attempts (%s). "
+                "Falling back to local SQLite for this session. "
+                "Data will NOT sync to Supabase until the connection is "
+                "restored and the app is restarted.",
+                _last_err,
+            )
+            _EFFECTIVE_BACKEND = "sqlite"
+            _fb = _connect_sqlite()
+            try:
+                _fb.executescript(_SQLITE_SCHEMA)
+                _migrate_positions_atr_columns(_fb)
+                _migrate_positional_columns(_fb)
+                _fb.execute(
+                    """INSERT INTO bot_control (id, status, mode, updated_at)
+                       VALUES (1, 'STOPPED', 'auto', ?)
+                       ON CONFLICT (id) DO NOTHING""",
+                    (datetime.utcnow().isoformat(),),
+                )
+                _fb.commit()
+            finally:
+                _fb.close()
+            return
+
         try:
             with conn.cursor() as cur:
                 # psycopg can run multi-statement DDL via execute() if the
@@ -930,8 +990,13 @@ def init_db() -> None:
 def get_conn():
     """Context-managed DB connection. Auto-commits on clean exit, rolls back
     on exception. Returned object exposes ``execute()``/``executemany()``/
-    ``cursor()`` regardless of backend."""
-    if BACKEND == "sqlite":
+    ``cursor()`` regardless of backend.
+
+    Uses _EFFECTIVE_BACKEND (not BACKEND) so that if init_db() fell back to
+    SQLite due to a PostgreSQL connection failure, all subsequent calls follow
+    the same fallback without crashing.
+    """
+    if _EFFECTIVE_BACKEND == "sqlite":
         conn = _connect_sqlite()
         try:
             yield conn
@@ -964,7 +1029,7 @@ def insert_returning_id(conn, sql: str, params: Iterable[Any] = ()) -> int:
     Postgres: appends ``RETURNING id`` (if not already present) and reads the
     first column of the returned row.
     """
-    if BACKEND == "sqlite":
+    if _EFFECTIVE_BACKEND == "sqlite":
         cur = conn.execute(sql, params)
         return int(cur.lastrowid)
 
@@ -989,7 +1054,7 @@ def query_df(sql: str, params: Iterable[Any] = ()):
     """
     import pandas as pd
 
-    if BACKEND == "sqlite":
+    if _EFFECTIVE_BACKEND == "sqlite":
         conn = _connect_sqlite()
         try:
             return pd.read_sql_query(sql, conn, params=tuple(params or ()))
@@ -1011,7 +1076,7 @@ def query_df(sql: str, params: Iterable[Any] = ()):
 
 def reset_db() -> None:
     """Wipes everything. Use with care."""
-    if BACKEND == "sqlite":
+    if _EFFECTIVE_BACKEND == "sqlite":
         if Path(DB_PATH).exists():
             Path(DB_PATH).unlink()
         init_db()
