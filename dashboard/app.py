@@ -2534,14 +2534,17 @@ with tab_positional:
         )
 
         # ── Enable/Disable toggle ─────────────────────────────────────────
-        try:
-            with get_conn() as _pc:
-                _pos_ctrl = _pc.execute(
-                    "SELECT positional_enabled FROM bot_control WHERE id=1"
-                ).fetchone()
-            _pos_on = bool(_pos_ctrl and _pos_ctrl["positional_enabled"])
-        except Exception:
-            _pos_on = False
+        @st.cache_data(ttl=10, show_spinner=False)
+        def _cached_pos_enabled():
+            try:
+                with get_conn() as _pc:
+                    row = _pc.execute(
+                        "SELECT positional_enabled FROM bot_control WHERE id=1"
+                    ).fetchone()
+                return bool(row and row["positional_enabled"])
+            except Exception:
+                return False
+        _pos_on = _cached_pos_enabled()
 
         _pe_col1, _pe_col2 = st.columns([3, 1])
         with _pe_col1:
@@ -2561,15 +2564,41 @@ with tab_positional:
                             "UPDATE bot_control SET positional_enabled=? WHERE id=1",
                             (0 if _pos_on else 1,)
                         )
+                    _cached_pos_enabled.clear()
                     st.rerun()
                 except Exception as _e:
                     st.error(f"Toggle failed: {_e}")
 
         st.divider()
 
+        # Cached wrappers for expensive positional calls — each one hits Supabase;
+        # caching prevents repeated connections on every Streamlit rerun.
+        @st.cache_data(ttl=300, show_spinner=False)
+        def _cached_latest_regime():
+            return get_latest_regime()
+
+        @st.cache_data(ttl=60, show_spinner=False)
+        def _cached_universe_stats():
+            return universe_stats()
+
+        @st.cache_data(ttl=60, show_spinner=False)
+        def _cached_scan_results(limit: int = 30):
+            return get_latest_scan_results(limit=limit)
+
+        @st.cache_data(ttl=30, show_spinner=False)
+        def _cached_open_positions():
+            try:
+                with get_conn() as _pconn:
+                    rows = _pconn.execute(
+                        "SELECT * FROM pos_positions WHERE status='OPEN' ORDER BY entry_date DESC"
+                    ).fetchall()
+                return [dict(p) for p in rows]
+            except Exception:
+                return []
+
         # ── SECTION 1: Market Regime ──────────────────────────────────────
         st.subheader("🌡️ Market Regime")
-        _regime = get_latest_regime()
+        _regime = _cached_latest_regime()
         _flag   = _regime.get("flag", "NEUTRAL")
         _computed_at = _regime.get("computed_at")
         _size_mult   = float(_regime.get("size_multiplier") or 0.70)
@@ -2614,7 +2643,7 @@ with tab_positional:
         # ── SECTION 2: Universe Manager ───────────────────────────────────
         st.subheader("🗂️ Fundamental Universe (Screener.in)")
 
-        _stats = universe_stats()
+        _stats = _cached_universe_stats()
         _u1, _u2, _u3 = st.columns(3)
         _u1.metric("Stocks in Universe", _stats.get("active", 0),
                    help="Stocks passing all fundamental filters")
@@ -2809,7 +2838,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                         )
                         st.error(f"Scan failed: {_se}")
 
-        _scan_rows = get_latest_scan_results(limit=30)
+        _scan_rows = _cached_scan_results(limit=30)
         if _scan_rows:
             import pandas as pd
             _sdf = pd.DataFrame(_scan_rows)
@@ -2919,14 +2948,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
         # ── SECTION 4: Open Positional Positions ─────────────────────────
         st.subheader("💼 Open Positions")
 
-        try:
-            with get_conn() as _pconn:
-                _open_pos = _pconn.execute(
-                    "SELECT * FROM pos_positions WHERE status='OPEN' ORDER BY entry_date DESC"
-                ).fetchall()
-            _open_pos = [dict(p) for p in _open_pos]
-        except Exception:
-            _open_pos = []
+        _open_pos = _cached_open_positions()
 
         _act1, _act2 = st.columns([2, 1])
         with _act2:
@@ -2958,22 +2980,37 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                     return int(raw_date) if raw_date else 0
             _odf["days_held"] = _odf["entry_date"].apply(_days_from_entry)
 
-            # Fetch latest EOD prices from pos_scans (today's or yesterday's scan)
+            # Fetch latest EOD prices from pos_scans.
+            # Use MAX(id) subquery per ticker to guarantee we pick the newest row,
+            # not an arbitrary row from GROUP BY (SQLite GROUP BY without aggregate
+            # returns indeterminate values).
             @st.cache_data(ttl=300, show_spinner=False)
             def _latest_scan_prices():
                 try:
                     with get_conn() as _sc:
                         _rows = _sc.execute(
                             """SELECT ticker, price FROM pos_scans
-                               WHERE substr(scanned_at,1,10) = (
-                                   SELECT substr(MAX(scanned_at),1,10) FROM pos_scans
-                               )
-                               GROUP BY ticker"""
+                               WHERE id IN (
+                                   SELECT MAX(id) FROM pos_scans
+                                   WHERE substr(scanned_at,1,10) = (
+                                       SELECT substr(MAX(scanned_at),1,10) FROM pos_scans
+                                   )
+                                   GROUP BY ticker
+                               )"""
                         ).fetchall()
-                    return {r["ticker"]: r["price"] for r in _rows}
+                    return {r["ticker"]: r["price"] for r in _rows if r["price"] is not None}
                 except Exception:
                     return {}
             _scan_prices = _latest_scan_prices()
+
+            # Compute unrealised P&L from raw numeric values before any formatting.
+            def _unrealised(row):
+                eod = _scan_prices.get(row["ticker"])
+                if eod is None or not pd.notna(row.get("entry_price")) or not row.get("entry_price"):
+                    return None
+                return (eod - float(row["entry_price"])) * int(row.get("quantity") or 0)
+            _odf["unrealised_pnl"] = _odf.apply(_unrealised, axis=1)
+
             _odf["eod_price"] = _odf["ticker"].apply(
                 lambda t: f"₹{_scan_prices[t]:,.2f}" if t in _scan_prices else "—"
             )
@@ -2985,18 +3022,22 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                         lambda x: f"₹{x:,.2f}" if pd.notna(x) and x else "—"
                     )
             _odf["below_ema"] = _odf["below_ema_consecutive"].apply(
-                lambda x: f"⚠️ {int(x)}d" if x and int(x) >= 1 else ""
+                lambda x: f"⚠️ {int(x)}d" if x and int(x) >= 1 else "✓"
+            )
+            _odf["unrealised_pnl"] = _odf["unrealised_pnl"].apply(
+                lambda x: (f"₹{x:+,.2f}" if x >= 0 else f"₹{x:,.2f}") if x is not None else "—"
             )
 
             _pos_display = ["ticker", "entry_date", "entry_price", "eod_price",
-                            "quantity", "hard_stop", "ema_trail_stop", "target_price",
-                            "days_held", "below_ema", "regime_at_entry"]
+                            "unrealised_pnl", "quantity", "hard_stop", "ema_trail_stop",
+                            "target_price", "days_held", "below_ema", "regime_at_entry"]
             _pos_display = [c for c in _pos_display if c in _odf.columns]
             st.markdown(
                 _odf[_pos_display].rename(columns={
                     "entry_date":       "Entry",
                     "entry_price":      "Buy Price",
                     "eod_price":        "EOD Price",
+                    "unrealised_pnl":   "Unreal. P&L",
                     "hard_stop":        "Hard SL",
                     "ema_trail_stop":   "21 EMA",
                     "target_price":     "Target",

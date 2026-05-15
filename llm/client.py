@@ -119,13 +119,15 @@ def _init_openrouter():
 
 def _cb_is_open() -> bool:
     """True if the circuit breaker is currently open (skip all calls)."""
-    global _cb_open_until
+    global _cb_open_until, _cb_consecutive_429s
     with _cb_lock:
         if _cb_open_until and time.monotonic() < _cb_open_until:
             return True
         if _cb_open_until and time.monotonic() >= _cb_open_until:
-            # Auto-reset after cooldown
+            # Auto-reset after cooldown — also reset the consecutive counter so
+            # the next single 429 doesn't immediately re-open the circuit.
             _cb_open_until = 0.0
+            _cb_consecutive_429s = 0
             log.info("LLM circuit breaker RESET — will attempt calls again")
         return False
 
