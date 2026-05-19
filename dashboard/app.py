@@ -188,10 +188,14 @@ def render_table(df: pd.DataFrame, cols: list[str] | None = None) -> None:
     st.markdown(TABLE_CSS + html, unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=5, show_spinner=False)
 def _bot_row() -> dict:
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM bot_control WHERE id=1").fetchone()
-    return dict(row) if row else {}
+    try:
+        with get_conn() as conn:
+            row = conn.execute("SELECT * FROM bot_control WHERE id=1").fetchone()
+        return dict(row) if row else {}
+    except Exception:
+        return {}
 
 
 def _set_bot(**kwargs) -> None:
@@ -204,6 +208,7 @@ def _set_bot(**kwargs) -> None:
         conn.execute(
             f"UPDATE bot_control SET {sets}, updated_at=? WHERE id=1", vals
         )
+    _bot_row.clear()  # invalidate so next render sees the updated state
 
 
 def _now_ist() -> datetime:
@@ -304,16 +309,12 @@ with st.sidebar:
 
     st.fragment(run_every=_frag_refresh)(_sidebar_cycle_chip)()
 
-    # Bot-process start time — the single most useful staleness indicator.
-    # If the time shown here doesn't match when you started the app, your
-    # browser tab is stale: press Ctrl+Shift+R (hard refresh) to reconnect.
+    # Bot-process start time — read from the already-cached _bot_row() so
+    # this doesn't open an extra Supabase connection on every render.
     try:
-        with get_conn() as _sc:
-            _bc = _sc.execute(
-                "SELECT updated_at FROM bot_control WHERE id=1"
-            ).fetchone()
-        if _bc and _bc["updated_at"]:
-            _started_str = _bc["updated_at"][:16].replace("T", " ") + " UTC"
+        _bc_row = _bot_row()
+        if _bc_row and _bc_row.get("updated_at"):
+            _started_str = _bc_row["updated_at"][:16].replace("T", " ") + " UTC"
             st.caption(f"Bot started: {_started_str}")
     except Exception:
         pass
@@ -371,8 +372,49 @@ with st.sidebar:
 # 1. Control Panel
 # ==================================================================
 
+@st.cache_data(ttl=10, show_spinner=False)
+def _load_control_panel_data() -> dict:
+    """Single connection for all Control Panel hot-path queries."""
+    try:
+        with get_conn() as _c:
+            open_count = _c.execute(
+                "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN'"
+            ).fetchone()["n"]
+            n_pos = _c.execute(
+                "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN' AND trade_type='positional'"
+            ).fetchone()["n"]
+            n_pos_pend = _c.execute(
+                "SELECT COUNT(*) AS n FROM pending_approvals WHERE status='PENDING' AND trade_type='positional'"
+            ).fetchone()["n"]
+            pending_rows = [
+                dict(r) for r in _c.execute(
+                    "SELECT * FROM pending_approvals WHERE status='PENDING' ORDER BY created_at DESC"
+                ).fetchall()
+            ]
+            snap_rows = [
+                dict(r) for r in _c.execute(
+                    """SELECT id, ts, cash, equity, total_value,
+                              (cash + equity) AS correct_total,
+                              ABS(total_value - (cash + equity)) AS drift
+                       FROM portfolio_snapshots ORDER BY id DESC LIMIT 10"""
+                ).fetchall()
+            ]
+        return dict(
+            open_count=open_count,
+            n_pos=n_pos,
+            n_pos_pend=n_pos_pend,
+            pending_rows=pending_rows,
+            snap_rows=snap_rows,
+        )
+    except Exception as _e:
+        return dict(open_count=0, n_pos=0, n_pos_pend=0, pending_rows=[], snap_rows=[])
+
+
 with tab_ctrl:
     st.header("🎛️ Control Panel")
+
+    # Load all Control Panel DB data in one connection
+    _cpdata = _load_control_panel_data()
 
     # ------------------------------------------------------------------
     # Capacity + universe banner (Fix 1 + Fix 4)
@@ -434,16 +476,8 @@ with tab_ctrl:
         unsafe_allow_html=True,
     )
 
-    # Keep open_count for downstream usage in this scope (signal-status
-    # calculations etc) — fragment value isn't visible outside.
-    open_count = 0
-    try:
-        with get_conn() as conn:
-            open_count = conn.execute(
-                "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN'"
-            ).fetchone()["n"]
-    except Exception:
-        pass
+    # open_count already fetched in the batch loader above
+    open_count = _cpdata["open_count"]
 
     # ----- Signal history with filters (so user can see WHY no trade was placed
     # and trace any historical signal — was previously hard-capped at 30) -----
@@ -813,19 +847,12 @@ with tab_ctrl:
             st.rerun()
     with _pos_col2:
         try:
-            with get_conn() as _pc:
-                _n_pos = _pc.execute(
-                    "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN' AND trade_type='positional'"
-                ).fetchone()["n"]
-                _n_pos_pend = _pc.execute(
-                    "SELECT COUNT(*) AS n FROM pending_approvals WHERE status='PENDING' AND trade_type='positional'"
-                ).fetchone()["n"]
             from config import POSITIONAL_MAX_POSITIONS, POSITIONAL_SCAN_TIME, POSITIONAL_EXIT_TIME
             _pos_status = "🟢 ON" if _pos_enabled else "⚫ OFF"
             st.markdown(
                 f"**Status:** {_pos_status} &nbsp;|&nbsp; "
-                f"**Open positions:** {_n_pos}/{POSITIONAL_MAX_POSITIONS} &nbsp;|&nbsp; "
-                f"**Pending approvals:** {_n_pos_pend}  \n"
+                f"**Open positions:** {_cpdata['n_pos']}/{POSITIONAL_MAX_POSITIONS} &nbsp;|&nbsp; "
+                f"**Pending approvals:** {_cpdata['n_pos_pend']}  \n"
                 f"Pre-market scan: `{POSITIONAL_SCAN_TIME} IST` &nbsp;·&nbsp; "
                 f"EOD exit check: `{POSITIONAL_EXIT_TIME} IST`"
             )
@@ -836,18 +863,13 @@ with tab_ctrl:
 
     # Pending approvals queue
     st.subheader("📋 Pending Approvals")
-    with get_conn() as conn:
-        pending_rows = conn.execute(
-            """SELECT * FROM pending_approvals
-                WHERE status='PENDING'
-                ORDER BY created_at DESC"""
-        ).fetchall()
+    pending_rows = _cpdata["pending_rows"]
 
     if not pending_rows:
         st.caption("No pending approvals.")
     else:
         for r in pending_rows:
-            r = dict(r)
+            r = r if isinstance(r, dict) else dict(r)
             expires = datetime.fromisoformat(r["expires_at"])
             remaining = expires - datetime.now(timezone.utc).replace(tzinfo=None)
             mins = max(0, int(remaining.total_seconds() // 60))
@@ -885,6 +907,7 @@ with tab_ctrl:
                             st.toast(f"Executed — position {pos_id}", icon="✅")
                         else:
                             st.toast("Approval recorded; execution failed. Check logs.", icon="⚠")
+                        _load_control_panel_data.clear()
                         st.rerun()
                 with cols[2]:
                     if st.button("❌ Reject", key=f"rej_{r['id']}", width="stretch"):
@@ -895,6 +918,7 @@ with tab_ctrl:
                                     WHERE id=?""",
                                 (datetime.now(timezone.utc).isoformat(), int(r["id"])),
                             )
+                        _load_control_panel_data.clear()
                         st.rerun()
 
     st.divider()
@@ -951,18 +975,7 @@ with tab_ctrl:
             "instead of the correct cash + equity sum), run the fix below. "
             "This corrects rows where `total_value != cash + equity`."
         )
-        _snap_preview = None
-        try:
-            with get_conn() as _rc:
-                _snap_preview = _rc.execute(
-                    """SELECT id, ts, cash, equity, total_value,
-                              (cash + equity) AS correct_total,
-                              ABS(total_value - (cash + equity)) AS drift
-                       FROM portfolio_snapshots
-                       ORDER BY id DESC LIMIT 10"""
-                ).fetchall()
-        except Exception as _re:
-            st.caption(f"Could not query snapshots: {_re}")
+        _snap_preview = _cpdata["snap_rows"] or None
 
         if _snap_preview:
             _snap_df = pd.DataFrame([dict(r) for r in _snap_preview])
@@ -991,9 +1004,14 @@ with tab_ctrl:
 # 2. Overview
 # ==================================================================
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_portfolio_summary():
+    return portfolio_summary()
+
+
 with tab_overview:
     st.header("📊 Portfolio Overview")
-    summary = portfolio_summary()
+    summary = _cached_portfolio_summary()
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total Value",
