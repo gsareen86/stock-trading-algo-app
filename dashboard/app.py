@@ -399,10 +399,14 @@ with tab_ctrl:
     # while the Positions tab had 2 active positions).
     @st.fragment(run_every=_frag_refresh)
     def _capacity_banner():
-        with get_conn() as conn:
-            n_open = conn.execute(
-                "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN'"
-            ).fetchone()["n"]
+        try:
+            with get_conn() as conn:
+                n_open = conn.execute(
+                    "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN'"
+                ).fetchone()["n"]
+        except Exception:
+            st.caption("⚠️ Live count unavailable (DB connection error)")
+            return
         cap_pct = (n_open / max_pos_now * 100) if max_pos_now else 0
         cap_color = "#1bc47d" if cap_pct < 60 else "#ffc000" if cap_pct < 100 else "#ff4b4b"
         msg = f"Holding <b>{n_open}/{max_pos_now}</b> positions"
@@ -615,10 +619,14 @@ with tab_ctrl:
 
     @st.fragment(run_every=_frag_refresh)
     def _live_holdings_chip():
-        with get_conn() as conn:
-            n_open = conn.execute(
-                "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN'"
-            ).fetchone()["n"]
+        try:
+            with get_conn() as conn:
+                n_open = conn.execute(
+                    "SELECT COUNT(*) AS n FROM positions WHERE status='OPEN'"
+                ).fetchone()["n"]
+        except Exception:
+            st.caption("⚠️ Live holdings unavailable (DB connection lost — will retry)")
+            return
         rendered_at = datetime.now().strftime("%H:%M:%S")
         st.caption(
             f"📦 Live holdings count: **{n_open}/{max_pos_now}** "
@@ -2515,6 +2523,13 @@ with tab_llm:
 
 with tab_positional:
     st.header("📈 Positional Trading — Minervini VCP Strategy")
+    import time as _time
+    _pos_t0 = _time.perf_counter()
+    if "pos_perf" not in st.session_state:
+        st.session_state["pos_perf"] = {}
+    _pos_perf = st.session_state["pos_perf"]
+    def _mark(label: str):
+        _pos_perf[label] = round((_time.perf_counter() - _pos_t0) * 1000)
     st.caption(
         "EOD scanner based on Mark Minervini's Trend Template + VCP. "
         "Runs daily at 4:00 PM IST. Separate ₹1,00,000 capital pool."
@@ -2545,6 +2560,7 @@ with tab_positional:
             except Exception:
                 return False
         _pos_on = _cached_pos_enabled()
+        _mark("toggle_check")
 
         _pe_col1, _pe_col2 = st.columns([3, 1])
         with _pe_col1:
@@ -2599,6 +2615,7 @@ with tab_positional:
         # ── SECTION 1: Market Regime ──────────────────────────────────────
         st.subheader("🌡️ Market Regime")
         _regime = _cached_latest_regime()
+        _mark("regime_loaded")
         _flag   = _regime.get("flag", "NEUTRAL")
         _computed_at = _regime.get("computed_at")
         _size_mult   = float(_regime.get("size_multiplier") or 0.70)
@@ -2644,6 +2661,7 @@ with tab_positional:
         st.subheader("🗂️ Fundamental Universe (Screener.in)")
 
         _stats = _cached_universe_stats()
+        _mark("universe_stats")
         _u1, _u2, _u3 = st.columns(3)
         _u1.metric("Stocks in Universe", _stats.get("active", 0),
                    help="Stocks passing all fundamental filters")
@@ -2839,6 +2857,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                         st.error(f"Scan failed: {_se}")
 
         _scan_rows = _cached_scan_results(limit=30)
+        _mark("scan_results")
         if _scan_rows:
             import pandas as pd
             _sdf = pd.DataFrame(_scan_rows)
@@ -2949,6 +2968,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
         st.subheader("💼 Open Positions")
 
         _open_pos = _cached_open_positions()
+        _mark("open_positions")
 
         _act1, _act2 = st.columns([2, 1])
         with _act2:
@@ -3002,6 +3022,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                 except Exception:
                     return {}
             _scan_prices = _latest_scan_prices()
+            _mark("eod_prices")
 
             # Compute unrealised P&L from raw numeric values before any formatting.
             def _unrealised(row):
@@ -3054,6 +3075,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
             else:
                 st.info("No open positions. Run the EOD scan to find BUY setups.")
 
+        _mark("open_pos_table_rendered")
         st.divider()
 
         # ── SECTION 5: Positional Analytics ──────────────────────────────
@@ -3164,6 +3186,19 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                     "TELEGRAM_CHAT_ID=-100123456789\n```\n"
                     "Get a token from @BotFather on Telegram."
                 )
+
+        _mark("total")
+        with st.expander("🔧 Page Performance (last render)", expanded=False):
+            _pf = st.session_state.get("pos_perf", {})
+            if _pf:
+                import pandas as pd
+                _pf_rows = []
+                _prev = 0
+                for _k, _v in _pf.items():
+                    _pf_rows.append({"Section": _k, "Cumulative ms": _v, "Section ms": _v - _prev})
+                    _prev = _v
+                st.dataframe(pd.DataFrame(_pf_rows), use_container_width=True, hide_index=True)
+                st.caption(f"Total render: **{_pf.get('total', '?')} ms** | Supabase connections are ~150-250ms each")
 
     except Exception as _pos_tab_err:
         st.error(f"Positional tab error: {_pos_tab_err}")
