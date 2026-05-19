@@ -2517,9 +2517,95 @@ with tab_llm:
         st.error(f"LLM observability unavailable: {_llm_obs_err}")
 
 
+
 # ==================================================================
 # 10. Positional Trading (Minervini VCP)
 # ==================================================================
+
+# ── Single-connection batch loader ────────────────────────────────
+# Every call below opens a new Supabase TCP connection (~1.5-2s from
+# India). Batching all 7 queries into one connection reduces cold-load
+# from ~16 s to ~2-3 s.  TTL=30 s so the UI stays reasonably fresh
+# while hot renders (any button click, widget interaction) are instant.
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _load_positional_page_data() -> dict | None:
+    """Return all data needed by the Positional Trading tab in one DB round-trip."""
+    import logging as _lg
+    _log = _lg.getLogger("dashboard.positional")
+    try:
+        with get_conn() as _c:
+            # 1 — bot enabled flag
+            _ctrl = _c.execute(
+                "SELECT positional_enabled FROM bot_control WHERE id=1"
+            ).fetchone()
+            bot_enabled = bool(_ctrl and _ctrl["positional_enabled"])
+
+            # 2 — market regime
+            _rr = _c.execute(
+                "SELECT * FROM pos_market_regime ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            regime = dict(_rr) if _rr else {
+                "flag": "NEUTRAL", "nifty_roc_18m": None, "smallcap_roc_20m": None,
+                "nifty_gold_ratio": None, "size_multiplier": 0.70,
+                "notes": "No regime data — run a scan first", "computed_at": None,
+            }
+
+            # 3 — universe stats (3 queries, 1 connection)
+            _tot  = _c.execute("SELECT COUNT(*) FROM pos_universe").fetchone()[0]
+            _act  = _c.execute("SELECT COUNT(*) FROM pos_universe WHERE in_universe=1").fetchone()[0]
+            _limp = _c.execute(
+                "SELECT imported_at FROM pos_universe ORDER BY imported_at DESC LIMIT 1"
+            ).fetchone()
+            universe = {
+                "total": _tot, "active": _act,
+                "last_import": dict(_limp)["imported_at"] if _limp else None,
+            }
+
+            # 4 — scan results + EOD prices (same rows, two uses)
+            _sd = _c.execute(
+                "SELECT substr(MAX(scanned_at),1,10) AS d FROM pos_scans"
+            ).fetchone()
+            scan_date = dict(_sd)["d"] if _sd else None
+            if scan_date:
+                _srows = _c.execute(
+                    """SELECT *, MAX(scanned_at) AS scanned_at
+                       FROM pos_scans
+                       WHERE substr(scanned_at,1,10) = ?
+                       GROUP BY ticker
+                       ORDER BY score DESC LIMIT 50""",
+                    (scan_date,),
+                ).fetchall()
+            else:
+                _srows = []
+            scan_rows   = [dict(r) for r in _srows]
+            eod_prices  = {r["ticker"]: r["price"] for r in _srows if r["price"] is not None}
+
+            # 5 — open positions
+            _open = _c.execute(
+                "SELECT * FROM pos_positions WHERE status='OPEN' ORDER BY entry_date DESC"
+            ).fetchall()
+            open_positions = [dict(r) for r in _open]
+
+            # 6 — closed positions (analytics section)
+            _cld = _c.execute(
+                "SELECT * FROM pos_positions WHERE status='CLOSED' ORDER BY exit_date DESC"
+            ).fetchall()
+            closed_positions = [dict(r) for r in _cld]
+
+        return dict(
+            bot_enabled=bot_enabled,
+            regime=regime,
+            universe=universe,
+            scan_rows=scan_rows,
+            eod_prices=eod_prices,
+            open_positions=open_positions,
+            closed_positions=closed_positions,
+        )
+    except Exception as _e:
+        _log.warning("[pos_tab] batch load failed: %s", _e)
+        return None
+
 
 with tab_positional:
     st.header("📈 Positional Trading — Minervini VCP Strategy")
@@ -2548,18 +2634,16 @@ with tab_positional:
             POSITIONAL_FUND_MIN_SALES_GROWTH, POSITIONAL_FUND_MAX_DE,
         )
 
+        # Load all DB data in ONE Supabase connection (~2s cold, <5ms cached).
+        # Individual section pulls use _pdata dict — no further DB calls.
+        _pdata = _load_positional_page_data()
+        if _pdata is None:
+            st.error("Could not connect to the database. Check Supabase status or try refreshing.")
+            st.stop()
+        _mark("db_loaded")  # all 7 queries done
+
         # ── Enable/Disable toggle ─────────────────────────────────────────
-        @st.cache_data(ttl=10, show_spinner=False)
-        def _cached_pos_enabled():
-            try:
-                with get_conn() as _pc:
-                    row = _pc.execute(
-                        "SELECT positional_enabled FROM bot_control WHERE id=1"
-                    ).fetchone()
-                return bool(row and row["positional_enabled"])
-            except Exception:
-                return False
-        _pos_on = _cached_pos_enabled()
+        _pos_on = _pdata["bot_enabled"]
         _mark("toggle_check")
 
         _pe_col1, _pe_col2 = st.columns([3, 1])
@@ -2580,41 +2664,16 @@ with tab_positional:
                             "UPDATE bot_control SET positional_enabled=? WHERE id=1",
                             (0 if _pos_on else 1,)
                         )
-                    _cached_pos_enabled.clear()
+                    _load_positional_page_data.clear()
                     st.rerun()
                 except Exception as _e:
                     st.error(f"Toggle failed: {_e}")
 
         st.divider()
 
-        # Cached wrappers for expensive positional calls — each one hits Supabase;
-        # caching prevents repeated connections on every Streamlit rerun.
-        @st.cache_data(ttl=300, show_spinner=False)
-        def _cached_latest_regime():
-            return get_latest_regime()
-
-        @st.cache_data(ttl=60, show_spinner=False)
-        def _cached_universe_stats():
-            return universe_stats()
-
-        @st.cache_data(ttl=60, show_spinner=False)
-        def _cached_scan_results(limit: int = 30):
-            return get_latest_scan_results(limit=limit)
-
-        @st.cache_data(ttl=30, show_spinner=False)
-        def _cached_open_positions():
-            try:
-                with get_conn() as _pconn:
-                    rows = _pconn.execute(
-                        "SELECT * FROM pos_positions WHERE status='OPEN' ORDER BY entry_date DESC"
-                    ).fetchall()
-                return [dict(p) for p in rows]
-            except Exception:
-                return []
-
         # ── SECTION 1: Market Regime ──────────────────────────────────────
         st.subheader("🌡️ Market Regime")
-        _regime = _cached_latest_regime()
+        _regime = _pdata["regime"]
         _mark("regime_loaded")
         _flag   = _regime.get("flag", "NEUTRAL")
         _computed_at = _regime.get("computed_at")
@@ -2650,6 +2709,7 @@ with tab_positional:
             with st.spinner("Fetching 2 years of monthly data..."):
                 try:
                     _new_regime = compute_market_regime()
+                    _load_positional_page_data.clear()
                     st.success(f"Regime updated: **{_new_regime['flag']}** — {_new_regime['notes']}")
                     st.rerun()
                 except Exception as _re:
@@ -2660,7 +2720,7 @@ with tab_positional:
         # ── SECTION 2: Universe Manager ───────────────────────────────────
         st.subheader("🗂️ Fundamental Universe (Screener.in)")
 
-        _stats = _cached_universe_stats()
+        _stats = _pdata["universe"]
         _mark("universe_stats")
         _u1, _u2, _u3 = st.columns(3)
         _u1.metric("Stocks in Universe", _stats.get("active", 0),
@@ -2762,6 +2822,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                                 _non_fin, _fin_passed,
                                 _result["failed"], len(_result.get("errors", [])),
                             )
+                            _load_positional_page_data.clear()
                             st.rerun()
                         except Exception as _ue:
                             logging.getLogger("positional.universe").error(
@@ -2849,6 +2910,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                                     f"Scan complete: no BUY/WATCH setups found "
                                     f"in {_uv['active']} tickers (need 220+ days of data)."
                                 )
+                        _load_positional_page_data.clear()
                         st.rerun()
                     except Exception as _se:
                         logging.getLogger("positional.scanner").error(
@@ -2856,7 +2918,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                         )
                         st.error(f"Scan failed: {_se}")
 
-        _scan_rows = _cached_scan_results(limit=30)
+        _scan_rows = _pdata["scan_rows"]
         _mark("scan_results")
         if _scan_rows:
             import pandas as pd
@@ -2956,6 +3018,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                                     f"Stop: ₹{_po_result['hard_stop']:,.2f}  |  "
                                     f"Target: ₹{_po_result['target']:,.2f}"
                                 )
+                                _load_positional_page_data.clear()
                                 st.rerun()
                             else:
                                 st.error(_po_result["message"])
@@ -2967,7 +3030,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
         # ── SECTION 4: Open Positional Positions ─────────────────────────
         st.subheader("💼 Open Positions")
 
-        _open_pos = _cached_open_positions()
+        _open_pos = _pdata["open_positions"]
         _mark("open_positions")
 
         _act1, _act2 = st.columns([2, 1])
@@ -2980,6 +3043,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                             f"Exit check done: {_er.get('exited',0)} exited, "
                             f"{_er.get('updated',0)} updated."
                         )
+                        _load_positional_page_data.clear()
                         st.rerun()
                     except Exception as _ee:
                         st.error(f"Exit check failed: {_ee}")
@@ -3000,28 +3064,8 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                     return int(raw_date) if raw_date else 0
             _odf["days_held"] = _odf["entry_date"].apply(_days_from_entry)
 
-            # Fetch latest EOD prices from pos_scans.
-            # Use MAX(id) subquery per ticker to guarantee we pick the newest row,
-            # not an arbitrary row from GROUP BY (SQLite GROUP BY without aggregate
-            # returns indeterminate values).
-            @st.cache_data(ttl=300, show_spinner=False)
-            def _latest_scan_prices():
-                try:
-                    with get_conn() as _sc:
-                        _rows = _sc.execute(
-                            """SELECT ticker, price FROM pos_scans
-                               WHERE id IN (
-                                   SELECT MAX(id) FROM pos_scans
-                                   WHERE substr(scanned_at,1,10) = (
-                                       SELECT substr(MAX(scanned_at),1,10) FROM pos_scans
-                                   )
-                                   GROUP BY ticker
-                               )"""
-                        ).fetchall()
-                    return {r["ticker"]: r["price"] for r in _rows if r["price"] is not None}
-                except Exception:
-                    return {}
-            _scan_prices = _latest_scan_prices()
+            # EOD prices already loaded from pos_scans in the batch query above.
+            _scan_prices = _pdata["eod_prices"]
             _mark("eod_prices")
 
             # Compute unrealised P&L from raw numeric values before any formatting.
@@ -3081,15 +3125,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
         # ── SECTION 5: Positional Analytics ──────────────────────────────
         st.subheader("📉 Positional Analytics")
 
-        try:
-            import pandas as pd
-            with get_conn() as _pac:
-                _closed = _pac.execute(
-                    "SELECT * FROM pos_positions WHERE status='CLOSED' ORDER BY exit_date DESC"
-                ).fetchall()
-            _closed = [dict(p) for p in _closed]
-        except Exception:
-            _closed = []
+        _closed = _pdata["closed_positions"]
 
         if _closed:
             _cdf = pd.DataFrame(_closed)
