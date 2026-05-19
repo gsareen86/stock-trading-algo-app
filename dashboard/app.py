@@ -2581,16 +2581,20 @@ def _load_positional_page_data() -> dict | None:
             }
 
             # 4 — scan results + EOD prices (same rows, two uses)
+            # Use MAX(id) subquery — PostgreSQL rejects SELECT * with GROUP BY
+            # on non-aggregated columns; SQLite was returning arbitrary values.
             _sd = _c.execute(
                 "SELECT substr(MAX(scanned_at),1,10) AS d FROM pos_scans"
             ).fetchone()
             scan_date = dict(_sd)["d"] if _sd else None
             if scan_date:
                 _srows = _c.execute(
-                    """SELECT *, MAX(scanned_at) AS scanned_at
-                       FROM pos_scans
-                       WHERE substr(scanned_at,1,10) = ?
-                       GROUP BY ticker
+                    """SELECT * FROM pos_scans
+                       WHERE id IN (
+                           SELECT MAX(id) FROM pos_scans
+                           WHERE substr(scanned_at,1,10) = ?
+                           GROUP BY ticker
+                       )
                        ORDER BY score DESC LIMIT 50""",
                     (scan_date,),
                 ).fetchall()

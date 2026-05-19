@@ -385,13 +385,16 @@ def get_latest_scan_results(limit: int = 50) -> list[dict]:
             if not latest_date:
                 return []
             scan_date = dict(latest_date)["d"]
-            # If two scans ran on the same calendar date, GROUP BY ticker with
-            # MAX(scanned_at) deduplicates to the most recent result per ticker.
+            # MAX(id) subquery deduplicates to the newest row per ticker on the
+            # latest scan date. Works on both SQLite and PostgreSQL — unlike
+            # SELECT * … GROUP BY which PostgreSQL rejects.
             rows = conn.execute(
-                """SELECT *, MAX(scanned_at) AS scanned_at
-                   FROM pos_scans
-                   WHERE substr(scanned_at,1,10) = ?
-                   GROUP BY ticker
+                """SELECT * FROM pos_scans
+                   WHERE id IN (
+                       SELECT MAX(id) FROM pos_scans
+                       WHERE substr(scanned_at,1,10) = ?
+                       GROUP BY ticker
+                   )
                    ORDER BY score DESC LIMIT ?""",
                 (scan_date, limit),
             ).fetchall()
