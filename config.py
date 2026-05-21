@@ -377,6 +377,14 @@ LLM_ENABLE_EVENTS       = True   # Earnings / corporate-action extraction from n
 LLM_ENABLE_EOD_REVIEW   = True   # End-of-day trade analysis + parameter recommendations
 LLM_ENABLE_META_WEIGHTS = True   # Hourly adaptive strategy weight rebalancing
 
+# Toggles for Positional LLM Research and Swapping
+POSITIONAL_LLM_RESEARCH_ENABLED = os.environ.get("POSITIONAL_LLM_RESEARCH_ENABLED", "True").lower() == "true"
+POSITIONAL_SWAP_ENABLED = os.environ.get("POSITIONAL_SWAP_ENABLED", "True").lower() == "true"
+POSITIONAL_SWAP_MIN_HOLD_DAYS = int(os.environ.get("POSITIONAL_SWAP_MIN_HOLD_DAYS", "5"))
+POSITIONAL_SWAP_SCORE_DIFF = int(os.environ.get("POSITIONAL_SWAP_SCORE_DIFF", "15"))
+POSITIONAL_SWAP_MAX_PNL_PCT = float(os.environ.get("POSITIONAL_SWAP_MAX_PNL_PCT", "3.0"))
+POSITIONAL_VIX_HIGH_THRESHOLD = float(os.environ.get("POSITIONAL_VIX_HIGH_THRESHOLD", "20.0"))
+
 # Provider selection — set LLM_PROVIDER=anthropic or LLM_PROVIDER=openrouter in .env
 # "openrouter" is the default (free models available, no Anthropic account needed).
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openrouter").lower()
@@ -414,7 +422,7 @@ else:
     LLM_META_MODEL       = _OR_MODEL
 
 LLM_MAX_RETRIES       = 2    # retries on 429 / 5xx
-LLM_REQUEST_TIMEOUT_S = 30   # per-request timeout in seconds
+LLM_REQUEST_TIMEOUT_S = 90   # per-request timeout in seconds
 
 # Emit a clear startup line so you can always verify which model/provider is active.
 import logging as _logging

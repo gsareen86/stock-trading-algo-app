@@ -333,6 +333,8 @@ interface PositionalStatus {
   max_positions: number;
   active_positions_count: number;
   available_slots: number;
+  llm_research_enabled?: boolean;
+  swap_enabled?: boolean;
 }
 
 interface PositionalRegime {
@@ -900,6 +902,52 @@ export default function App() {
       setErrorMsg("Network error exit checks.");
     } finally {
       setLoading((prev) => ({ ...prev, pos_exits: false }));
+    }
+  };
+
+  const handleTriggerPositionalScan = async () => {
+    setLoading((prev) => ({ ...prev, pos_scan: true }));
+    try {
+      const res = await fetch(`${API_BASE}/api/positional/scan`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setSuccessMsg("EOD positional scan triggered in background.");
+      } else {
+        setErrorMsg("Failed EOD positional scan trigger.");
+      }
+    } catch (e) {
+      setErrorMsg("Network error positional scan.");
+    } finally {
+      setLoading((prev) => ({ ...prev, pos_scan: false }));
+    }
+  };
+
+  const handleTogglePositionalConfig = async (field: "llm" | "swap") => {
+    if (!positionalStatus) return;
+    const newLlm = field === "llm" ? !positionalStatus.llm_research_enabled : !!positionalStatus.llm_research_enabled;
+    const newSwap = field === "swap" ? !positionalStatus.swap_enabled : !!positionalStatus.swap_enabled;
+    try {
+      const response = await fetch(`${API_BASE}/api/positional/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          llm_research_enabled: newLlm,
+          swap_enabled: newSwap,
+        }),
+      });
+      if (response.ok) {
+        setPositionalStatus({
+          ...positionalStatus,
+          llm_research_enabled: newLlm,
+          swap_enabled: newSwap,
+        });
+        setSuccessMsg(`Positional configuration updated successfully.`);
+      } else {
+        setErrorMsg("Failed to update positional strategy configuration.");
+      }
+    } catch (error) {
+      console.error("Error updating positional strategy config:", error);
+      setErrorMsg("Network error updating configuration.");
     }
   };
 
@@ -2085,11 +2133,63 @@ export default function App() {
                           {formatINR(positionalStatus.net_realized_pnl)}
                         </span>
                       </div>
-                      <div className="flex justify-between pt-1">
+                      <div className="flex justify-between border-b border-slate-900 pb-2">
                         <span className="text-slate-500">Exposure Capacity:</span>
                         <span className="text-slate-300 font-bold">
                           {positionalStatus.active_positions_count} / {positionalStatus.max_positions} slots
                         </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-2">
+                        <span className="text-slate-500">LLM VCP Research:</span>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              positionalStatus.llm_research_enabled
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "bg-slate-800 text-slate-400 border border-slate-700"
+                            }`}
+                          >
+                            {positionalStatus.llm_research_enabled ? "ON (Ollama)" : "OFF (Tech Only)"}
+                          </span>
+                          <button
+                            onClick={() => handleTogglePositionalConfig("llm")}
+                            className={`w-8 h-4.5 rounded-full transition-colors relative focus:outline-none ${
+                              positionalStatus.llm_research_enabled ? "bg-indigo-600" : "bg-slate-800"
+                            }`}
+                          >
+                            <span
+                              className={`w-3 h-3 rounded-full bg-white absolute top-[3px] transition-all duration-150 ${
+                                positionalStatus.llm_research_enabled ? "left-[17px]" : "left-[3px]"
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-slate-500">Opportunity Swaps:</span>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              positionalStatus.swap_enabled
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "bg-slate-800 text-slate-400 border border-slate-700"
+                            }`}
+                          >
+                            {positionalStatus.swap_enabled ? "ACTIVE" : "DISABLED"}
+                          </span>
+                          <button
+                            onClick={() => handleTogglePositionalConfig("swap")}
+                            className={`w-8 h-4.5 rounded-full transition-colors relative focus:outline-none ${
+                              positionalStatus.swap_enabled ? "bg-indigo-600" : "bg-slate-800"
+                            }`}
+                          >
+                            <span
+                              className={`w-3 h-3 rounded-full bg-white absolute top-[3px] transition-all duration-150 ${
+                                positionalStatus.swap_enabled ? "left-[17px]" : "left-[3px]"
+                              }`}
+                            />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -2136,6 +2236,15 @@ export default function App() {
                   </p>
 
                   <div className="space-y-3 pt-2">
+                    <button
+                      onClick={handleTriggerPositionalScan}
+                      disabled={loading["pos_scan"]}
+                      className="w-full py-2.5 px-4 rounded-xl border border-indigo-800 hover:bg-indigo-950/20 text-indigo-300 font-semibold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <RefreshCw size={14} className={loading["pos_scan"] ? "animate-spin" : ""} />
+                      {loading["pos_scan"] ? "SCANNING UNIVERSE..." : "RUN EOD SWEEP SCAN NOW"}
+                    </button>
+
                     <button
                       onClick={handleTriggerPositionalExits}
                       disabled={loading["pos_exits"]}

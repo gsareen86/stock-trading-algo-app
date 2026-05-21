@@ -168,7 +168,10 @@ CREATE TABLE IF NOT EXISTS bot_control (
     risk_per_trade_pct REAL DEFAULT 0.04,
     stop_loss_pct REAL DEFAULT 0.05,
     take_profit_pct REAL DEFAULT 0.10,
-    min_composite_score REAL DEFAULT 60
+    min_composite_score REAL DEFAULT 60,
+    positional_enabled INTEGER DEFAULT 0,
+    positional_llm_research_enabled INTEGER DEFAULT 1,
+    positional_swap_enabled INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS pending_approvals (
@@ -485,7 +488,10 @@ CREATE TABLE IF NOT EXISTS bot_control (
     risk_per_trade_pct DOUBLE PRECISION DEFAULT 0.04,
     stop_loss_pct DOUBLE PRECISION DEFAULT 0.05,
     take_profit_pct DOUBLE PRECISION DEFAULT 0.10,
-    min_composite_score DOUBLE PRECISION DEFAULT 60
+    min_composite_score DOUBLE PRECISION DEFAULT 60,
+    positional_enabled INTEGER DEFAULT 0,
+    positional_llm_research_enabled INTEGER DEFAULT 1,
+    positional_swap_enabled INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS pending_approvals (
@@ -865,8 +871,15 @@ def _migrate_positional_columns(conn) -> None:
         appr_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
         if "trade_type" not in appr_cols:
             conn.execute("ALTER TABLE pending_approvals ADD COLUMN trade_type TEXT DEFAULT 'intraday'")
-        if "positional_enabled" not in {r["name"] for r in conn.execute("PRAGMA table_info(bot_control)").fetchall()}:
+        
+        bot_ctrl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(bot_control)").fetchall()}
+        if "positional_enabled" not in bot_ctrl_cols:
             conn.execute("ALTER TABLE bot_control ADD COLUMN positional_enabled INTEGER DEFAULT 0")
+        if "positional_llm_research_enabled" not in bot_ctrl_cols:
+            conn.execute("ALTER TABLE bot_control ADD COLUMN positional_llm_research_enabled INTEGER DEFAULT 1")
+        if "positional_swap_enabled" not in bot_ctrl_cols:
+            conn.execute("ALTER TABLE bot_control ADD COLUMN positional_swap_enabled INTEGER DEFAULT 1")
+            
         sig_cols = {r["name"] for r in conn.execute("PRAGMA table_info(signals)").fetchall()}
         if "threshold_at_time" not in sig_cols:
             conn.execute("ALTER TABLE signals ADD COLUMN threshold_at_time REAL")
@@ -882,6 +895,8 @@ def _migrate_positional_columns(conn) -> None:
         "ALTER TABLE positions ADD COLUMN IF NOT EXISTS trade_type TEXT DEFAULT 'intraday'",
         "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS trade_type TEXT DEFAULT 'intraday'",
         "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS positional_enabled INTEGER DEFAULT 0",
+        "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS positional_llm_research_enabled INTEGER DEFAULT 1",
+        "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS positional_swap_enabled INTEGER DEFAULT 1",
         "ALTER TABLE signals ADD COLUMN IF NOT EXISTS threshold_at_time DOUBLE PRECISION",
         "ALTER TABLE signals ADD COLUMN IF NOT EXISTS mode_at_time TEXT",
         "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS side TEXT DEFAULT 'LONG'",

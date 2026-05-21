@@ -89,6 +89,10 @@ class DecisionInput(BaseModel):
     action: str  # APPROVE / REJECT
     note: Optional[str] = ""
 
+class PositionalControlInput(BaseModel):
+    llm_research_enabled: bool
+    swap_enabled: bool
+
 # Helper to convert UTC timestamp to IST strings
 def to_ist_str(ts_iso: Any) -> str:
     if not ts_iso:
@@ -1058,11 +1062,13 @@ def get_positional_status():
     try:
         # Separate capital pool, standard 1 Lakh
         from config import POSITIONAL_CAPITAL
+        import config
         
-        # Get active positions cash value
+        # Get active positions cash value and bot control params
         with get_conn() as conn:
             open_pos = conn.execute("SELECT * FROM pos_positions WHERE status = 'OPEN'").fetchall()
             cash_row = conn.execute("SELECT sum(pnl) as net_realized FROM pos_positions WHERE status = 'CLOSED'").fetchone()
+            control_row = conn.execute("SELECT * FROM bot_control WHERE id = 1").fetchone()
         
         net_realized = float(cash_row["net_realized"] or 0.0) if cash_row else 0.0
         active_holdings_cost = sum(float(p["quantity"]) * float(p["entry_price"]) for p in open_pos)
@@ -1073,6 +1079,16 @@ def get_positional_status():
         # Pull max holdings rules from universe scanner settings
         from config import POSITIONAL_MAX_POSITIONS
         
+        llm_research_enabled = config.POSITIONAL_LLM_RESEARCH_ENABLED
+        swap_enabled = config.POSITIONAL_SWAP_ENABLED
+        
+        if control_row:
+            control_dict = dict(control_row)
+            if "positional_llm_research_enabled" in control_dict:
+                llm_research_enabled = bool(control_dict["positional_llm_research_enabled"])
+            if "positional_swap_enabled" in control_dict:
+                swap_enabled = bool(control_dict["positional_swap_enabled"])
+        
         return {
             "initial_capital": POSITIONAL_CAPITAL,
             "cash_balance": round(current_cash, 2),
@@ -1081,10 +1097,34 @@ def get_positional_status():
             "total_valuation": round(current_cash + active_holdings_cost, 2),
             "max_positions": POSITIONAL_MAX_POSITIONS,
             "active_positions_count": len(open_pos),
-            "available_slots": max(0, POSITIONAL_MAX_POSITIONS - len(open_pos))
+            "available_slots": max(0, POSITIONAL_MAX_POSITIONS - len(open_pos)),
+            "llm_research_enabled": llm_research_enabled,
+            "swap_enabled": swap_enabled
         }
     except Exception as e:
         log.error("Error in get_positional_status: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/positional/control")
+def control_positional(input_data: PositionalControlInput):
+    """Enable/disable LLM VCP research or opportunity swaps dynamically."""
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                """UPDATE bot_control
+                      SET positional_llm_research_enabled = ?,
+                          positional_swap_enabled = ?,
+                          updated_at = ?
+                    WHERE id = 1""",
+                (
+                    1 if input_data.llm_research_enabled else 0,
+                    1 if input_data.swap_enabled else 0,
+                    datetime.utcnow().isoformat()
+                )
+            )
+        return {"success": True, "message": "Positional strategy parameters updated successfully"}
+    except Exception as e:
+        log.error("Error in control_positional: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/positional/regime")
@@ -1265,6 +1305,24 @@ def trigger_positional_exit_check(background_tasks: BackgroundTasks):
         return {"success": True, "message": "EOD exit check triggered in background"}
     except Exception as e:
         log.error("Error triggering exit check: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+def run_eod_scan_task():
+    try:
+        log.info("Starting background manual positional EOD scan...")
+        run_eod_scan()
+        log.info("Background manual positional EOD scan completed.")
+    except Exception as e:
+        log.error("Error in background manual positional EOD scan: %s", e)
+
+@app.post("/api/positional/scan")
+def trigger_positional_scan(background_tasks: BackgroundTasks):
+    """Run EOD sweep scan loop manually in a background task."""
+    try:
+        background_tasks.add_task(run_eod_scan_task)
+        return {"success": True, "message": "EOD positional scan triggered in background"}
+    except Exception as e:
+        log.error("Error triggering positional scan: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/positional/analytics")

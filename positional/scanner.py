@@ -391,7 +391,11 @@ def get_latest_scan_results(limit: int = 50) -> list[dict]:
             scan_date = dict(latest_date)["d"]
             rows = conn.execute(
                 """SELECT * FROM pos_scans
-                   WHERE substr(scanned_at,1,10) = ?
+                   WHERE id IN (
+                       SELECT MAX(id) FROM pos_scans
+                       WHERE substr(scanned_at,1,10) = ?
+                       GROUP BY ticker
+                   )
                    ORDER BY score DESC LIMIT ?""",
                 (scan_date, limit),
             ).fetchall()
