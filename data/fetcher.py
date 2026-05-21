@@ -75,8 +75,11 @@ def fetch_candles(
         return pd.DataFrame()
 
     # yfinance sometimes returns MultiIndex columns for single ticker — flatten.
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+    if isinstance(df.columns, pd.MultiIndex) or hasattr(df.columns, "levels"):
+        if any(yf_t in str(col) for col in df.columns.get_level_values(0)):
+            df = df[yf_t]
+        else:
+            df.columns = df.columns.get_level_values(0)
 
     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
     df.dropna(inplace=True)

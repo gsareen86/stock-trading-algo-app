@@ -390,6 +390,16 @@ if LLM_PROVIDER == "anthropic":
     LLM_EVENTS_MODEL     = "claude-haiku-4-5"
     LLM_EOD_MODEL        = "claude-sonnet-4-6"   # better pattern recognition for daily review
     LLM_META_MODEL       = "claude-haiku-4-5"
+elif LLM_PROVIDER == "ollama":
+    # Local Ollama model. Override via OLLAMA_MODEL in .env
+    _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
+    LLM_DEFAULT_MODEL    = _OLLAMA_MODEL
+    LLM_SENTIMENT_MODEL  = _OLLAMA_MODEL
+    LLM_VETO_MODEL       = _OLLAMA_MODEL
+    LLM_REGIME_MODEL     = _OLLAMA_MODEL
+    LLM_EVENTS_MODEL     = _OLLAMA_MODEL
+    LLM_EOD_MODEL        = _OLLAMA_MODEL
+    LLM_META_MODEL       = _OLLAMA_MODEL
 else:
     # OpenRouter — requires OPENROUTER_API_KEY.
     # Override any individual model via OPENROUTER_MODEL env var.

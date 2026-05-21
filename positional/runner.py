@@ -59,10 +59,18 @@ def _fetch_daily_df(ticker: str):
     """Fetch 14 months of daily data for a ticker. Returns DataFrame or None."""
     try:
         import yfinance as yf
+        import pandas as pd
         t = ticker if ticker.endswith((".NS", ".BO")) else ticker + ".NS"
         df = yf.download(t, period="14mo", interval="1d",
                          auto_adjust=True, progress=False)
-        return df if df is not None and not df.empty else None
+        if df is not None and not df.empty:
+            if isinstance(df.columns, pd.MultiIndex) or hasattr(df.columns, "levels"):
+                if any(t in str(col) for col in df.columns.get_level_values(0)):
+                    df = df[t]
+                else:
+                    df.columns = df.columns.get_level_values(0)
+            return df
+        return None
     except Exception as e:
         log.debug("[pos_runner] fetch failed for %s: %s", ticker, e)
         return None
@@ -91,6 +99,53 @@ def _open_position(ticker: str, price: float, score: float,
     if qty <= 0:
         log.info("[pos_runner] %s: qty=0 at price=%.2f (insufficient capital)", ticker, price)
         return False
+
+    # Pre-trade LLM Veto Gate
+    from config import LLM_ENABLE_VETO
+    if LLM_ENABLE_VETO:
+        try:
+            from llm.veto import llm_veto, apply_veto_to_qty
+            # Fetch recent news and metadata for the ticker
+            with get_conn() as conn:
+                _recent_news = [
+                    dict(r) for r in conn.execute(
+                        """SELECT title, ts, sentiment FROM news
+                           WHERE tickers LIKE ? ORDER BY ts DESC LIMIT 5""",
+                        (f"%{ticker}%",),
+                    ).fetchall()
+                ]
+                row_sector = conn.execute(
+                    "SELECT sector FROM fundamentals WHERE ticker=?",
+                    (ticker,),
+                ).fetchone()
+                sector = row_sector["sector"] if row_sector and row_sector["sector"] else ""
+
+            sentiments = [float(n["sentiment"]) for n in _recent_news if n.get("sentiment") is not None]
+            sentiment_score = sum(sentiments) / len(sentiments) if sentiments else 0.0
+
+            _fired = [("Minervini Trend Template & VCP", "BUY", score)]
+            
+            _verdict, _vreason = llm_veto(
+                ticker=ticker,
+                side="LONG",
+                price=price,
+                composite_score=score,
+                technical_score=score,
+                sentiment_score=sentiment_score,
+                fired_strategies=_fired,
+                regime=regime_flag.lower(),
+                recent_news=_recent_news,
+                sector=sector,
+            )
+            
+            qty = apply_veto_to_qty(qty, _verdict)
+            if qty == 0:
+                log.info("[pos_runner] LLM veto SKIP LONG %s: %s", ticker, _vreason)
+                return False
+            if _verdict == "REDUCE":
+                log.info("[pos_runner] LLM veto REDUCE LONG %s (50%%): %s", ticker, _vreason)
+        except Exception as e:
+            log.warning("[pos_runner] LLM veto failed for %s: %s", ticker, e)
 
     # Place order
     broker = get_broker()
@@ -271,7 +326,7 @@ def run_exit_checks() -> dict:
 
             # Re-entry check (applies to stocks not currently held)
         except Exception as e:
-            log.warning("[pos_runner] exit error for %s: %s", ticker, e)
+            log.exception("[pos_runner] exit error for %s", ticker)
             errors += 1
 
     # Re-entry alerts for recently closed positions

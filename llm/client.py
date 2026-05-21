@@ -72,6 +72,8 @@ def get_client():
 def _init_client():
     if LLM_PROVIDER == "anthropic":
         return _init_anthropic()
+    if LLM_PROVIDER == "ollama":
+        return "ollama_placeholder"
     return _init_openrouter()
 
 
@@ -201,6 +203,10 @@ def call_json(
         if LLM_PROVIDER == "anthropic":
             result, prompt_tokens, completion_tokens = _call_anthropic(
                 client, prompt=prompt, schema=schema,
+                system=system, model=model, max_tokens=max_tokens)
+        elif LLM_PROVIDER == "ollama":
+            result, prompt_tokens, completion_tokens = _call_ollama(
+                prompt=prompt, schema=schema,
                 system=system, model=model, max_tokens=max_tokens)
         else:
             result, prompt_tokens, completion_tokens = _call_openrouter(
@@ -356,3 +362,53 @@ def _cache_put(key: str, value: dict) -> None:
         _cache_path(key).write_text(json.dumps(value), encoding="utf-8")
     except Exception as e:
         log.debug("LLM cache write failed: %s", e)
+
+
+def _call_ollama(*, prompt, schema, system, model, max_tokens):
+    """Call local Ollama native chat endpoint, explicitly disabling thinking mode."""
+    import requests
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    # Clean and convert OpenAI v1 compatibility base URL to raw Ollama base URL
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3]
+    url = f"{base_url}/api/chat"
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    schema_hint = _schema_to_prompt_hint(schema)
+    if system:
+        messages[0]["content"] += f"\n\nRespond with a valid JSON object only matching the requested schema.\nRequired structure:\n{schema_hint}"
+    else:
+        messages.insert(0, {"role": "system", "content": f"Respond with a valid JSON object only matching the requested schema.\nRequired structure:\n{schema_hint}"})
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": 0.0,
+            "num_predict": max_tokens
+        },
+        "think": False
+    }
+
+    try:
+        res = requests.post(url, json=payload, timeout=60)
+        if res.status_code != 200:
+            log.warning("Ollama native call failed with status %d: %s", res.status_code, res.text)
+            return None, None, None
+        data = res.json()
+        content = data.get("message", {}).get("content", "") or ""
+        parsed = _extract_json(content)
+        
+        # Estimate token count since Ollama returns actual counts
+        pt = data.get("prompt_eval_count")
+        ct = data.get("eval_count")
+        
+        return parsed, pt, ct
+    except Exception as e:
+        log.warning("Ollama native call exception (%s): %s", model, e)
+        raise

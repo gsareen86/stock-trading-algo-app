@@ -312,13 +312,16 @@ def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
     for ticker in tickers_yf:
         try:
             # Extract ticker data from the multi-ticker download
-            if len(tickers_yf) == 1:
-                df = data
-            elif ticker in data.columns.get_level_values(0):
-                df = data[ticker].dropna(how="all")
+            if isinstance(data.columns, pd.MultiIndex) or hasattr(data.columns, "levels"):
+                if ticker in data.columns.get_level_values(0):
+                    df = data[ticker].dropna(how="all")
+                elif ticker in data.columns.get_level_values(1):
+                    df = data.xs(ticker, level=1, axis=1).dropna(how="all")
+                else:
+                    log.debug("[scan] %s: not in downloaded data", ticker)
+                    continue
             else:
-                log.debug("[scan] %s: not in downloaded data", ticker)
-                continue
+                df = data.dropna(how="all")
 
             if df is None or df.empty or len(df) < 220:
                 log.debug("[scan] %s: only %d rows — need 220+",
