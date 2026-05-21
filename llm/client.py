@@ -30,6 +30,7 @@ from config import (
     LLM_MAX_RETRIES,
     LLM_PROVIDER,
     LLM_REQUEST_TIMEOUT_S,
+    OLLAMA_BASE_URL,
 )
 
 # ── Circuit breaker ───────────────────────────────────────────────────────────
@@ -72,6 +73,8 @@ def get_client():
 def _init_client():
     if LLM_PROVIDER == "anthropic":
         return _init_anthropic()
+    elif LLM_PROVIDER == "ollama":
+        return _init_ollama()
     return _init_openrouter()
 
 
@@ -89,6 +92,22 @@ def _init_anthropic():
         )
     except ImportError:
         log.warning("anthropic package not installed — LLM features disabled")
+        return False
+
+
+def _init_ollama():
+    try:
+        import openai
+        # Ollama local connection setup
+        log.info("Initializing local Ollama provider at %s with model %s", OLLAMA_BASE_URL, LLM_DEFAULT_MODEL)
+        return openai.OpenAI(
+            api_key="ollama",  # dummy key required by client
+            base_url=OLLAMA_BASE_URL,
+            timeout=LLM_REQUEST_TIMEOUT_S,
+            max_retries=LLM_MAX_RETRIES,
+        )
+    except ImportError:
+        log.warning("openai package not installed — Ollama features disabled")
         return False
 
 
@@ -202,6 +221,10 @@ def call_json(
             result, prompt_tokens, completion_tokens = _call_anthropic(
                 client, prompt=prompt, schema=schema,
                 system=system, model=model, max_tokens=max_tokens)
+        elif LLM_PROVIDER == "ollama":
+            result, prompt_tokens, completion_tokens = _call_ollama(
+                client, prompt=prompt, schema=schema,
+                system=system, model=model, max_tokens=max_tokens)
         else:
             result, prompt_tokens, completion_tokens = _call_openrouter(
                 client, prompt=prompt, schema=schema,
@@ -262,6 +285,57 @@ def _call_anthropic(client, *, prompt, schema, system, model, max_tokens):
         log.warning("Anthropic call failed: %s", e)
         raise
     return None, None, None
+
+
+def _call_ollama(client, *, prompt, schema, system, model, max_tokens):
+    """Returns (parsed_dict_or_None, prompt_tokens, completion_tokens) using raw requests to native API."""
+    import requests
+    schema_hint = _schema_to_prompt_hint(schema)
+    sys_content = (system or "") + (
+        f"\n\nRespond with a valid JSON object only — no markdown, no explanation.\n"
+        f"Required structure:\n{schema_hint}"
+    )
+    
+    messages = []
+    if sys_content:
+        messages.append({"role": "system", "content": sys_content})
+    messages.append({"role": "user", "content": prompt})
+    
+    # Strip '/v1' or similar from OLLAMA_BASE_URL to get native /api/chat
+    base_url = OLLAMA_BASE_URL.replace("/v1", "").rstrip("/")
+    url = f"{base_url}/api/chat"
+    
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": 0.0,
+            "num_predict": max_tokens,
+        },
+        "think": False,
+    }
+    
+    # Allow generous timeout for local execution on 8GB GPU (e.g. 120s or 4x standard)
+    timeout = max(120, LLM_REQUEST_TIMEOUT_S * 4)
+    
+    try:
+        res = requests.post(url, json=payload, timeout=timeout)
+        if res.status_code != 200:
+            log.warning("Ollama API failed (status %d): %s", res.status_code, res.text)
+            return None, None, None
+            
+        data = res.json()
+        content = data.get("message", {}).get("content", "") or ""
+        parsed = _extract_json(content)
+        
+        pt = data.get("prompt_eval_count")
+        ct = data.get("eval_count")
+        
+        return parsed, pt, ct
+    except Exception as e:
+        log.warning("Ollama connection failed: %s", e)
+        raise
 
 
 def _call_openrouter(client, *, prompt, schema, system, model, max_tokens):

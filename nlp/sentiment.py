@@ -29,7 +29,18 @@ def _get_finbert():
     with _finbert_lock:
         if _finbert_pipeline is None:
             try:
+                # Suppress noisy HuggingFace weight initialization and hub warnings
+                import warnings
+                warnings.filterwarnings("ignore")
+
+                logging.getLogger("transformers").setLevel(logging.ERROR)
+                logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+
                 from transformers import pipeline  # lazy import
+                import transformers.utils.logging as tf_logging
+                tf_logging.set_verbosity_error()
+                tf_logging.disable_progress_bar()
+
                 _finbert_pipeline = pipeline(
                     "sentiment-analysis",
                     model="ProsusAI/finbert",

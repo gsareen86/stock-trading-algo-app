@@ -29,11 +29,14 @@ def _fetch_monthly_close(ticker: str, months: int) -> Optional[list[float]]:
     """Fetch monthly closing prices via yfinance. Returns list oldest→newest."""
     try:
         import yfinance as yf
+        import pandas as pd
         df = yf.download(ticker, period="3y", interval="1mo",
                          progress=False, auto_adjust=True)
         if df is None or df.empty:
             log.warning("market_regime: no data for %s", ticker)
             return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
         closes = df["Close"].dropna().tolist()
         # Need at least months+1 data points to compute ROC
         if len(closes) < months + 1:

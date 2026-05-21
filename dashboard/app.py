@@ -2600,7 +2600,7 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                     except Exception as _se:
                         st.error(f"Scan failed: {_se}")
 
-        _scan_rows = get_latest_scan_results(limit=30)
+        _scan_rows = get_latest_scan_results(limit=1000)
         if _scan_rows:
             import pandas as pd
             _sdf = pd.DataFrame(_scan_rows)
@@ -2624,8 +2624,35 @@ Gross NPA < 3 AND Net NPA < 1 AND Market Capitalization > 500
                              "trend_template", "vcp_detected", "proximity_52w_pct",
                              "ema21", "ema50", "ema200"]
             _display_cols = [c for c in _display_cols if c in _sdf.columns]
+
+            # Interactive pagination logic
+            total_entries = len(_sdf)
+            page_size = 50
+            if total_entries > page_size:
+                total_pages = (total_entries - 1) // page_size + 1
+                col_p1, col_p2 = st.columns([3, 1])
+                with col_p2:
+                    page = st.selectbox(
+                        "Select Page",
+                        options=list(range(1, total_pages + 1)),
+                        index=0,
+                        format_func=lambda x: f"Page {x} of {total_pages}",
+                        key="pos_scan_page"
+                    )
+                with col_p1:
+                    start_idx = (page - 1) * page_size
+                    end_idx = start_idx + page_size
+                    st.markdown(
+                        f"<div style='padding-top:25px'><small>Showing entries <b>{start_idx + 1} to {min(end_idx, total_entries)}</b> "
+                        f"of <b>{total_entries}</b> (sorted by score descending)</small></div>",
+                        unsafe_allow_html=True
+                    )
+                page_df = _sdf.iloc[start_idx:end_idx]
+            else:
+                page_df = _sdf
+
             st.markdown(
-                _sdf[_display_cols].rename(columns={
+                page_df[_display_cols].rename(columns={
                     "scanned_at":       "Scanned",
                     "trend_template":   "Trend ✓",
                     "vcp_detected":     "VCP",

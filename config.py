@@ -377,9 +377,20 @@ LLM_ENABLE_EVENTS       = True   # Earnings / corporate-action extraction from n
 LLM_ENABLE_EOD_REVIEW   = True   # End-of-day trade analysis + parameter recommendations
 LLM_ENABLE_META_WEIGHTS = True   # Hourly adaptive strategy weight rebalancing
 
-# Provider selection — set LLM_PROVIDER=anthropic or LLM_PROVIDER=openrouter in .env
-# "openrouter" is the default (free models available, no Anthropic account needed).
+# Toggles for Positional LLM Research and Swapping
+POSITIONAL_LLM_RESEARCH_ENABLED = True  # True: run candidates through LLM; False: non-LLM mode
+POSITIONAL_SWAP_ENABLED = True          # True: scan and swap stagnant positions; False: do not swap
+POSITIONAL_SWAP_MIN_HOLD_DAYS = 5       # Min trading days held before eligible for swap
+POSITIONAL_SWAP_SCORE_DIFF = 15          # Score difference required to swap out
+POSITIONAL_SWAP_MAX_PNL_PCT = 3.0       # Winners >= 3.0% are not swapped out (let them run!)
+POSITIONAL_VIX_HIGH_THRESHOLD = 20.0    # Dynamic screening trigger: VIX > 20 tightens entry floor
+
+# Provider selection — set LLM_PROVIDER=anthropic, LLM_PROVIDER=openrouter, or LLM_PROVIDER=ollama in .env
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openrouter").lower()
+
+# Local Ollama Provider Config
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
 
 if LLM_PROVIDER == "anthropic":
     # Requires ANTHROPIC_API_KEY. Haiku for fast per-cycle calls; Sonnet for EOD review.
@@ -390,6 +401,15 @@ if LLM_PROVIDER == "anthropic":
     LLM_EVENTS_MODEL     = "claude-haiku-4-5"
     LLM_EOD_MODEL        = "claude-sonnet-4-6"   # better pattern recognition for daily review
     LLM_META_MODEL       = "claude-haiku-4-5"
+elif LLM_PROVIDER == "ollama":
+    # Local Ollama models
+    LLM_DEFAULT_MODEL    = OLLAMA_MODEL
+    LLM_SENTIMENT_MODEL  = OLLAMA_MODEL
+    LLM_VETO_MODEL       = OLLAMA_MODEL
+    LLM_REGIME_MODEL     = OLLAMA_MODEL
+    LLM_EVENTS_MODEL     = OLLAMA_MODEL
+    LLM_EOD_MODEL        = OLLAMA_MODEL
+    LLM_META_MODEL       = OLLAMA_MODEL
 else:
     # OpenRouter — requires OPENROUTER_API_KEY.
     # Override any individual model via OPENROUTER_MODEL env var.

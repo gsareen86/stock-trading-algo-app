@@ -313,7 +313,12 @@ def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
         try:
             # Extract ticker data from the multi-ticker download
             if len(tickers_yf) == 1:
-                df = data
+                df = data.copy()
+                if isinstance(df.columns, pd.MultiIndex):
+                    if "Close" in df.columns.get_level_values(0):
+                        df.columns = df.columns.get_level_values(0)
+                    else:
+                        df.columns = df.columns.get_level_values(1)
             elif ticker in data.columns.get_level_values(0):
                 df = data[ticker].dropna(how="all")
             else:
@@ -388,7 +393,11 @@ def get_latest_scan_results(limit: int = 50) -> list[dict]:
             scan_date = dict(latest_date)["d"]
             rows = conn.execute(
                 """SELECT * FROM pos_scans
-                   WHERE substr(scanned_at,1,10) = ?
+                   WHERE id IN (
+                       SELECT MAX(id) FROM pos_scans
+                       WHERE substr(scanned_at,1,10) = ?
+                       GROUP BY ticker
+                   )
                    ORDER BY score DESC LIMIT ?""",
                 (scan_date, limit),
             ).fetchall()
@@ -396,3 +405,4 @@ def get_latest_scan_results(limit: int = 50) -> list[dict]:
     except Exception as e:
         log.debug("[scan] get_latest_scan_results failed: %s", e)
         return []
+
