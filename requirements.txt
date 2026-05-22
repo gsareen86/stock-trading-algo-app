@@ -33,14 +33,6 @@ torch>=2.0.0
 openai>=1.30.0        # used for OpenRouter (OpenAI-compatible API)
 anthropic>=0.40.0     # only needed when LLM_PROVIDER=anthropic
 
-# Dashboard
-streamlit>=1.37.0   # need st.fragment (stable in 1.37) for non-blocking partial refresh
-plotly>=5.18.0
-# streamlit-autorefresh intentionally NOT used — it is a Streamlit custom
-# component, and any custom component forces Streamlit to import pyarrow,
-# which is blocked on Windows by Smart App Control (DLL signing). We use
-# `st.fragment(run_every=...)` instead — server-side, no full page rerun.
-
 # Scheduling
 APScheduler>=3.10.4
 

@@ -894,7 +894,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/positional/exit-check`, { method: "POST" });
       const data = await res.json();
       if (data.success) {
-        setSuccessMsg("EOD exit scanning triggered in background.");
+        setSuccessMsg("EOD positional exit checks and scan triggered in background.");
       } else {
         setErrorMsg("Failed EOD exit trigger.");
       }
@@ -902,23 +902,6 @@ export default function App() {
       setErrorMsg("Network error exit checks.");
     } finally {
       setLoading((prev) => ({ ...prev, pos_exits: false }));
-    }
-  };
-
-  const handleTriggerPositionalScan = async () => {
-    setLoading((prev) => ({ ...prev, pos_scan: true }));
-    try {
-      const res = await fetch(`${API_BASE}/api/positional/scan`, { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        setSuccessMsg("EOD positional scan triggered in background.");
-      } else {
-        setErrorMsg("Failed EOD positional scan trigger.");
-      }
-    } catch (e) {
-      setErrorMsg("Network error positional scan.");
-    } finally {
-      setLoading((prev) => ({ ...prev, pos_scan: false }));
     }
   };
 
@@ -2237,21 +2220,12 @@ export default function App() {
 
                   <div className="space-y-3 pt-2">
                     <button
-                      onClick={handleTriggerPositionalScan}
-                      disabled={loading["pos_scan"]}
-                      className="w-full py-2.5 px-4 rounded-xl border border-indigo-800 hover:bg-indigo-950/20 text-indigo-300 font-semibold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
-                    >
-                      <RefreshCw size={14} className={loading["pos_scan"] ? "animate-spin" : ""} />
-                      {loading["pos_scan"] ? "SCANNING UNIVERSE..." : "RUN EOD SWEEP SCAN NOW"}
-                    </button>
-
-                    <button
                       onClick={handleTriggerPositionalExits}
                       disabled={loading["pos_exits"]}
                       className="w-full py-2.5 px-4 rounded-xl border border-slate-800 hover:bg-slate-900 text-slate-300 font-semibold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
                     >
                       <RefreshCw size={14} className={loading["pos_exits"] ? "animate-spin" : ""} />
-                      {loading["pos_exits"] ? "SWEEPING EXITS..." : "RUN EOD EXIT CHECKS"}
+                      {loading["pos_exits"] ? "RUNNING EOD EXIT CHECKS..." : "RUN EOD EXIT CHECKS"}
                     </button>
 
                     <button

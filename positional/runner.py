@@ -257,12 +257,12 @@ def _close_position(pos: dict, current_price: float, reason: str) -> bool:
 
 # ── EOD Exit Management ───────────────────────────────────────────────────────
 
-def run_exit_checks() -> dict:
+def run_exit_checks(force: bool = False) -> dict:
     """
     Check all OPEN pos_positions for exit conditions.
     Returns summary: {exited, sell_alerts, reentry_alerts, updated, errors}
     """
-    if not _is_trading_day():
+    if not force and not _is_trading_day():
         return {"skipped": True, "reason": "non-trading day"}
 
     log.info("[pos_runner] === EXIT CHECK START ===")
@@ -583,7 +583,7 @@ def run_opportunity_swaps(open_positions: list[dict], buy_candidates: list[dict]
 
 # ── EOD Scan ─────────────────────────────────────────────────────────────────
 
-def run_eod_scan() -> dict:
+def run_eod_scan(force: bool = False) -> dict:
     """
     Main EOD scan: runs Minervini Trend Template + VCP on the fundamental universe.
     Opens positions for BUY alerts (paper mode) or sends SELL/BUY alerts.
@@ -593,7 +593,7 @@ def run_eod_scan() -> dict:
     if not _positional_enabled():
         log.debug("[pos_runner] positional module disabled")
         return {"skipped": True, "reason": "positional_enabled=0"}
-    if not _is_trading_day():
+    if not force and not _is_trading_day():
         return {"skipped": True, "reason": "non-trading day"}
 
     log.info("[pos_runner] === EOD SCAN START ===")
@@ -624,7 +624,7 @@ def run_eod_scan() -> dict:
                  size_mult * 100)
 
     # Step 3: Exit management first
-    exit_result = run_exit_checks()
+    exit_result = run_exit_checks(force=force)
     sell_alerts = exit_result.get("sell_alerts", [])
     reentry_alerts = exit_result.get("reentry_alerts", [])
 
@@ -749,12 +749,32 @@ def run_positional_forever() -> None:
     Also runs a monthly regime check on the 1st trading day of the month.
     """
     log.info("[pos_runner] positional daemon started")
+
+    # Startup EOD scan hook
+    if _positional_enabled():
+        import threading
+        log.info("[pos_runner] Spawning startup EOD scan thread (pos-startup-scan)...")
+        t = threading.Thread(
+            target=run_eod_scan,
+            args=(False,),
+            daemon=True,
+            name="pos-startup-scan"
+        )
+        t.start()
+
     _last_scan_date:   object = None
     _last_alert_date:  object = None
     _last_regime_month: object = None
 
     scan_h,  scan_m  = [int(x) for x in POSITIONAL_SCAN_TIME.split(":")]
     alert_h, alert_m = [int(x) for x in POSITIONAL_ALERT_TIME.split(":")]
+
+    # If booted after scan time, set last_scan_date to today so we don't double scan
+    now = datetime.now(IST)
+    if (now.hour, now.minute) >= (scan_h, scan_m):
+        _last_scan_date = now.date()
+    if (now.hour, now.minute) >= (alert_h, alert_m):
+        _last_alert_date = now.date()
 
     while True:
         try:
@@ -776,7 +796,7 @@ def run_positional_forever() -> None:
             if past_scan and _is_trading_day() and _last_scan_date != today:
                 _last_scan_date = today
                 try:
-                    run_eod_scan()
+                    run_eod_scan(force=False)
                 except Exception as e:
                     log.error("[pos_runner] EOD scan error: %s", e)
                 time.sleep(30)

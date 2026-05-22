@@ -1289,37 +1289,37 @@ def get_positional_positions():
         log.error("Error in get_positional_positions: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
-def run_exit_checks_task():
+def run_exit_checks_task(force: bool = True):
     try:
-        log.info("Starting background EOD exit checks...")
-        run_exit_checks()
-        log.info("Background EOD exit checks completed.")
+        log.info("Starting background EOD exit checks and scan [force=%s]...", force)
+        run_eod_scan(force=force)
+        log.info("Background EOD exit checks and scan completed.")
     except Exception as e:
-        log.error("Error in background EOD exit checks: %s", e)
+        log.error("Error in background EOD exit checks and scan: %s", e)
 
 @app.post("/api/positional/exit-check")
-def trigger_positional_exit_check(background_tasks: BackgroundTasks):
-    """Run EOD exit check loop manually in a background task."""
+def trigger_positional_exit_check(background_tasks: BackgroundTasks, force: bool = Query(True)):
+    """Run EOD exit check and scan loop manually in a background task."""
     try:
-        background_tasks.add_task(run_exit_checks_task)
-        return {"success": True, "message": "EOD exit check triggered in background"}
+        background_tasks.add_task(run_exit_checks_task, force)
+        return {"success": True, "message": "EOD exit check and scan triggered in background"}
     except Exception as e:
         log.error("Error triggering exit check: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
-def run_eod_scan_task():
+def run_eod_scan_task(force: bool = True):
     try:
-        log.info("Starting background manual positional EOD scan...")
-        run_eod_scan()
+        log.info("Starting background manual positional EOD scan [force=%s]...", force)
+        run_eod_scan(force=force)
         log.info("Background manual positional EOD scan completed.")
     except Exception as e:
         log.error("Error in background manual positional EOD scan: %s", e)
 
 @app.post("/api/positional/scan")
-def trigger_positional_scan(background_tasks: BackgroundTasks):
+def trigger_positional_scan(background_tasks: BackgroundTasks, force: bool = Query(True)):
     """Run EOD sweep scan loop manually in a background task."""
     try:
-        background_tasks.add_task(run_eod_scan_task)
+        background_tasks.add_task(run_eod_scan_task, force)
         return {"success": True, "message": "EOD positional scan triggered in background"}
     except Exception as e:
         log.error("Error triggering positional scan: %s", e)
