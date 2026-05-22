@@ -60,7 +60,13 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
     Compute all indicators needed for Trend Template + VCP.
     Returns dict of indicator values or None if data insufficient.
     """
-    if df is None or len(df) < 220:
+    if df is None:
+        return None
+
+    # Drop any row where any of Close, High, Low is NaN to avoid incomplete/empty rows
+    df = df.dropna(subset=["Close", "High", "Low"])
+
+    if len(df) < 220:
         return None
 
     close = df["Close"].astype(float)
@@ -79,7 +85,11 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
 
     # 52-week high (last 252 trading days)
     high_52w = float(high.tail(252).max())
-    proximity_52w_pct = (high_52w - price) / high_52w * 100  # how far below 52W high
+    
+    if pd.isna(price) or pd.isna(high_52w) or high_52w <= 0:
+        proximity_52w_pct = 0.0
+    else:
+        proximity_52w_pct = (high_52w - price) / high_52w * 100  # how far below 52W high
 
     # ATR (10-day) for VCP
     prev_close = close.shift(1)
@@ -90,7 +100,12 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
     ], axis=1).max(axis=1)
 
     atr10 = tr.ewm(span=POSITIONAL_VCP_ATR_PERIOD, adjust=False).mean()
-    atr_pct = float(atr10.iloc[-1]) / price * 100 if price > 0 else 0.0
+    
+    atr_val = float(atr10.iloc[-1])
+    if pd.isna(atr_val) or pd.isna(price) or price <= 0:
+        atr_pct = 0.0
+    else:
+        atr_pct = atr_val / price * 100
 
     # Weekly ATR% for VCP contraction check (last 3 weeks = 15 trading days)
     weekly_atr_pcts = []
@@ -103,10 +118,16 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
             continue
         slice_price = float(slice_close.mean())
         slice_atr_v = float(slice_atr.mean())
-        weekly_atr_pcts.append(slice_atr_v / slice_price * 100 if slice_price > 0 else 0.0)
+        
+        if pd.isna(slice_price) or pd.isna(slice_atr_v) or slice_price <= 0:
+            weekly_atr_pcts.append(0.0)
+        else:
+            weekly_atr_pcts.append(slice_atr_v / slice_price * 100)
 
     # 20-day average volume
     avg_vol_20d = float(vol.tail(20).mean())
+    if pd.isna(avg_vol_20d):
+        avg_vol_20d = 0.0
 
     # Down-day volume ratio for last 10 days
     ret = close.pct_change()
@@ -114,10 +135,12 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
     last10_vol   = vol.tail(10)
     last10_ret   = ret.tail(10)
     down_day_vols = last10_vol[last10_ret < 0]
-    down_day_vol_ratio = (
-        float(down_day_vols.mean()) / avg_vol_20d
-        if avg_vol_20d > 0 and len(down_day_vols) > 0 else 1.0
-    )
+    
+    mean_down_vol = float(down_day_vols.mean()) if len(down_day_vols) > 0 else 0.0
+    if pd.isna(mean_down_vol) or pd.isna(avg_vol_20d) or avg_vol_20d <= 0:
+        down_day_vol_ratio = 1.0
+    else:
+        down_day_vol_ratio = mean_down_vol / avg_vol_20d
 
     return {
         "price":             price,
