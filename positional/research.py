@@ -1,195 +1,371 @@
+"""
+Phase-3 positional research — a buy-side-analyst pass over each candidate.
+
+For every shortlisted stock (BUY setups + LONG_TERM watch candidates) we:
+  1. Gather management material from Screener.in (Pros/Cons, announcements,
+     latest concall transcript + investor presentation — see positional/concalls.py).
+  2. Have the local LLM judge management outlook → a 0-100 ``management`` pillar
+     score + a written thesis + a PROCEED/REDUCE/SKIP verdict.
+  3. Fold the management score back into the scorecard (composite / durability /
+     horizon) via positional.scorer.recompute, and persist the thesis.
+
+Long transcripts are map-reduced: each chunk is summarised, then the digests +
+HTML signals feed one final analyst call.
+
+Fails open everywhere — if Screener, the PDF host, or the LLM is unavailable the
+candidate keeps its technical scorecard and a PROCEED verdict.
+"""
+import json
 import logging
+from datetime import datetime, timedelta
+
+import config
 from config import (
-    POSITIONAL_LLM_RESEARCH_ENABLED,
+    IST,
     LLM_VETO_MODEL,
+    POSITIONAL_CONCALL_CACHE_DAYS,
+    POSITIONAL_MANAGEMENT_VETO_SCORE,
+    POSITIONAL_RESEARCH_CHUNK_CHARS,
+    POSITIONAL_RESEARCH_LIMIT,
 )
-from llm.client import call_json
 from db.models import get_conn
+from llm.client import call_json
+from positional import scorer
+from positional.concalls import gather_management_material
 
 log = logging.getLogger(__name__)
 
-# Strict JSON Schema for LLM Response
+_MAX_CHUNKS = 6   # cap transcript chunks summarised per stock (bounds LLM cost)
+
+# Final analyst verdict schema
 _SCHEMA = {
     "type": "object",
     "properties": {
         "verdict": {
             "type": "string",
             "enum": ["PROCEED", "REDUCE", "SKIP"],
-            "description": "PROCEED: strong breakout and safe; REDUCE: high-risk/marginal (50% size); SKIP: high probability of failure (do not buy)"
+            "description": "PROCEED: outlook supports a position; REDUCE: proceed at half size due to a concern; SKIP: management/outlook red flags — do not buy.",
         },
-        "reason": {
+        "outlook": {
             "type": "string",
-            "description": "Short justification (<= 25 words) of the verdict based on VCP base quality, growth metrics, and India VIX context."
+            "enum": ["POSITIVE", "NEUTRAL", "MIXED", "NEGATIVE"],
+            "description": "Overall management/business outlook from the commentary.",
         },
-        "confidence": {
+        "management_score": {
             "type": "number",
-            "description": "Confidence level between 0.0 (low) and 1.0 (high)"
-        }
+            "description": "0-100 score for management credibility, execution vs past guidance, growth outlook and capital allocation. 50 = neutral.",
+        },
+        "thesis": {
+            "type": "string",
+            "description": "<=120 word investment thesis grounded in the management commentary.",
+        },
+        "key_positives": {"type": "array", "items": {"type": "string"},
+                          "description": "Up to 4 concrete positives."},
+        "key_risks": {"type": "array", "items": {"type": "string"},
+                      "description": "Up to 4 concrete risks / red flags."},
+        "guidance": {"type": "string",
+                     "description": "<=40 word gist of forward guidance, or 'none given'."},
+        "confidence": {"type": "number", "description": "0.0-1.0 confidence in this read."},
     },
-    "required": ["verdict", "reason", "confidence"],
+    "required": ["verdict", "outlook", "management_score", "thesis", "confidence"],
     "additionalProperties": False,
 }
 
 _SYSTEM_PROMPT = (
-    "You are a strict, senior positional equity research officer specializing in "
-    "Mark Minervini's Volatility Contraction Pattern (VCP) strategy for Indian equities.\n"
-    "Your job is to veto low-probability breakouts, not generate them. Be conservative.\n\n"
-    "Trade Rules:\n"
-    "  • PROCEED: Strong structural base tightening (VCP), solid growth, low debt, stable market.\n"
-    "  • REDUCE: Plausible setup but has a minor issue (e.g. slightly high PE, high VIX, or moderate growth). Capital risk is buffered by taking 50% size.\n"
-    "  • SKIP: High-risk setup (e.g. excessive leverage D/E > 1, no sales growth, no clear VCP contraction, or extremely high VIX > 20 triggering broad market false breakouts).\n"
-    "Default to PROCEED only if both technical base structure and fundamentals are robust. Veto if VIX is high."
+    "You are a senior buy-side equity analyst covering Indian listed companies. "
+    "You read management commentary (concall transcript, investor presentation, "
+    "Screener.in pros/cons, recent announcements) to judge MANAGEMENT OUTLOOK for a "
+    "swing/positional or long-term holding.\n"
+    "Assess: credibility and execution vs prior guidance, demand/order-book and growth "
+    "outlook, margins and capital allocation, balance-sheet/leverage commentary, and any "
+    "governance red flags (pledging, related-party, accounting, promoter conduct).\n"
+    "Score management_score 0-100 (50=neutral). Reserve SKIP for genuine red flags or a "
+    "clearly deteriorating outlook; REDUCE for a real but survivable concern; otherwise PROCEED. "
+    "Be specific and grounded in the material — do not invent facts."
 )
+
+_CHUNK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string",
+                    "description": "Concise bullet digest of management commentary in this excerpt: guidance, growth drivers, margins, capital allocation, risks, red flags."}
+    },
+    "required": ["summary"],
+    "additionalProperties": False,
+}
+
+
+def _summarise_long_text(body: str) -> str:
+    """Map step: summarise each transcript chunk, then concatenate the digests."""
+    chunk = POSITIONAL_RESEARCH_CHUNK_CHARS
+    chunks = [body[i:i + chunk] for i in range(0, len(body), chunk)][:_MAX_CHUNKS]
+    summaries = []
+    for idx, ch in enumerate(chunks):
+        res = call_json(
+            prompt=("Summarise the management commentary in this concall/presentation excerpt "
+                    "as concise bullet points (guidance, growth drivers, margins, capital "
+                    f"allocation, risks, red flags):\n\n{ch}"),
+            schema=_CHUNK_SCHEMA,
+            model=LLM_VETO_MODEL,
+            max_tokens=400,
+            caller="research_chunk",
+        )
+        if res and res.get("summary"):
+            summaries.append(f"[part {idx + 1}] {res['summary']}")
+    return "\n".join(summaries)[:POSITIONAL_RESEARCH_CHUNK_CHARS]
+
+
+def _build_digest(material: dict) -> str:
+    """Assemble the management material into one prompt-ready digest, map-reducing
+    the transcript/presentation if it exceeds the single-pass char budget."""
+    parts = []
+    if material.get("pros"):
+        parts.append("SCREENER PROS:\n- " + "\n- ".join(material["pros"][:8]))
+    if material.get("cons"):
+        parts.append("SCREENER CONS:\n- " + "\n- ".join(material["cons"][:8]))
+    if material.get("announcements"):
+        parts.append("RECENT ANNOUNCEMENTS:\n- " + "\n- ".join(material["announcements"][:8]))
+
+    body = "\n\n".join(p for p in (material.get("concall_text", ""),
+                                   material.get("ppt_text", "")) if p)
+    if body:
+        if len(body) <= POSITIONAL_RESEARCH_CHUNK_CHARS:
+            parts.append("CONCALL / PRESENTATION:\n" + body)
+        else:
+            digest = _summarise_long_text(body)
+            if digest:
+                parts.append("CONCALL / PRESENTATION (summarised):\n" + digest)
+    return "\n\n".join(parts).strip()
+
+
+def _fundamentals(ticker: str) -> dict:
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                """SELECT company_name, sector, roce, roe, sales_growth,
+                          debt_to_equity, pe_ratio, market_cap
+                   FROM pos_universe WHERE ticker = ?""",
+                (ticker.replace(".NS", "").replace(".BO", ""),),
+            ).fetchone()
+            return dict(row) if row else {}
+    except Exception:
+        return {}
+
+
+def _cached_research(ticker: str, concall_date) -> dict | None:
+    """Reuse a stored analyst result if it's for the same concall and still fresh."""
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM pos_research WHERE ticker = ?",
+                (ticker.replace(".NS", "").replace(".BO", ""),),
+            ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    r = dict(row)
+    if concall_date and r.get("concall_date") != concall_date:
+        return None
+    try:
+        researched = datetime.fromisoformat(r["researched_at"])
+        if datetime.now(IST) - researched > timedelta(days=POSITIONAL_CONCALL_CACHE_DAYS):
+            return None
+    except Exception:
+        pass
+    return {
+        "verdict": r.get("verdict", "PROCEED"),
+        "outlook": r.get("outlook", "NEUTRAL"),
+        "management_score": r.get("management_score"),
+        "thesis": r.get("thesis", ""),
+        "key_positives": json.loads(r.get("key_positives") or "[]"),
+        "key_risks": json.loads(r.get("key_risks") or "[]"),
+        "guidance": r.get("guidance", ""),
+        "confidence": r.get("confidence", 1.0),
+    }
+
+
+def _persist_research(ticker: str, material: dict, res: dict) -> None:
+    try:
+        from db.models import upsert_pos_research
+        upsert_pos_research(
+            ticker=ticker.replace(".NS", "").replace(".BO", ""),
+            researched_at=datetime.now(IST).isoformat(),
+            concall_date=material.get("concall_date"),
+            management_score=res.get("management_score"),
+            verdict=res.get("verdict"),
+            outlook=res.get("outlook"),
+            thesis=res.get("thesis", ""),
+            key_positives=json.dumps(res.get("key_positives") or []),
+            key_risks=json.dumps(res.get("key_risks") or []),
+            guidance=res.get("guidance", ""),
+            sources=json.dumps(material.get("sources") or []),
+            confidence=res.get("confidence"),
+        )
+    except Exception as e:
+        log.debug("[research] persist failed for %s: %s", ticker, e)
+
+
+def _update_scan_row(ticker: str, management: float, composite: float,
+                     durability: float, horizon: str) -> None:
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                """UPDATE pos_scans
+                   SET management_pillar = ?, composite_score = ?, score = ?,
+                       durability_score = ?, horizon = ?
+                   WHERE id = (SELECT MAX(id) FROM pos_scans WHERE ticker = ?)""",
+                (management, composite, composite, durability, horizon, ticker),
+            )
+    except Exception as e:
+        log.debug("[research] scan-row update failed for %s: %s", ticker, e)
+
+
+def _analyse(cand: dict, vix_regime: str) -> dict | None:
+    """Gather material + run the analyst (or reuse cache). Returns the verdict dict
+    plus the gathered material under '_material', or None if no material at all."""
+    ticker = cand["ticker"]
+    material = gather_management_material(ticker)
+    if not material.get("available"):
+        return None
+
+    cached = _cached_research(ticker, material.get("concall_date"))
+    if cached is not None:
+        log.info("[research] %s: reusing cached analyst read (concall %s)",
+                 ticker, material.get("concall_date"))
+        cached["_material"] = material
+        return cached
+
+    f = _fundamentals(ticker)
+    digest = _build_digest(material)
+    prompt = (
+        f"Company: {ticker} ({f.get('company_name', 'Unknown')}), sector {f.get('sector', 'Unknown')}.\n"
+        f"Market context — India VIX regime: {vix_regime}.\n\n"
+        f"Fundamentals: ROCE={f.get('roce')}, ROE={f.get('roe')}, 3Y sales growth={f.get('sales_growth')}, "
+        f"D/E={f.get('debt_to_equity')}, PE={f.get('pe_ratio')}.\n"
+        f"Technical scorecard: composite={cand.get('composite_score')}, timing={cand.get('timing_score')}, "
+        f"confluence={cand.get('confluence')} ({cand.get('strategies_fired', '')}), horizon={cand.get('horizon')}.\n\n"
+        f"MANAGEMENT MATERIAL:\n{digest if digest else '(no concall/presentation text available — judge on pros/cons + fundamentals)'}\n\n"
+        f"Judge management outlook and output the JSON verdict."
+    )
+    res = call_json(prompt=prompt, schema=_SCHEMA, system=_SYSTEM_PROMPT,
+                    model=LLM_VETO_MODEL, max_tokens=600, caller="research")
+    if res is None:
+        return None
+    res["_material"] = material
+    return res
 
 
 def run_positional_llm_research(candidates: list[dict], vix_value: float = 0.0) -> list[dict]:
+    """Research candidates (BUY setups + LONG_TERM watch), fold the management
+    pillar into each scorecard, persist the thesis, and return the buy pool.
+
+    The returned list is the tradeable pool: candidates whose alert_type is BUY
+    and that were not vetoed (SKIP / management below the veto floor), sorted by
+    the updated composite. LONG_TERM candidates are researched and persisted for
+    the dashboard but never returned for buying.
+
+    Fails open: on disabled/empty/LLM-down it returns the BUY candidates as-is.
     """
-    Evaluate positional candidates using LLM-based VCP research.
-    Filters out candidates that receive a "SKIP" verdict.
-    Updates candidate dicts in-place with 'llm_verdict' and 'llm_reason' fields.
-    
-    Fails open: returns all candidates if LLM research is disabled or fails.
-    """
-    import config
-    llm_enabled = config.POSITIONAL_LLM_RESEARCH_ENABLED
+    llm_enabled = config.POSITIONAL_LLM_RESEARCH_ENABLED and config.POSITIONAL_CONCALL_RESEARCH_ENABLED
     try:
         with get_conn() as conn:
             row = conn.execute(
                 "SELECT positional_llm_research_enabled FROM bot_control WHERE id = 1"
             ).fetchone()
             if row and "positional_llm_research_enabled" in row.keys():
-                llm_enabled = bool(row["positional_llm_research_enabled"])
+                llm_enabled = llm_enabled and bool(row["positional_llm_research_enabled"])
     except Exception as e:
-        log.warning("[llm_research] Could not fetch positional_llm_research_enabled from bot_control: %s", e)
+        log.warning("[research] could not read bot_control flag: %s", e)
 
+    buy_pool_passthrough = [c for c in candidates if c.get("alert_type") == "BUY"]
     if not llm_enabled:
-        log.info("[llm_research] Positional LLM research is disabled. Running in technical mode.")
-        return candidates
-
+        log.info("[research] management research disabled — technical mode.")
+        return buy_pool_passthrough
     if not candidates:
         return []
 
-    log.info("[llm_research] Running LLM VCP research on %d candidates (India VIX: %.1f)...", len(candidates), vix_value)
-    
-    # Cap research to top 10 candidates to keep cycle execution speed reasonable
-    limit = 10
-    research_candidates = candidates[:limit]
-    remaining_candidates = candidates[limit:]
-
-    final_candidates = []
-
-    # Map VIX levels to qualitative regimes
     if vix_value <= 15.0:
-        vix_regime = "LOW / AGGRESSIVE (ideal for breakouts)"
+        vix_regime = "LOW / supportive"
     elif vix_value <= 20.0:
-        vix_regime = "MODERATE / NORMAL (caution on extensions)"
+        vix_regime = "MODERATE / normal"
     else:
-        vix_regime = "HIGH / VOLATILE (frequent false breakouts - be very strict!)"
+        vix_regime = "HIGH / volatile — be stricter"
 
-    for cand in research_candidates:
+    researched = candidates[:POSITIONAL_RESEARCH_LIMIT]
+    overflow = candidates[POSITIONAL_RESEARCH_LIMIT:]
+    log.info("[research] analysing %d candidates (VIX %.1f, %s)...",
+             len(researched), vix_value, vix_regime)
+
+    for cand in researched:
         ticker = cand["ticker"]
-        price = cand["price"]
-        score = cand["score"]
-        trend_template = cand.get("trend_template", 1)
-        vcp_detected = cand.get("vcp_detected", 1)
-        vcp_strength = cand.get("vcp_strength", 0.0)
-        proximity = cand.get("proximity_52w_pct", 0.0)
-        atr_pct = cand.get("atr_pct", 0.0)
-
-        # 1. Fetch fundamental metrics from pos_universe
-        fundamentals = {}
         try:
-            with get_conn() as conn:
-                row = conn.execute(
-                    """SELECT company_name, sector, roce, roe, sales_growth, debt_to_equity, pe_ratio, market_cap 
-                       FROM pos_universe WHERE ticker = ?""",
-                    (ticker,)
-                ).fetchone()
-                if row:
-                    fundamentals = dict(row)
+            res = _analyse(cand, vix_regime)
         except Exception as e:
-            log.warning("[llm_research] Could not fetch fundamentals for %s: %s", ticker, e)
+            log.warning("[research] analysis errored for %s: %s — failing open", ticker, e)
+            res = None
 
-        company_name = fundamentals.get("company_name", "Unknown")
-        sector = fundamentals.get("sector", "Unknown")
-        roce = fundamentals.get("roce")
-        roe = fundamentals.get("roe")
-        sales_growth = fundamentals.get("sales_growth")
-        de = fundamentals.get("debt_to_equity")
-        pe = fundamentals.get("pe_ratio")
-        mcap = fundamentals.get("market_cap")
-
-        # Format prompt
-        prompt = (
-            f"Evaluate ticker {ticker} ({company_name}) in sector {sector} for a positional VCP trade.\n\n"
-            f"Market Context:\n"
-            f"  - India VIX: {vix_value:.1f} ({vix_regime})\n\n"
-            f"Technical Setup:\n"
-            f"  - Current Price: ₹{price:,.2f}\n"
-            f"  - Technical Score: {score:.1f}/100\n"
-            f"  - Trend Template Passed: {'YES' if trend_template else 'NO'}\n"
-            f"  - VCP Contraction Pattern Detected: {'YES' if vcp_detected else 'NO'} (Strength: {vcp_strength:.1f})\n"
-            f"  - Proximity to 52W High: {proximity:.1f}% below high\n"
-            f"  - Volatility (10-day ATR%): {atr_pct:.2f}%\n\n"
-            f"Fundamental Metrics:\n"
-            f"  - Market Cap: ₹{mcap:,.1f} Cr if available\n"
-            f"  - ROCE: {f'{roce:.1f}%' if roce is not None else 'N/A'}\n"
-            f"  - ROE: {f'{roe:.1f}%' if roe is not None else 'N/A'}\n"
-            f"  - 3Y Sales Growth: {f'{sales_growth:.1f}%' if sales_growth is not None else 'N/A'}\n"
-            f"  - Debt/Equity Ratio: {f'{de:.2f}' if de is not None else 'N/A'}\n"
-            f"  - PE Ratio: {f'{pe:.1f}' if pe is not None else 'N/A'}\n\n"
-            f"Assess structural breakout health: \n"
-            f"1. Is the technical base well-tightened (high VCP strength)?\n"
-            f"2. Are growth metrics solid and D/E low enough to protect capital?\n"
-            f"3. Does the general market volatility (VIX) support opening this position?\n\n"
-            f"Output ONLY the JSON object."
-        )
-
-        log.info("[llm_research] Calling LLM research for %s...", ticker)
-        result = call_json(
-            prompt=prompt,
-            schema=_SCHEMA,
-            system=_SYSTEM_PROMPT,
-            model=LLM_VETO_MODEL,
-            max_tokens=350,
-            caller="veto"
-        )
-
-        if result is None:
-            log.warning("[llm_research] LLM research failed or returned None for %s. Failing open.", ticker)
+        if res is None:
             cand["llm_verdict"] = "PROCEED"
-            cand["llm_reason"] = "LLM unavailable; failed open"
-            final_candidates.append(cand)
+            cand["llm_reason"] = "No management data / LLM unavailable; failed open"
             continue
 
-        verdict = result.get("verdict", "PROCEED")
-        reason = result.get("reason", "Veto failed open")
-        confidence = result.get("confidence", 1.0)
-        
-        log.info("[llm_research] Candidate %s verdict: %s (Reason: %s, Confidence: %.1f)", ticker, verdict, reason, confidence)
-        
+        material = res.pop("_material", {})
+        mgmt = res.get("management_score")
+        verdict = res.get("verdict", "PROCEED")
+        outlook = res.get("outlook", "NEUTRAL")
+        thesis = res.get("thesis", "")
+
         cand["llm_verdict"] = verdict
-        cand["llm_reason"] = reason
+        cand["llm_reason"] = thesis or f"Management outlook: {outlook}"
+        cand["management_pillar"] = mgmt
+        cand["outlook"] = outlook
+        cand["thesis"] = thesis
 
-        if verdict == "SKIP":
-            log.info("[llm_research] VETO / SKIPPED: Removing %s from buy candidate pool.", ticker)
+        # Fold management into the scorecard (timing unchanged → buy/no-buy stable,
+        # but durability can upgrade POSITIONAL → BOTH).
+        if mgmt is not None:
+            rb = scorer.recompute(
+                timing=cand.get("timing_score"),
+                quality=cand.get("quality_pillar"),
+                valuation=cand.get("valuation_pillar"),
+                momentum=cand.get("momentum_pillar"),
+                sentiment=cand.get("sentiment_pillar"),
+                management=mgmt,
+            )
+            cand["composite_score"] = rb["composite"]
+            cand["score"] = rb["composite"]
+            cand["durability_score"] = rb["durability"]
+            cand["horizon"] = rb["horizon"]
+            _update_scan_row(ticker, mgmt, rb["composite"], rb["durability"], rb["horizon"])
+
+        _persist_research(ticker, material, res)
+        log.info("[research] %s verdict=%s outlook=%s mgmt=%s horizon=%s",
+                 ticker, verdict, outlook, mgmt, cand.get("horizon"))
+
+    # Overflow beyond the research cap is processed technically.
+    for c in overflow:
+        c.setdefault("llm_verdict", "PROCEED")
+        c.setdefault("llm_reason", "Beyond research cap; processed technically")
+
+    # Build the tradeable buy pool: BUY setups not vetoed.
+    buy_pool = []
+    for c in (researched + overflow):
+        if c.get("alert_type") != "BUY":
             continue
-        elif verdict == "REDUCE":
-            log.info("[llm_research] RISK BUFFER: Candidate %s approved with REDUCED sizing (50%% allocation).", ticker)
-            # Reduce score slightly so PROCEED candidates are prioritized first
-            cand["score"] = max(40.0, cand["score"] - 5.0)
-            final_candidates.append(cand)
-        else:
-            final_candidates.append(cand)
+        mgmt = c.get("management_pillar")
+        vetoed = c.get("llm_verdict") == "SKIP" or (
+            mgmt is not None and mgmt <= POSITIONAL_MANAGEMENT_VETO_SCORE
+        )
+        if vetoed:
+            log.info("[research] VETO %s (verdict=%s mgmt=%s)",
+                     c["ticker"], c.get("llm_verdict"), mgmt)
+            c["llm_verdict"] = "SKIP"
+            continue
+        if c.get("llm_verdict") == "REDUCE":
+            c["score"] = max(40.0, c.get("score", 50.0) - 5.0)
+        buy_pool.append(c)
 
-    # Re-sort finalized list by updated scores descending
-    final_candidates.sort(key=lambda x: x["score"], reverse=True)
-    
-    # Re-attach the candidates that exceeded our research limit (processed without LLM)
-    for c in remaining_candidates:
-        c["llm_verdict"] = "PROCEED"
-        c["llm_reason"] = "Exceeded EOD research cap; processed technically"
-        final_candidates.append(c)
-
-    log.info("[llm_research] Finished LLM research. Candidates available: %d → %d", len(candidates), len(final_candidates))
-    return final_candidates
+    buy_pool.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    log.info("[research] done — %d BUY candidates cleared for entry", len(buy_pool))
+    return buy_pool

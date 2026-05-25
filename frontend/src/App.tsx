@@ -374,7 +374,23 @@ interface PositionalScanResult {
   valuation_pillar: number | null;
   momentum_pillar: number | null;
   sentiment_pillar: number | null;
+  management_pillar: number | null;
   est_hold_days: number;
+}
+
+interface PositionalResearch {
+  ticker: string;
+  researched_at: string;
+  concall_date: string;
+  management_score: number | null;
+  verdict: string;
+  outlook: string;
+  thesis: string;
+  key_positives: string[];
+  key_risks: string[];
+  guidance: string;
+  sources: string[];
+  confidence: number | null;
 }
 
 interface PositionalPosition {
@@ -439,6 +455,18 @@ const renderHorizonBadge = (horizon: string) => {
   const m = map[h];
   if (!m) return <span className="text-slate-600">—</span>;
   return <span className={`px-2 py-0.5 rounded text-[9px] font-bold border ${m.cls}`}>{m.label}</span>;
+};
+
+const renderOutlookBadge = (outlook: string) => {
+  const o = (outlook || "").toUpperCase();
+  const map: Record<string, string> = {
+    POSITIVE: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+    NEUTRAL: "bg-slate-700/20 text-slate-400 border-slate-700/30",
+    MIXED: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+    NEGATIVE: "bg-rose-500/10 text-rose-400 border-rose-500/30",
+  };
+  if (!map[o]) return null;
+  return <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${map[o]}`}>{o}</span>;
 };
 
 const renderFiredStrategies = (strategiesFired: string, reason: string) => {
@@ -510,6 +538,7 @@ export default function App() {
   const [positionalStatus, setPositionalStatus] = useState<PositionalStatus | null>(null);
   const [positionalRegime, setPositionalRegime] = useState<PositionalRegime | null>(null);
   const [positionalScanResults, setPositionalScanResults] = useState<PositionalScanResult[]>([]);
+  const [positionalResearch, setPositionalResearch] = useState<Record<string, PositionalResearch>>({});
   const [positionalPositions, setPositionalPositions] = useState<PositionalPosition[]>([]);
   const [uploadProgress, setUploadProgress] = useState<string>("");
 
@@ -680,6 +709,14 @@ export default function App() {
           const resScan = await fetch(`${API_BASE}/api/positional/scan-results`);
           const scanData = await resScan.json();
           setPositionalScanResults(scanData);
+
+          try {
+            const resRes = await fetch(`${API_BASE}/api/positional/research`);
+            const researchData: PositionalResearch[] = await resRes.json();
+            const byTicker: Record<string, PositionalResearch> = {};
+            (researchData || []).forEach((r) => { byTicker[r.ticker] = r; });
+            setPositionalResearch(byTicker);
+          } catch { /* research is optional */ }
 
           const resPos = await fetch(`${API_BASE}/api/positional/positions`);
           const posData = await resPos.json();
@@ -2495,13 +2532,14 @@ export default function App() {
                         <th className="py-3 px-4 text-right">ATR %</th>
                         <th className="py-3 px-4 text-center">Composite</th>
                         <th className="py-3 px-4 text-center">Timing / Durab</th>
+                        <th className="py-3 px-4 text-center">Mgmt / Outlook</th>
                         <th className="py-3 px-4">Reason Details</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-850">
                       {positionalScanResults.length === 0 ? (
                         <tr>
-                          <td colSpan={13} className="py-8 text-center text-slate-500">
+                          <td colSpan={14} className="py-8 text-center text-slate-500">
                             No scan candidates populated yet. Ensure whitelists are uploaded!
                           </td>
                         </tr>
@@ -2562,6 +2600,17 @@ export default function App() {
                               <span className="text-slate-600"> / </span>
                               <span className="text-amber-400">{scan.durability_score != null ? scan.durability_score.toFixed(0) : "—"}</span>
                             </td>
+                            {(() => {
+                              const research = positionalResearch[scan.ticker.replace(/\.(NS|BO)$/, "")];
+                              return (
+                                <td className="py-3 px-4 text-center whitespace-nowrap" title={research?.thesis || ""}>
+                                  <span className="text-teal-400 font-bold mr-1">
+                                    {scan.management_pillar != null ? scan.management_pillar.toFixed(0) : "—"}
+                                  </span>
+                                  {research ? renderOutlookBadge(research.outlook) : null}
+                                </td>
+                              );
+                            })()}
                             <td className="py-3 px-4 text-slate-400 max-w-[200px] truncate" title={scan.reason}>{scan.reason}</td>
                           </tr>
                         ))

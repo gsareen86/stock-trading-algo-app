@@ -334,6 +334,7 @@ CREATE TABLE IF NOT EXISTS pos_scans (
     valuation_pillar  REAL,
     momentum_pillar   REAL,
     sentiment_pillar  REAL,
+    management_pillar REAL,
     est_hold_days     INTEGER
 );
 
@@ -380,6 +381,21 @@ CREATE TABLE IF NOT EXISTS pos_watchlist (
     exit_date       TEXT,
     exit_price      REAL,
     reentry_eligible INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS pos_research (
+    ticker           TEXT PRIMARY KEY,
+    researched_at    TEXT NOT NULL,
+    concall_date     TEXT,
+    management_score REAL,
+    verdict          TEXT,
+    outlook          TEXT,
+    thesis           TEXT,
+    key_positives    TEXT,
+    key_risks        TEXT,
+    guidance         TEXT,
+    sources          TEXT,
+    confidence       REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
@@ -661,6 +677,7 @@ CREATE TABLE IF NOT EXISTS pos_scans (
     valuation_pillar  DOUBLE PRECISION,
     momentum_pillar   DOUBLE PRECISION,
     sentiment_pillar  DOUBLE PRECISION,
+    management_pillar DOUBLE PRECISION,
     est_hold_days     INTEGER
 );
 
@@ -707,6 +724,21 @@ CREATE TABLE IF NOT EXISTS pos_watchlist (
     exit_date        TEXT,
     exit_price       DOUBLE PRECISION,
     reentry_eligible INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS pos_research (
+    ticker           TEXT PRIMARY KEY,
+    researched_at    TEXT NOT NULL,
+    concall_date     TEXT,
+    management_score DOUBLE PRECISION,
+    verdict          TEXT,
+    outlook          TEXT,
+    thesis           TEXT,
+    key_positives    TEXT,
+    key_risks        TEXT,
+    guidance         TEXT,
+    sources          TEXT,
+    confidence       DOUBLE PRECISION
 );
 
 CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
@@ -945,6 +977,7 @@ def _migrate_pos_scans_scorecard_columns(conn) -> None:
         ("valuation_pillar", "REAL", "DOUBLE PRECISION"),
         ("momentum_pillar",  "REAL", "DOUBLE PRECISION"),
         ("sentiment_pillar", "REAL", "DOUBLE PRECISION"),
+        ("management_pillar", "REAL", "DOUBLE PRECISION"),
         ("est_hold_days",    "INTEGER", "INTEGER"),
     )
     if BACKEND == "sqlite":
@@ -1050,6 +1083,33 @@ def insert_returning_id(conn, sql: str, params: Iterable[Any] = ()) -> int:
         raise RuntimeError("INSERT ... RETURNING id produced no row")
     # _Row supports both dict access and int indexing
     return int(row["id"]) if "id" in row else int(row[0])
+
+
+def upsert_pos_research(*, ticker: str, researched_at: str, concall_date,
+                        management_score, verdict, outlook, thesis,
+                        key_positives, key_risks, guidance, sources, confidence) -> None:
+    """Insert or update the latest management-outlook research for a ticker."""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO pos_research
+               (ticker, researched_at, concall_date, management_score, verdict,
+                outlook, thesis, key_positives, key_risks, guidance, sources, confidence)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT (ticker) DO UPDATE SET
+                   researched_at = excluded.researched_at,
+                   concall_date = excluded.concall_date,
+                   management_score = excluded.management_score,
+                   verdict = excluded.verdict,
+                   outlook = excluded.outlook,
+                   thesis = excluded.thesis,
+                   key_positives = excluded.key_positives,
+                   key_risks = excluded.key_risks,
+                   guidance = excluded.guidance,
+                   sources = excluded.sources,
+                   confidence = excluded.confidence""",
+            (ticker, researched_at, concall_date, management_score, verdict,
+             outlook, thesis, key_positives, key_risks, guidance, sources, confidence),
+        )
 
 
 def query_df(sql: str, params: Iterable[Any] = ()):

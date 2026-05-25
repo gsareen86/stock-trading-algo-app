@@ -632,13 +632,18 @@ def run_eod_scan(force: bool = False) -> dict:
     from positional.scanner import run_eod_scan as _scan
     scan_results = _scan()
     buy_alerts_scanned = [r for r in scan_results if r["alert_type"] == "BUY"]
+    longterm_watch = [r for r in scan_results if r.get("horizon") == "LONG_TERM"]
 
-    # Step 5: LLM Research
+    # Step 5: Management-outlook research (analyst pass over BUY setups +
+    # LONG_TERM watch candidates). Returns only the cleared buy pool; LONG_TERM
+    # names are researched + persisted for the dashboard but never auto-bought.
     from config import POSITIONAL_LLM_RESEARCH_ENABLED
     buy_candidates = list(buy_alerts_scanned)
     if POSITIONAL_LLM_RESEARCH_ENABLED:
         from positional.research import run_positional_llm_research
-        buy_candidates = run_positional_llm_research(buy_candidates, vix_value)
+        buy_candidates = run_positional_llm_research(
+            buy_alerts_scanned + longterm_watch, vix_value
+        )
 
     buy_alerts_taken: list[dict] = []
     processed_buy_tickers = set()

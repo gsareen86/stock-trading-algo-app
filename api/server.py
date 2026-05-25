@@ -1247,11 +1247,45 @@ def get_positional_scan_results():
                 "valuation_pillar": clean_float(r.get("valuation_pillar")),
                 "momentum_pillar": clean_float(r.get("momentum_pillar")),
                 "sentiment_pillar": clean_float(r.get("sentiment_pillar")),
+                "management_pillar": clean_float(r.get("management_pillar")),
                 "est_hold_days": int(clean_float(r.get("est_hold_days")) or 0),
             })
         return results
     except Exception as e:
         log.error("Error in get_positional_scan_results: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/positional/research")
+def get_positional_research():
+    """Latest management-outlook research (concall thesis) per ticker."""
+    try:
+        df = query_df("SELECT * FROM pos_research ORDER BY researched_at DESC LIMIT 100")
+        if df.empty:
+            return []
+        results = []
+        for _, r in df.iterrows():
+            def _json_list(v):
+                try:
+                    return json.loads(v) if v else []
+                except Exception:
+                    return []
+            results.append({
+                "ticker": r["ticker"],
+                "researched_at": to_ist_str(r["researched_at"]),
+                "concall_date": clean_str(r.get("concall_date"), default=""),
+                "management_score": clean_float(r.get("management_score")),
+                "verdict": clean_str(r.get("verdict"), default=""),
+                "outlook": clean_str(r.get("outlook"), default=""),
+                "thesis": clean_str(r.get("thesis"), default=""),
+                "key_positives": _json_list(r.get("key_positives")),
+                "key_risks": _json_list(r.get("key_risks")),
+                "guidance": clean_str(r.get("guidance"), default=""),
+                "sources": _json_list(r.get("sources")),
+                "confidence": clean_float(r.get("confidence")),
+            })
+        return results
+    except Exception as e:
+        log.error("Error in get_positional_research: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/positional/positions")

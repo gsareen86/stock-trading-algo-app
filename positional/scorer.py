@@ -127,6 +127,32 @@ def classify_horizon(timing: float, durability: float) -> str:
     return HORIZON_AVOID
 
 
+def recompute(
+    *,
+    timing: Optional[float],
+    quality: Optional[float] = None,
+    valuation: Optional[float] = None,
+    momentum: Optional[float] = None,
+    sentiment: Optional[float] = None,
+    management: Optional[float] = None,
+) -> dict:
+    """Re-blend composite/durability/horizon from already-computed pillar values.
+
+    Used by the Phase-3 research step to fold in the management pillar without
+    re-running the strategies. Timing (Axis A) is unchanged, so a buy/no-buy
+    decision can't flip here — but durability can cross the threshold and upgrade
+    a POSITIONAL candidate to BOTH.
+    """
+    pillars: Dict[str, Optional[float]] = {
+        "technical": timing, "quality": quality, "valuation": valuation,
+        "momentum": momentum, "sentiment": sentiment, "management": management,
+    }
+    composite = _blend(pillars, POSITIONAL_PILLAR_WEIGHTS)
+    durability = _blend(pillars, POSITIONAL_DURABILITY_WEIGHTS)
+    horizon = classify_horizon(timing or 0.0, durability)
+    return {"composite": composite, "durability": durability, "horizon": horizon}
+
+
 def build_scorecard(
     ticker: str,
     price: float,

@@ -18,6 +18,9 @@ beautifulsoup4>=4.12.0
 requests>=2.31.0
 lxml>=4.9.0
 
+# Concall transcript / investor presentation PDF text extraction (Phase-3 research)
+pypdf>=4.0.0
+
 # Sentiment analysis
 # vaderSentiment is kept as a fallback if FinBERT load fails.
 vaderSentiment>=3.3.2

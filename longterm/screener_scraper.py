@@ -537,6 +537,111 @@ def _parse_shareholding_section(soup: BeautifulSoup) -> List[Dict]:
     return records
 
 
+# ---------- Qualitative blocks: Pros/Cons + Documents (concalls) ----------
+
+from urllib.parse import urljoin
+
+_MONTH_YEAR_RE = re.compile(
+    r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b", re.I
+)
+
+
+def _parse_pros_cons(soup: BeautifulSoup) -> Dict[str, List[str]]:
+    """Screener's auto-generated Pros / Cons bullet lists.
+
+    Markup: ``<div class="company-info"> ... <div class="pros"><ul><li>...</ul>
+    <div class="cons"><ul><li>...</ul>``. We select defensively by class so a
+    layout tweak that moves the wrapper still works.
+    """
+    out: Dict[str, List[str]] = {"pros": [], "cons": []}
+    for key in ("pros", "cons"):
+        el = soup.select_one(f"div.{key}") or soup.find(class_=key)
+        if el:
+            out[key] = [li.get_text(" ", strip=True)
+                        for li in el.select("li") if li.get_text(strip=True)]
+    return out
+
+
+def _nearest_period(node) -> Optional[str]:
+    """Find a 'Mon YYYY' label on or near a concall row node."""
+    txt = node.get_text(" ", strip=True) if node else ""
+    m = _MONTH_YEAR_RE.search(txt)
+    if m:
+        return m.group(0)
+    # look back through previous siblings for a date heading
+    prev = node
+    for _ in range(4):
+        prev = prev.find_previous(string=_MONTH_YEAR_RE) if prev else None
+        if prev:
+            m = _MONTH_YEAR_RE.search(str(prev))
+            if m:
+                return m.group(0)
+        else:
+            break
+    return None
+
+
+def _parse_documents(soup: BeautifulSoup, base_url: str) -> Dict:
+    """Parse ``<section id="documents">`` for concall transcript/PPT/notes links,
+    annual reports and recent announcements. All defensive: missing → empty.
+    """
+    out: Dict = {"concalls": [], "annual_reports": [], "announcements": []}
+    sec = soup.find(id="documents")
+    if sec is None:
+        return out
+
+    # The Concalls sub-list. Screener groups it under a heading containing
+    # "Concall"; each row carries Transcript / Notes / PPT anchors.
+    concall_box = None
+    for h in sec.find_all(["h2", "h3", "h4", "div", "span"]):
+        if "concall" in h.get_text(" ", strip=True).lower():
+            concall_box = h.find_parent(class_="documents") or h.parent
+            break
+    search_root = concall_box or sec
+    for li in search_root.select("li"):
+        links = li.find_all("a")
+        if not links:
+            continue
+        row = {"date": _nearest_period(li), "transcript_url": None,
+               "ppt_url": None, "notes_url": None}
+        for a in links:
+            label = a.get_text(" ", strip=True).lower()
+            href = a.get("href") or ""
+            if not href:
+                continue
+            full = urljoin(base_url, href)
+            if "transcript" in label:
+                row["transcript_url"] = full
+            elif "ppt" in label or "presentation" in label:
+                row["ppt_url"] = full
+            elif "notes" in label:
+                row["notes_url"] = full
+        if row["transcript_url"] or row["ppt_url"] or row["notes_url"]:
+            out["concalls"].append(row)
+
+    # Annual report PDFs
+    for a in sec.select("a"):
+        label = a.get_text(" ", strip=True).lower()
+        href = a.get("href") or ""
+        if href and ("annual report" in label or "from bse" in label and "annual" in label):
+            out["annual_reports"].append({"label": a.get_text(" ", strip=True),
+                                          "url": urljoin(base_url, href)})
+
+    # Recent announcements (titles only — lightweight, high-signal)
+    ann_box = None
+    for h in sec.find_all(["h2", "h3", "h4"]):
+        if "announce" in h.get_text(" ", strip=True).lower():
+            ann_box = h.find_parent(class_="documents") or h.parent
+            break
+    if ann_box:
+        for a in ann_box.select("a"):
+            t = a.get_text(" ", strip=True)
+            if t and len(t) > 4:
+                out["announcements"].append(t)
+    out["announcements"] = out["announcements"][:12]
+    return out
+
+
 # ---------- Public API ----------
 
 
@@ -566,16 +671,25 @@ def _parse_html(ticker: str, html: str, used_view: str) -> Dict:
     if not sh:
         warnings.append("shareholding section missing")
 
+    base_url = _view_to_url(ticker, used_view)
+    pros_cons = _parse_pros_cons(soup)
+    documents = _parse_documents(soup, base_url)
+
     return {
         "ticker": ticker.upper(),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "url": _view_to_url(ticker, used_view),
+        "url": base_url,
         "view": used_view,
         **top,
         **pl,
         **cf,
         **rt,
         "shareholding_quarterly": sh,
+        "pros": pros_cons["pros"],
+        "cons": pros_cons["cons"],
+        "concalls": documents["concalls"],
+        "annual_reports": documents["annual_reports"],
+        "announcements": documents["announcements"],
         "warnings": warnings,
     }
 

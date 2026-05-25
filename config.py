@@ -335,21 +335,34 @@ POSITIONAL_STRATEGY_WEIGHTS = {
 # one composite. Management-outlook is added by the Phase-3 research engine; until
 # then the composite renormalises over the pillars that are present.
 POSITIONAL_PILLAR_WEIGHTS = {
-    "technical":  0.40,   # confluence of the 4 strategies (Axis A — timing)
-    "quality":    0.20,   # lt_quality.total_score        (Axis B — durability)
+    "technical":  0.35,   # confluence of the 4 strategies (Axis A — timing)
+    "quality":    0.18,   # lt_quality.total_score        (Axis B — durability)
     "valuation":  0.10,   # PEG-style from pos_universe    (Axis B — durability)
-    "momentum":   0.15,   # relative strength vs NIFTY
-    "sentiment":  0.15,   # rolling news sentiment
+    "momentum":   0.13,   # relative strength vs NIFTY
+    "sentiment":  0.12,   # rolling news sentiment
+    "management": 0.12,   # Phase-3 concall/outlook read   (Axis B — durability)
 }
 
 # Horizon classification (two-axis). Axis A = technical timing pillar; Axis B =
-# durability = weighted blend of quality + valuation (+ management outlook later).
-POSITIONAL_DURABILITY_WEIGHTS = {"quality": 0.60, "valuation": 0.40}
+# durability = weighted blend of quality + valuation + management outlook.
+POSITIONAL_DURABILITY_WEIGHTS = {"quality": 0.45, "valuation": 0.30, "management": 0.25}
 POSITIONAL_TIMING_STRONG     = 60.0   # Axis A ≥ this → a valid entry exists now
 POSITIONAL_DURABILITY_STRONG = 60.0   # Axis B ≥ this → business can compound
 # Each additional strategy that agrees adds this many points to the technical
 # pillar (capped at 100) — rewards confluence over a single lone signal.
 POSITIONAL_CONFLUENCE_BONUS  = 8.0
+
+# ── Phase-3 management-outlook research (Screener.in concalls) ───────────────
+# A buy-side-analyst step: scrape Screener.in Pros/Cons + announcements and the
+# latest concall transcript / investor presentation PDFs, then have the local
+# LLM judge management outlook (feeds the "management" pillar) and a verdict.
+POSITIONAL_CONCALL_RESEARCH_ENABLED = os.environ.get("POSITIONAL_CONCALL_RESEARCH_ENABLED", "True").lower() == "true"
+POSITIONAL_RESEARCH_LIMIT     = int(os.environ.get("POSITIONAL_RESEARCH_LIMIT", "15"))   # candidates researched per run
+POSITIONAL_CONCALL_MAX_PAGES  = int(os.environ.get("POSITIONAL_CONCALL_MAX_PAGES", "40")) # cap PDF pages extracted
+POSITIONAL_RESEARCH_CHUNK_CHARS = int(os.environ.get("POSITIONAL_RESEARCH_CHUNK_CHARS", "12000"))  # map-reduce threshold
+POSITIONAL_CONCALL_CACHE_DAYS = int(os.environ.get("POSITIONAL_CONCALL_CACHE_DAYS", "25"))  # reuse research within this window
+# A management score at/below this vetoes the buy regardless of technicals.
+POSITIONAL_MANAGEMENT_VETO_SCORE = float(os.environ.get("POSITIONAL_MANAGEMENT_VETO_SCORE", "25.0"))
 
 # New positional strategy tunables
 POS_BVM_HALT_ON_BEARISH = True
