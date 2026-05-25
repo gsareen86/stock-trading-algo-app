@@ -1,25 +1,25 @@
+"""Active positional strategies.
+
+The bot trades four positional setups that feed a single confluence scorecard
+(see positional/scorer.py):
+
+  - Minervini Trend Template + VCP   (positional/scanner.py)
+  - Brahma-Vishnu-Mahesh             (multi-year base breakout, top-down)
+  - Fundamental-Technical Momentum   (CANSLIM-style earnings-driven breakout)
+  - Young Momentum                   (1-2-3-4 continuation)
+
+Minervini lives in positional/scanner.py because it predates the BasePositionalStrategy
+interface; the other three implement BasePositionalStrategy here.
+"""
 from positional.strategies.base import BasePositionalStrategy, PositionalSignal
-from positional.strategies.trend_following import TrendFollowingStrategy
-from positional.strategies.breakout_retest import BreakoutRetestStrategy
-from positional.strategies.quality_momentum import QualityMomentumStrategy
-from positional.strategies.vcp_breakout import VCPBreakoutStrategy
-from positional.strategies.sector_rotation import SectorRotationStrategy
-from positional.strategies.mean_reversion import MeanReversionStrategy
-from positional.strategies.earnings_momentum import EarningsMomentumStrategy
 from positional.strategies.brahma_vishnu_mahesh import BrahmaVishnuMaheshStrategy
 from positional.strategies.fun_tech_momentum import FunTechMomentumStrategy
 from positional.strategies.young_momentum import YoungMomentumStrategy
 
 
 def all_positional_strategies() -> list[BasePositionalStrategy]:
+    """The three BasePositionalStrategy implementations (Minervini is run separately)."""
     return [
-        TrendFollowingStrategy(),
-        BreakoutRetestStrategy(),
-        QualityMomentumStrategy(),
-        VCPBreakoutStrategy(),
-        SectorRotationStrategy(),
-        MeanReversionStrategy(),
-        EarningsMomentumStrategy(),
         BrahmaVishnuMaheshStrategy(),
         FunTechMomentumStrategy(),
         YoungMomentumStrategy(),
@@ -28,10 +28,6 @@ def all_positional_strategies() -> list[BasePositionalStrategy]:
 
 __all__ = [
     "BasePositionalStrategy", "PositionalSignal",
-    "TrendFollowingStrategy", "BreakoutRetestStrategy",
-    "QualityMomentumStrategy", "VCPBreakoutStrategy",
-    "SectorRotationStrategy", "MeanReversionStrategy",
-    "EarningsMomentumStrategy",
     "BrahmaVishnuMaheshStrategy", "FunTechMomentumStrategy",
     "YoungMomentumStrategy",
     "all_positional_strategies",

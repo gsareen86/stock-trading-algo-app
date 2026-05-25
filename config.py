@@ -320,18 +320,36 @@ POSITIONAL_MIN_HOLD_DAYS = 3
 POSITIONAL_MAX_HOLD_DAYS = 30
 POSITIONAL_EVENT_GUARD_DAYS = 2
 
+# Weights for the four active positional strategies. Used by the confluence
+# scorer to blend per-strategy BUY scores into one technical pillar. Must cover
+# every strategy.name plus the Minervini key. Need not sum to 1.0 (renormalised).
 POSITIONAL_STRATEGY_WEIGHTS = {
-    "trend_following":       0.05,
-    "breakout_retest":       0.05,
-    "quality_momentum":      0.05,
-    "vcp_breakout":          0.15,
-    "sector_rotation":       0.05,
-    "mean_reversion":        0.02,
-    "earnings_momentum":     0.03,
-    "brahma_vishnu_mahesh":  0.20,
-    "fun_tech_momentum":     0.20,
+    "minervini_vcp":         0.30,   # positional/scanner.py
+    "brahma_vishnu_mahesh":  0.25,
+    "fun_tech_momentum":     0.25,
     "young_momentum":        0.20,
 }
+
+# ── Scorecard: multi-pillar composite + two-axis horizon ────────────────────
+# Every shortlisted stock is scored on independent pillars that are blended into
+# one composite. Management-outlook is added by the Phase-3 research engine; until
+# then the composite renormalises over the pillars that are present.
+POSITIONAL_PILLAR_WEIGHTS = {
+    "technical":  0.40,   # confluence of the 4 strategies (Axis A — timing)
+    "quality":    0.20,   # lt_quality.total_score        (Axis B — durability)
+    "valuation":  0.10,   # PEG-style from pos_universe    (Axis B — durability)
+    "momentum":   0.15,   # relative strength vs NIFTY
+    "sentiment":  0.15,   # rolling news sentiment
+}
+
+# Horizon classification (two-axis). Axis A = technical timing pillar; Axis B =
+# durability = weighted blend of quality + valuation (+ management outlook later).
+POSITIONAL_DURABILITY_WEIGHTS = {"quality": 0.60, "valuation": 0.40}
+POSITIONAL_TIMING_STRONG     = 60.0   # Axis A ≥ this → a valid entry exists now
+POSITIONAL_DURABILITY_STRONG = 60.0   # Axis B ≥ this → business can compound
+# Each additional strategy that agrees adds this many points to the technical
+# pillar (capped at 100) — rewards confluence over a single lone signal.
+POSITIONAL_CONFLUENCE_BONUS  = 8.0
 
 # New positional strategy tunables
 POS_BVM_HALT_ON_BEARISH = True

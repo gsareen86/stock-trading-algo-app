@@ -363,6 +363,18 @@ interface PositionalScanResult {
   score: number;
   alert_type: string;
   reason: string;
+  composite_score: number | null;
+  confluence: number;
+  strategies_fired: string;
+  horizon: string;
+  conviction: string;
+  timing_score: number | null;
+  durability_score: number | null;
+  quality_pillar: number | null;
+  valuation_pillar: number | null;
+  momentum_pillar: number | null;
+  sentiment_pillar: number | null;
+  est_hold_days: number;
 }
 
 interface PositionalPosition {
@@ -384,15 +396,6 @@ interface PositionalPosition {
   notes: string;
   strategy?: string;
 }
-
-const getStrategyFromReason = (reason: string): string => {
-  if (!reason) return "MINERVINI_VCP";
-  const match = reason.match(/^\[([A-Z0-9_]+)\]/i);
-  if (match) {
-    return match[1].toUpperCase();
-  }
-  return "MINERVINI_VCP";
-};
 
 const renderStrategyBadge = (strategy: string) => {
   const norm = (strategy || "").toUpperCase();
@@ -423,6 +426,34 @@ const renderStrategyBadge = (strategy: string) => {
         </span>
       );
   }
+};
+
+const renderHorizonBadge = (horizon: string) => {
+  const h = (horizon || "").toUpperCase();
+  const map: Record<string, { label: string; cls: string }> = {
+    BOTH: { label: "POSITIONAL + LT", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
+    POSITIONAL: { label: "POSITIONAL", cls: "bg-sky-500/10 text-sky-400 border-sky-500/30" },
+    LONG_TERM: { label: "LONG-TERM WATCH", cls: "bg-amber-500/10 text-amber-400 border-amber-500/30" },
+    AVOID: { label: "AVOID", cls: "bg-slate-700/20 text-slate-500 border-slate-700/30" },
+  };
+  const m = map[h];
+  if (!m) return <span className="text-slate-600">—</span>;
+  return <span className={`px-2 py-0.5 rounded text-[9px] font-bold border ${m.cls}`}>{m.label}</span>;
+};
+
+const renderFiredStrategies = (strategiesFired: string, reason: string) => {
+  const fired = (strategiesFired || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (fired.length === 0) {
+    // No entry trigger fired (e.g. a long-term watch candidate)
+    return reason ? <span className="text-slate-600">—</span> : renderStrategyBadge("MINERVINI_VCP");
+  }
+  return (
+    <div className="flex flex-wrap gap-1 justify-center">
+      {fired.map((s, i) => (
+        <span key={i}>{renderStrategyBadge(s.toUpperCase())}</span>
+      ))}
+    </div>
+  );
 };
 
 
@@ -2453,6 +2484,8 @@ export default function App() {
                     <thead>
                       <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px]">
                         <th className="py-3 px-4">Ticker</th>
+                        <th className="py-3 px-4 text-center">Horizon</th>
+                        <th className="py-3 px-4 text-center">Confluence</th>
                         <th className="py-3 px-4 text-center">Strategy</th>
                         <th className="py-3 px-4">Scanned At</th>
                         <th className="py-3 px-4 text-right">Price</th>
@@ -2460,14 +2493,15 @@ export default function App() {
                         <th className="py-3 px-4 text-center">VCP Detected</th>
                         <th className="py-3 px-4 text-right">52W Proximity %</th>
                         <th className="py-3 px-4 text-right">ATR %</th>
-                        <th className="py-3 px-4 text-center">Setup Score</th>
+                        <th className="py-3 px-4 text-center">Composite</th>
+                        <th className="py-3 px-4 text-center">Timing / Durab</th>
                         <th className="py-3 px-4">Reason Details</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-850">
                       {positionalScanResults.length === 0 ? (
                         <tr>
-                          <td colSpan={10} className="py-8 text-center text-slate-500">
+                          <td colSpan={13} className="py-8 text-center text-slate-500">
                             No scan candidates populated yet. Ensure whitelists are uploaded!
                           </td>
                         </tr>
@@ -2475,8 +2509,18 @@ export default function App() {
                         positionalScanResults.map((scan) => (
                           <tr key={scan.id} className="hover:bg-slate-900/20">
                             <td className="py-3 px-4 text-slate-200 font-bold">{scan.ticker}</td>
+                            <td className="py-3 px-4 text-center">{renderHorizonBadge(scan.horizon)}</td>
+                            <td className="py-3 px-4 text-center" title={scan.strategies_fired || ""}>
+                              {scan.confluence > 0 ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                                  {scan.confluence}× {scan.conviction ? scan.conviction.toUpperCase() : ""}
+                                </span>
+                              ) : (
+                                <span className="text-slate-600">—</span>
+                              )}
+                            </td>
                             <td className="py-3 px-4 text-center">
-                              {renderStrategyBadge(getStrategyFromReason(scan.reason))}
+                              {renderFiredStrategies(scan.strategies_fired, scan.reason)}
                             </td>
                             <td className="py-3 px-4 text-slate-500">{scan.scanned_at}</td>
                             <td className="py-3 px-4 text-right text-slate-300">
@@ -2510,7 +2554,14 @@ export default function App() {
                             <td className="py-3 px-4 text-right text-purple-400">
                               {scan.atr_pct ? `${scan.atr_pct.toFixed(1)}%` : "—"}
                             </td>
-                            <td className="py-3 px-4 text-center text-indigo-400 font-bold">{scan.score}</td>
+                            <td className="py-3 px-4 text-center text-indigo-400 font-bold">
+                              {scan.composite_score != null ? scan.composite_score : scan.score}
+                            </td>
+                            <td className="py-3 px-4 text-center text-slate-400 whitespace-nowrap">
+                              <span className="text-sky-400">{scan.timing_score != null ? scan.timing_score.toFixed(0) : "—"}</span>
+                              <span className="text-slate-600"> / </span>
+                              <span className="text-amber-400">{scan.durability_score != null ? scan.durability_score.toFixed(0) : "—"}</span>
+                            </td>
                             <td className="py-3 px-4 text-slate-400 max-w-[200px] truncate" title={scan.reason}>{scan.reason}</td>
                           </tr>
                         ))

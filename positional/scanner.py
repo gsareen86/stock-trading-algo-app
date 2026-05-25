@@ -291,6 +291,79 @@ def scan_ticker(ticker: str, df: pd.DataFrame) -> Optional[dict]:
     }
 
 
+def _minervini_to_signal(ticker: str, m: dict):
+    """Wrap a Minervini scan_ticker() dict as a PositionalSignal for the scorer."""
+    from positional.strategies.base import PositionalSignal
+    action = "BUY" if m["alert_type"] == "BUY" else "HOLD"
+    strong = bool(m["trend_template"]) and bool(m["vcp_detected"]) and m["score"] >= 80
+    return PositionalSignal(
+        ticker=ticker,
+        action=action,
+        strategy="minervini_vcp",
+        score=float(m["score"]),
+        price=float(m["price"]),
+        reason=m["reason"],
+        hold_days=18,
+        conviction="high" if strong else "medium",
+        meta={"trend_template": m["trend_template"], "vcp_detected": m["vcp_detected"]},
+    )
+
+
+def _basic_technicals(df: pd.DataFrame) -> dict:
+    """Fallback technical fields when the Minervini scan returns None."""
+    close = df["Close"].astype(float)
+    price = float(close.iloc[-1])
+    high_52w = float(df["High"].tail(252).max())
+    prox = (high_52w - price) / high_52w * 100 if high_52w > 0 else 0.0
+    ema21 = float(close.ewm(span=21, adjust=False).mean().iloc[-1])
+    ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+    ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1]) if len(df) >= 200 else ema50
+    atr_pct = (
+        float(close.diff().abs().ewm(span=14, adjust=False).mean().iloc[-1]) / price * 100
+        if len(df) > 15 and price else 0.0
+    )
+    return {
+        "price": round(price, 2), "proximity_52w_pct": round(prox, 2),
+        "ema21": round(ema21, 2), "ema50": round(ema50, 2),
+        "ema200": round(ema200, 2), "atr_pct": round(atr_pct, 3),
+        "trend_template": 0, "vcp_detected": 0, "vcp_strength": 0.0,
+    }
+
+
+def _scorecard_to_result(card, minervini: Optional[dict], df: pd.DataFrame) -> dict:
+    """Flatten a Scorecard + backward-compatible technical fields into a row dict."""
+    tech = minervini if minervini is not None else _basic_technicals(df)
+    return {
+        # backward-compatible technical fields (consumed by runner/research/API)
+        "ticker":           card.ticker,
+        "price":            card.price,
+        "trend_template":   tech["trend_template"],
+        "vcp_detected":     tech["vcp_detected"],
+        "vcp_strength":     tech["vcp_strength"],
+        "proximity_52w_pct":tech["proximity_52w_pct"],
+        "ema21":            tech["ema21"],
+        "ema50":            tech["ema50"],
+        "ema200":           tech["ema200"],
+        "atr_pct":          tech["atr_pct"],
+        "score":            card.composite_score,   # composite drives entry threshold
+        "alert_type":       card.action,
+        "reason":           card.reason[:400],
+        # confluence scorecard fields
+        "composite_score":  card.composite_score,
+        "confluence":       card.confluence,
+        "strategies_fired": ",".join(card.strategies_fired),
+        "horizon":          card.horizon,
+        "conviction":       card.conviction,
+        "timing_score":     card.timing_score,
+        "durability_score": card.durability_score,
+        "quality_pillar":   card.pillars.get("quality"),
+        "valuation_pillar": card.pillars.get("valuation"),
+        "momentum_pillar":  card.pillars.get("momentum"),
+        "sentiment_pillar": card.pillars.get("sentiment"),
+        "est_hold_days":    card.est_hold_days,
+    }
+
+
 def _get_ticker_quality_score(ticker: str) -> float:
     # Strip suffix if present
     tk = ticker.replace(".NS", "").replace(".BO", "").strip()
@@ -316,14 +389,23 @@ def _persist_scan_result(scanned_at: str, result: dict):
                 """INSERT INTO pos_scans
                    (scanned_at, ticker, price, trend_template, vcp_detected,
                     vcp_strength, proximity_52w_pct, ema21, ema50, ema200,
-                    atr_pct, score, alert_type, reason)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    atr_pct, score, alert_type, reason,
+                    composite_score, confluence, strategies_fired, horizon,
+                    conviction, timing_score, durability_score, quality_pillar,
+                    valuation_pillar, momentum_pillar, sentiment_pillar, est_hold_days)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (scanned_at, result["ticker"],
                  result["price"], result["trend_template"], result["vcp_detected"],
                  result["vcp_strength"], result["proximity_52w_pct"],
                  result["ema21"], result["ema50"], result["ema200"],
                  result["atr_pct"], result["score"],
-                 result["alert_type"], result["reason"]),
+                 result["alert_type"], result["reason"],
+                 result.get("composite_score"), result.get("confluence", 0),
+                 result.get("strategies_fired"), result.get("horizon"),
+                 result.get("conviction"), result.get("timing_score"),
+                 result.get("durability_score"), result.get("quality_pillar"),
+                 result.get("valuation_pillar"), result.get("momentum_pillar"),
+                 result.get("sentiment_pillar"), result.get("est_hold_days")),
             )
     except Exception as e:
         log.debug("[scan] DB write failed for %s: %s", result["ticker"], e)
@@ -332,13 +414,21 @@ def _persist_scan_result(scanned_at: str, result: dict):
 def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
     """
     Run the full EOD scan on the fundamental universe (or a provided list).
-    Runs the baseline Minervini VCP + Vix strategy, and then runs the Brahma-Vishnu-Mahesh,
-    Fundamental-Technical, and Young Momentum strategies independently.
-    Results are written to pos_scans and returned sorted by score desc.
+    For each ticker it runs all four strategies (Minervini VCP, Brahma-Vishnu-Mahesh,
+    Fundamental-Technical, Young Momentum) and folds their signals plus quality /
+    valuation / momentum / sentiment pillars into ONE confluence scorecard with a
+    horizon classification. Results are written to pos_scans, one row per ticker,
+    sorted by composite score desc.
 
     Returns list of scan result dicts (only BUY and WATCH alerts).
     """
     from positional.universe import get_fundamental_universe
+    from positional.scorer import build_scorecard
+    from positional.strategies import all_positional_strategies
+    from positional.pillars import (
+        quality_pillar, valuation_pillar, relative_momentum_pillar,
+        sentiment_pillar, nifty_returns,
+    )
 
     if tickers is None:
         tickers = get_fundamental_universe()
@@ -372,6 +462,10 @@ def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
         log.error("[scan] yfinance batch download failed: %s", e)
         return []
 
+    # Context shared across the whole scan run.
+    nifty_r3, nifty_r6 = nifty_returns()
+    strategies = all_positional_strategies()   # BVM, FTM, YM (Minervini run separately)
+
     for ticker in tickers_yf:
         try:
             # Extract ticker data from the multi-ticker download
@@ -391,62 +485,43 @@ def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
                           ticker, len(df) if df is not None else 0)
                 continue
 
-            # 1. Run baseline Minervini VCP + Vix strategy
-            result = scan_ticker(ticker, df)
-            if result is not None and result["alert_type"] != "HOLD":
-                results.append(result)
-                _persist_scan_result(scanned_at, result)
-                log.info("[scan] %s score=%.0f alert=%s prox=%.1f%% VCP=%s",
-                         ticker, result["score"], result["alert_type"],
-                         result["proximity_52w_pct"], bool(result["vcp_detected"]))
+            # Run all four strategies, collect their signals, fold into ONE scorecard.
+            signals = []
+            minervini = scan_ticker(ticker, df)
+            if minervini is not None:
+                signals.append(_minervini_to_signal(ticker, minervini))
 
-            # 2. Run new independent strategies (BVM, FTM, YM)
-            from positional.strategies import (
-                BrahmaVishnuMaheshStrategy,
-                FunTechMomentumStrategy,
-                YoungMomentumStrategy
-            )
             quality_score = _get_ticker_quality_score(ticker)
-            price = float(df["Close"].iloc[-1])
-            proximity = 0.0
-            high_52w = float(df["High"].tail(252).max())
-            if high_52w > 0:
-                proximity = (high_52w - price) / high_52w * 100
-            
-            strategies = [
-                BrahmaVishnuMaheshStrategy(),
-                FunTechMomentumStrategy(),
-                YoungMomentumStrategy()
-            ]
-            
             for strategy in strategies:
                 try:
                     sig = strategy.generate(ticker, df, quality_score=quality_score)
-                    if sig and sig.action in ("BUY", "SELL"):
-                        strat_result = {
-                            "ticker":           ticker,
-                            "price":            round(sig.price or price, 2),
-                            "trend_template":   1 if sig.action == "BUY" else 0,
-                            "vcp_detected":     1 if "vcp" in strategy.name or "vcp" in sig.reason.lower() else 0,
-                            "vcp_strength":     sig.score / 2.0 if sig.action == "BUY" else 0.0,
-                            "proximity_52w_pct":round(proximity, 2),
-                            "ema21":            round(float(df["Close"].ewm(span=21, adjust=False).mean().iloc[-1]), 2),
-                            "ema50":            round(float(df["Close"].ewm(span=50, adjust=False).mean().iloc[-1]), 2),
-                            "ema200":           round(float(df["Close"].ewm(span=200, adjust=False).mean().iloc[-1]), 2),
-                            "atr_pct":          round(float(df["Close"].diff().abs().ewm(span=14, adjust=False).mean().iloc[-1]) / price * 100, 3) if len(df) > 15 else 0.0,
-                            "score":            round(sig.score, 1),
-                            "alert_type":       sig.action,
-                            "reason":           f"[{strategy.name.upper()}] {sig.reason}"[:400],
-                        }
-                        results.append(strat_result)
-                        _persist_scan_result(scanned_at, strat_result)
-                        log.info("[scan] %s [%s] score=%.0f alert=%s reason=%s",
-                                 ticker, strategy.name, sig.score, sig.action, sig.reason[:100])
-                    else:
-                        hold_reason = sig.reason if sig else "No signal"
-                        log.debug("[scan] %s [%s] returned HOLD: %s", ticker, strategy.name, hold_reason)
+                    if sig is not None:
+                        signals.append(sig)
                 except Exception as strat_err:
-                    log.warning("[scan] Strategy %s failed for %s: %s", strategy.name, ticker, strat_err)
+                    log.warning("[scan] Strategy %s failed for %s: %s",
+                                strategy.name, ticker, strat_err)
+
+            if not signals:
+                continue
+
+            price = float(df["Close"].iloc[-1])
+            card = build_scorecard(
+                ticker, price, signals,
+                quality=quality_pillar(ticker),
+                valuation=valuation_pillar(ticker),
+                momentum=relative_momentum_pillar(df, nifty_r3, nifty_r6),
+                sentiment=sentiment_pillar(ticker),
+                min_composite=POSITIONAL_MIN_TREND_SCORE,
+            )
+            if card.action == "HOLD":
+                continue
+
+            result = _scorecard_to_result(card, minervini, df)
+            results.append(result)
+            _persist_scan_result(scanned_at, result)
+            log.info("[scan] %s composite=%.0f %s conf=%d fired=[%s] horizon=%s",
+                     ticker, card.composite_score, card.action, card.confluence,
+                     ",".join(card.strategies_fired), card.horizon)
 
         except Exception as e:
             log.warning("[scan] Error scanning %s: %s", ticker, e)

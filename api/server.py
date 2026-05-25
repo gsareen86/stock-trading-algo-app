@@ -1234,7 +1234,20 @@ def get_positional_scan_results():
                 "atr_pct": clean_float(r["atr_pct"], round_digits=2, multiplier=100.0),
                 "score": clean_float(r["score"]),
                 "alert_type": r["alert_type"],
-                "reason": clean_str(r["reason"])
+                "reason": clean_str(r["reason"]),
+                # Confluence scorecard (NULL on pre-migration rows)
+                "composite_score": clean_float(r.get("composite_score")),
+                "confluence": int(clean_float(r.get("confluence")) or 0),
+                "strategies_fired": clean_str(r.get("strategies_fired"), default=""),
+                "horizon": clean_str(r.get("horizon"), default=""),
+                "conviction": clean_str(r.get("conviction"), default=""),
+                "timing_score": clean_float(r.get("timing_score")),
+                "durability_score": clean_float(r.get("durability_score")),
+                "quality_pillar": clean_float(r.get("quality_pillar")),
+                "valuation_pillar": clean_float(r.get("valuation_pillar")),
+                "momentum_pillar": clean_float(r.get("momentum_pillar")),
+                "sentiment_pillar": clean_float(r.get("sentiment_pillar")),
+                "est_hold_days": int(clean_float(r.get("est_hold_days")) or 0),
             })
         return results
     except Exception as e:

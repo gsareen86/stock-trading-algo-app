@@ -322,7 +322,19 @@ CREATE TABLE IF NOT EXISTS pos_scans (
     atr_pct         REAL,
     score           REAL,
     alert_type      TEXT,
-    reason          TEXT
+    reason          TEXT,
+    composite_score   REAL,
+    confluence        INTEGER DEFAULT 0,
+    strategies_fired  TEXT,
+    horizon           TEXT,
+    conviction        TEXT,
+    timing_score      REAL,
+    durability_score  REAL,
+    quality_pillar    REAL,
+    valuation_pillar  REAL,
+    momentum_pillar   REAL,
+    sentiment_pillar  REAL,
+    est_hold_days     INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pos_positions (
@@ -637,7 +649,19 @@ CREATE TABLE IF NOT EXISTS pos_scans (
     atr_pct           DOUBLE PRECISION,
     score             DOUBLE PRECISION,
     alert_type        TEXT,
-    reason            TEXT
+    reason            TEXT,
+    composite_score   DOUBLE PRECISION,
+    confluence        INTEGER DEFAULT 0,
+    strategies_fired  TEXT,
+    horizon           TEXT,
+    conviction        TEXT,
+    timing_score      DOUBLE PRECISION,
+    durability_score  DOUBLE PRECISION,
+    quality_pillar    DOUBLE PRECISION,
+    valuation_pillar  DOUBLE PRECISION,
+    momentum_pillar   DOUBLE PRECISION,
+    sentiment_pillar  DOUBLE PRECISION,
+    est_hold_days     INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pos_positions (
@@ -904,6 +928,37 @@ def _migrate_positional_columns(conn) -> None:
         cur.execute(sql)
 
 
+def _migrate_pos_scans_scorecard_columns(conn) -> None:
+    """Add the confluence-scorecard columns to ``pos_scans`` if missing.
+
+    Pre-migration scan rows keep NULL in the new columns; the API tolerates that.
+    """
+    cols = (
+        ("composite_score",  "REAL", "DOUBLE PRECISION"),
+        ("confluence",       "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+        ("strategies_fired", "TEXT", "TEXT"),
+        ("horizon",          "TEXT", "TEXT"),
+        ("conviction",       "TEXT", "TEXT"),
+        ("timing_score",     "REAL", "DOUBLE PRECISION"),
+        ("durability_score", "REAL", "DOUBLE PRECISION"),
+        ("quality_pillar",   "REAL", "DOUBLE PRECISION"),
+        ("valuation_pillar", "REAL", "DOUBLE PRECISION"),
+        ("momentum_pillar",  "REAL", "DOUBLE PRECISION"),
+        ("sentiment_pillar", "REAL", "DOUBLE PRECISION"),
+        ("est_hold_days",    "INTEGER", "INTEGER"),
+    )
+    if BACKEND == "sqlite":
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(pos_scans)").fetchall()}
+        for name, sqlite_type, _ in cols:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE pos_scans ADD COLUMN {name} {sqlite_type}")
+        return
+
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    for name, _, pg_type in cols:
+        cur.execute(f"ALTER TABLE pos_scans ADD COLUMN IF NOT EXISTS {name} {pg_type}")
+
+
 def init_db() -> None:
     """Create tables + seed bot_control row if absent."""
     if BACKEND == "sqlite":
@@ -912,6 +967,7 @@ def init_db() -> None:
             conn.executescript(_SQLITE_SCHEMA)
             _migrate_positions_atr_columns(conn)
             _migrate_positional_columns(conn)
+            _migrate_pos_scans_scorecard_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
                    VALUES (1, 'STOPPED', 'auto', ?)
@@ -930,6 +986,7 @@ def init_db() -> None:
                 cur.execute(_POSTGRES_SCHEMA)
                 _migrate_positions_atr_columns(cur)
                 _migrate_positional_columns(cur)
+                _migrate_pos_scans_scorecard_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
                        VALUES (1, 'STOPPED', 'auto', %s)

@@ -20,7 +20,7 @@ import pandas as pd
 
 from config import IST, SECTOR_INDEX_TICKERS, POS_BVM_HALT_ON_BEARISH
 from positional.strategies.base import BasePositionalStrategy, PositionalSignal
-from positional.strategies.sector_rotation import _SECTOR_MAP, _ticker_sector
+from positional.sectors import SECTOR_MAP as _SECTOR_MAP, ticker_sector as _ticker_sector
 
 log = logging.getLogger(__name__)
 
