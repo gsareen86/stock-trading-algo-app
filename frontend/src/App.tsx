@@ -382,7 +382,49 @@ interface PositionalPosition {
   unrealized_pnl: number;
   unrealized_pnl_pct: number;
   notes: string;
+  strategy?: string;
 }
+
+const getStrategyFromReason = (reason: string): string => {
+  if (!reason) return "MINERVINI_VCP";
+  const match = reason.match(/^\[([A-Z0-9_]+)\]/i);
+  if (match) {
+    return match[1].toUpperCase();
+  }
+  return "MINERVINI_VCP";
+};
+
+const renderStrategyBadge = (strategy: string) => {
+  const norm = (strategy || "").toUpperCase();
+  switch (norm) {
+    case "FUN_TECH_MOMENTUM":
+      return (
+        <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          FTM
+        </span>
+      );
+    case "BRAHMA_VISHNU_MAHESH":
+      return (
+        <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+          BVM
+        </span>
+      );
+    case "YOUNG_MOMENTUM":
+      return (
+        <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+          YM (1-2-3-4)
+        </span>
+      );
+    case "MINERVINI_VCP":
+    default:
+      return (
+        <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+          VCP + Vix
+        </span>
+      );
+  }
+};
+
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
@@ -2320,7 +2362,7 @@ export default function App() {
               <div className="glass-panel p-6 rounded-2xl">
                 <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
-                    Active Minervini VCP Positions (21 EMA Tracker)
+                    Active Multi-Strategy Positional Positions (EMA Trail Tracker)
                   </h3>
                   <span className="text-xs text-slate-500 font-mono">({positionalPositions.length} active holdings)</span>
                 </div>
@@ -2330,6 +2372,7 @@ export default function App() {
                     <thead>
                       <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px]">
                         <th className="py-3 px-4">Ticker</th>
+                        <th className="py-3 px-4 text-center">Strategy</th>
                         <th className="py-3 px-4">Entry Date</th>
                         <th className="py-3 px-4 text-right">Holdings Qty</th>
                         <th className="py-3 px-4 text-right">Avg Entry</th>
@@ -2346,7 +2389,7 @@ export default function App() {
                     <tbody className="divide-y divide-slate-850">
                       {positionalPositions.length === 0 ? (
                         <tr>
-                          <td colSpan={12} className="py-8 text-center text-slate-500">
+                          <td colSpan={13} className="py-8 text-center text-slate-500">
                             No swing holdings are currently active.
                           </td>
                         </tr>
@@ -2354,6 +2397,9 @@ export default function App() {
                         positionalPositions.map((pos) => (
                           <tr key={pos.id} className="hover:bg-slate-900/20">
                             <td className="py-3 px-4 text-slate-200 font-bold">{pos.ticker}</td>
+                            <td className="py-3 px-4 text-center">
+                              {renderStrategyBadge(pos.strategy || "MINERVINI_VCP")}
+                            </td>
                             <td className="py-3 px-4 text-slate-400">{pos.entry_date}</td>
                             <td className="py-3 px-4 text-right text-slate-300">{pos.quantity}</td>
                             <td className="py-3 px-4 text-right text-slate-300">{formatINR(pos.entry_price)}</td>
@@ -2397,7 +2443,7 @@ export default function App() {
               <div className="glass-panel p-6 rounded-2xl">
                 <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
-                    Latest Swing Scan Results (VCP & Momentum Checklists)
+                    Latest Swing Scan Results (VCP & Multi-Strategy Checklists)
                   </h3>
                   <span className="text-xs text-slate-500 font-mono">({positionalScanResults.length} setups detected)</span>
                 </div>
@@ -2407,6 +2453,7 @@ export default function App() {
                     <thead>
                       <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px]">
                         <th className="py-3 px-4">Ticker</th>
+                        <th className="py-3 px-4 text-center">Strategy</th>
                         <th className="py-3 px-4">Scanned At</th>
                         <th className="py-3 px-4 text-right">Price</th>
                         <th className="py-3 px-4 text-center">Trend Template</th>
@@ -2420,7 +2467,7 @@ export default function App() {
                     <tbody className="divide-y divide-slate-850">
                       {positionalScanResults.length === 0 ? (
                         <tr>
-                          <td colSpan={9} className="py-8 text-center text-slate-500">
+                          <td colSpan={10} className="py-8 text-center text-slate-500">
                             No scan candidates populated yet. Ensure whitelists are uploaded!
                           </td>
                         </tr>
@@ -2428,6 +2475,9 @@ export default function App() {
                         positionalScanResults.map((scan) => (
                           <tr key={scan.id} className="hover:bg-slate-900/20">
                             <td className="py-3 px-4 text-slate-200 font-bold">{scan.ticker}</td>
+                            <td className="py-3 px-4 text-center">
+                              {renderStrategyBadge(getStrategyFromReason(scan.reason))}
+                            </td>
                             <td className="py-3 px-4 text-slate-500">{scan.scanned_at}</td>
                             <td className="py-3 px-4 text-right text-slate-300">
                               {scan.price ? formatINR(scan.price) : "—"}
@@ -2461,7 +2511,7 @@ export default function App() {
                               {scan.atr_pct ? `${scan.atr_pct.toFixed(1)}%` : "—"}
                             </td>
                             <td className="py-3 px-4 text-center text-indigo-400 font-bold">{scan.score}</td>
-                            <td className="py-3 px-4 text-slate-400 max-w-[200px] truncate">{scan.reason}</td>
+                            <td className="py-3 px-4 text-slate-400 max-w-[200px] truncate" title={scan.reason}>{scan.reason}</td>
                           </tr>
                         ))
                       )}

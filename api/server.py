@@ -1245,7 +1245,13 @@ def get_positional_scan_results():
 def get_positional_positions():
     """Fetch currently active swing holdings and technical stop loss levels (21 EMA tracker)."""
     try:
-        df = query_df("SELECT * FROM pos_positions WHERE status = 'OPEN' ORDER BY entry_date DESC")
+        df = query_df("""
+            SELECT p.*, t.reason AS trade_reason
+            FROM pos_positions p
+            LEFT JOIN pos_trades t ON p.id = t.position_id AND t.side = 'BUY'
+            WHERE p.status = 'OPEN'
+            ORDER BY p.entry_date DESC
+        """)
         if df.empty:
             return []
         
@@ -1266,6 +1272,15 @@ def get_positional_positions():
             pnl = (px - entry_px) * qty
             pnl_pct = (px / entry_px - 1) * 100 if entry_px else 0.0
             
+            trade_reason = r["trade_reason"] if "trade_reason" in r and pd.notna(r["trade_reason"]) else ""
+            strategy = "MINERVINI_VCP"
+            if "[FUN_TECH_MOMENTUM]" in trade_reason:
+                strategy = "FUN_TECH_MOMENTUM"
+            elif "[BRAHMA_VISHNU_MAHESH]" in trade_reason:
+                strategy = "BRAHMA_VISHNU_MAHESH"
+            elif "[YOUNG_MOMENTUM]" in trade_reason:
+                strategy = "YOUNG_MOMENTUM"
+            
             results.append({
                 "id": int(r["id"]),
                 "ticker": ticker,
@@ -1282,6 +1297,7 @@ def get_positional_positions():
                 "regime_at_entry": r["regime_at_entry"],
                 "unrealized_pnl": round(pnl, 2),
                 "unrealized_pnl_pct": round(pnl_pct, 2),
+                "strategy": strategy,
                 "notes": r["notes"] or "—"
             })
         return results

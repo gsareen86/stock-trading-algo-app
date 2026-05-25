@@ -291,9 +291,49 @@ def scan_ticker(ticker: str, df: pd.DataFrame) -> Optional[dict]:
     }
 
 
+def _get_ticker_quality_score(ticker: str) -> float:
+    # Strip suffix if present
+    tk = ticker.replace(".NS", "").replace(".BO", "").strip()
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT total_score FROM lt_quality WHERE ticker = ?", (tk,)
+            ).fetchone()
+            if row and row["total_score"] is not None:
+                return float(row["total_score"])
+    except Exception:
+        pass
+    return 50.0
+
+
+def _persist_scan_result(scanned_at: str, result: dict):
+    try:
+        from db.models import get_conn, insert_returning_id
+        with get_conn() as conn:
+            insert_returning_id(
+                conn,
+                """INSERT INTO pos_scans
+                   (scanned_at, ticker, price, trend_template, vcp_detected,
+                    vcp_strength, proximity_52w_pct, ema21, ema50, ema200,
+                    atr_pct, score, alert_type, reason)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (scanned_at, result["ticker"],
+                 result["price"], result["trend_template"], result["vcp_detected"],
+                 result["vcp_strength"], result["proximity_52w_pct"],
+                 result["ema21"], result["ema50"], result["ema200"],
+                 result["atr_pct"], result["score"],
+                 result["alert_type"], result["reason"]),
+            )
+    except Exception as e:
+        log.debug("[scan] DB write failed for %s: %s", result["ticker"], e)
+
+
 def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
     """
     Run the full EOD scan on the fundamental universe (or a provided list).
+    Runs the baseline Minervini VCP + Vix strategy, and then runs the Brahma-Vishnu-Mahesh,
+    Fundamental-Technical, and Young Momentum strategies independently.
     Results are written to pos_scans and returned sorted by score desc.
 
     Returns list of scan result dicts (only BUY and WATCH alerts).
@@ -351,40 +391,62 @@ def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
                           ticker, len(df) if df is not None else 0)
                 continue
 
+            # 1. Run baseline Minervini VCP + Vix strategy
             result = scan_ticker(ticker, df)
-            if result is None:
-                continue
+            if result is not None and result["alert_type"] != "HOLD":
+                results.append(result)
+                _persist_scan_result(scanned_at, result)
+                log.info("[scan] %s score=%.0f alert=%s prox=%.1f%% VCP=%s",
+                         ticker, result["score"], result["alert_type"],
+                         result["proximity_52w_pct"], bool(result["vcp_detected"]))
 
-            # Skip HOLD — don't clutter the DB
-            if result["alert_type"] == "HOLD":
-                continue
-
-            results.append(result)
-
-            # Persist to DB
-            try:
-                from db.models import get_conn, insert_returning_id
-                with get_conn() as conn:
-                    insert_returning_id(
-                        conn,
-                        """INSERT INTO pos_scans
-                           (scanned_at, ticker, price, trend_template, vcp_detected,
-                            vcp_strength, proximity_52w_pct, ema21, ema50, ema200,
-                            atr_pct, score, alert_type, reason)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                        (scanned_at, ticker,
-                         result["price"], result["trend_template"], result["vcp_detected"],
-                         result["vcp_strength"], result["proximity_52w_pct"],
-                         result["ema21"], result["ema50"], result["ema200"],
-                         result["atr_pct"], result["score"],
-                         result["alert_type"], result["reason"]),
-                    )
-            except Exception as e:
-                log.debug("[scan] DB write failed for %s: %s", ticker, e)
-
-            log.info("[scan] %s score=%.0f alert=%s prox=%.1f%% VCP=%s",
-                     ticker, result["score"], result["alert_type"],
-                     result["proximity_52w_pct"], bool(result["vcp_detected"]))
+            # 2. Run new independent strategies (BVM, FTM, YM)
+            from positional.strategies import (
+                BrahmaVishnuMaheshStrategy,
+                FunTechMomentumStrategy,
+                YoungMomentumStrategy
+            )
+            quality_score = _get_ticker_quality_score(ticker)
+            price = float(df["Close"].iloc[-1])
+            proximity = 0.0
+            high_52w = float(df["High"].tail(252).max())
+            if high_52w > 0:
+                proximity = (high_52w - price) / high_52w * 100
+            
+            strategies = [
+                BrahmaVishnuMaheshStrategy(),
+                FunTechMomentumStrategy(),
+                YoungMomentumStrategy()
+            ]
+            
+            for strategy in strategies:
+                try:
+                    sig = strategy.generate(ticker, df, quality_score=quality_score)
+                    if sig and sig.action in ("BUY", "SELL"):
+                        strat_result = {
+                            "ticker":           ticker,
+                            "price":            round(sig.price or price, 2),
+                            "trend_template":   1 if sig.action == "BUY" else 0,
+                            "vcp_detected":     1 if "vcp" in strategy.name or "vcp" in sig.reason.lower() else 0,
+                            "vcp_strength":     sig.score / 2.0 if sig.action == "BUY" else 0.0,
+                            "proximity_52w_pct":round(proximity, 2),
+                            "ema21":            round(float(df["Close"].ewm(span=21, adjust=False).mean().iloc[-1]), 2),
+                            "ema50":            round(float(df["Close"].ewm(span=50, adjust=False).mean().iloc[-1]), 2),
+                            "ema200":           round(float(df["Close"].ewm(span=200, adjust=False).mean().iloc[-1]), 2),
+                            "atr_pct":          round(float(df["Close"].diff().abs().ewm(span=14, adjust=False).mean().iloc[-1]) / price * 100, 3) if len(df) > 15 else 0.0,
+                            "score":            round(sig.score, 1),
+                            "alert_type":       sig.action,
+                            "reason":           f"[{strategy.name.upper()}] {sig.reason}"[:400],
+                        }
+                        results.append(strat_result)
+                        _persist_scan_result(scanned_at, strat_result)
+                        log.info("[scan] %s [%s] score=%.0f alert=%s reason=%s",
+                                 ticker, strategy.name, sig.score, sig.action, sig.reason[:100])
+                    else:
+                        hold_reason = sig.reason if sig else "No signal"
+                        log.debug("[scan] %s [%s] returned HOLD: %s", ticker, strategy.name, hold_reason)
+                except Exception as strat_err:
+                    log.warning("[scan] Strategy %s failed for %s: %s", strategy.name, ticker, strat_err)
 
         except Exception as e:
             log.warning("[scan] Error scanning %s: %s", ticker, e)

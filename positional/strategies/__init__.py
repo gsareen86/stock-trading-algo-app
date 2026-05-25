@@ -6,6 +6,9 @@ from positional.strategies.vcp_breakout import VCPBreakoutStrategy
 from positional.strategies.sector_rotation import SectorRotationStrategy
 from positional.strategies.mean_reversion import MeanReversionStrategy
 from positional.strategies.earnings_momentum import EarningsMomentumStrategy
+from positional.strategies.brahma_vishnu_mahesh import BrahmaVishnuMaheshStrategy
+from positional.strategies.fun_tech_momentum import FunTechMomentumStrategy
+from positional.strategies.young_momentum import YoungMomentumStrategy
 
 
 def all_positional_strategies() -> list[BasePositionalStrategy]:
@@ -17,6 +20,9 @@ def all_positional_strategies() -> list[BasePositionalStrategy]:
         SectorRotationStrategy(),
         MeanReversionStrategy(),
         EarningsMomentumStrategy(),
+        BrahmaVishnuMaheshStrategy(),
+        FunTechMomentumStrategy(),
+        YoungMomentumStrategy(),
     ]
 
 
@@ -26,5 +32,7 @@ __all__ = [
     "QualityMomentumStrategy", "VCPBreakoutStrategy",
     "SectorRotationStrategy", "MeanReversionStrategy",
     "EarningsMomentumStrategy",
+    "BrahmaVishnuMaheshStrategy", "FunTechMomentumStrategy",
+    "YoungMomentumStrategy",
     "all_positional_strategies",
 ]

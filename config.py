@@ -321,14 +321,26 @@ POSITIONAL_MAX_HOLD_DAYS = 30
 POSITIONAL_EVENT_GUARD_DAYS = 2
 
 POSITIONAL_STRATEGY_WEIGHTS = {
-    "trend_following":   0.20,
-    "breakout_retest":   0.20,
-    "quality_momentum":  0.25,
-    "vcp_breakout":      0.15,
-    "sector_rotation":   0.10,
-    "mean_reversion":    0.05,
-    "earnings_momentum": 0.05,
+    "trend_following":       0.05,
+    "breakout_retest":       0.05,
+    "quality_momentum":      0.05,
+    "vcp_breakout":          0.15,
+    "sector_rotation":       0.05,
+    "mean_reversion":        0.02,
+    "earnings_momentum":     0.03,
+    "brahma_vishnu_mahesh":  0.20,
+    "fun_tech_momentum":     0.20,
+    "young_momentum":        0.20,
 }
+
+# New positional strategy tunables
+POS_BVM_HALT_ON_BEARISH = True
+POS_FTM_TIGHT_RANGE_LIMIT = 15.0
+POS_YMC_IMPULSE_MIN = 20.0
+POS_YMC_IMPULSE_MAX = 50.0
+POS_YMC_MAX_PAUSE = 6
+POS_YMC_FIB_THRESHOLD = 0.382
+
 
 # Delivery STT / stamp legacy names
 POS_EMA_FAST = 9

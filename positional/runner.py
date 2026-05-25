@@ -641,10 +641,15 @@ def run_eod_scan(force: bool = False) -> dict:
         buy_candidates = run_positional_llm_research(buy_candidates, vix_value)
 
     buy_alerts_taken: list[dict] = []
+    processed_buy_tickers = set()
 
     # Step 6: Normal buying (fill empty slots)
     for result in buy_candidates:
         ticker = result["ticker"]
+        if ticker in processed_buy_tickers:
+            continue
+        processed_buy_tickers.add(ticker)
+        
         price  = result["price"]
         score  = result["score"]
         verdict = result.get("llm_verdict", "PROCEED")
