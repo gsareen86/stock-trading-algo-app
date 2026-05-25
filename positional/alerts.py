@@ -152,6 +152,21 @@ def send_swap_alert(old_ticker: str, new_ticker: str, old_score: float, new_scor
     )
 
 
+def send_management_review(review: dict) -> None:
+    """Advisory alert: a held stock's management/outlook read has deteriorated."""
+    ticker  = review.get("ticker", "?")
+    verdict = review.get("verdict", "?")
+    outlook = review.get("outlook", "?")
+    mgmt    = review.get("management_score")
+    thesis  = review.get("thesis", "")
+    mgmt_str = f"{mgmt:.0f}" if isinstance(mgmt, (int, float)) else "n/a"
+    _send(
+        f"⚠️ <b>MANAGEMENT REVIEW: {ticker}</b>\n"
+        f"Outlook: {outlook} | Verdict: {verdict} | Mgmt score: {mgmt_str}\n"
+        f"{thesis[:300]}"
+    )
+
+
 def send_reentry_alert(ticker: str, price: float, ema21: float,
                        vol_ratio: float) -> None:
     """Send RE-ENTRY alert."""

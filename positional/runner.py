@@ -31,6 +31,7 @@ from config import (
     DEFAULT_MODE,
     IST,
     POSITIONAL_ALERT_TIME,
+    POSITIONAL_RESEARCH_REFRESH_TIME,
     POSITIONAL_SCAN_TIME,
 )
 
@@ -304,8 +305,14 @@ def run_exit_checks(force: bool = False) -> dict:
             # Increment days_held
             days_held = int(pos.get("days_held", 0)) + 1
 
-            # Evaluate exit
+            # Evaluate exit (technical first, then optional management-based exit)
             exit_reason = evaluate_exits(pos, df)
+            if not exit_reason:
+                try:
+                    from positional.research import management_exit_reason
+                    exit_reason = management_exit_reason(ticker)
+                except Exception:
+                    exit_reason = None
             if exit_reason:
                 _close_position(pos, current_price, exit_reason)
                 sell_alerts_list.append({
@@ -775,9 +782,11 @@ def run_positional_forever() -> None:
     _last_scan_date:   object = None
     _last_alert_date:  object = None
     _last_regime_month: object = None
+    _last_refresh_date: object = None
 
     scan_h,  scan_m  = [int(x) for x in POSITIONAL_SCAN_TIME.split(":")]
     alert_h, alert_m = [int(x) for x in POSITIONAL_ALERT_TIME.split(":")]
+    refresh_h, refresh_m = [int(x) for x in POSITIONAL_RESEARCH_REFRESH_TIME.split(":")]
 
     # If booted after scan time, set last_scan_date to today so we don't double scan
     now = datetime.now(IST)
@@ -801,6 +810,19 @@ def run_positional_forever() -> None:
                         run_regime_check()
                     except Exception as e:
                         log.error("[pos_runner] regime check error: %s", e)
+
+            # Daily management-research refresh (holdings + watchlist + shortlist).
+            # Decoupled from the technical scan so holdings pick up new concalls.
+            past_refresh = (now.hour, now.minute) >= (refresh_h, refresh_m)
+            if past_refresh and _is_trading_day() and _last_refresh_date != today:
+                _last_refresh_date = today
+                try:
+                    from positional.research import refresh_management_research
+                    refresh_management_research()
+                except Exception as e:
+                    log.error("[pos_runner] research refresh error: %s", e)
+                time.sleep(30)
+                continue
 
             # 4:00 PM: EOD scan
             if past_scan and _is_trading_day() and _last_scan_date != today:

@@ -485,6 +485,192 @@ const renderFiredStrategies = (strategiesFired: string, reason: string) => {
 };
 
 
+const ResearchDetail: React.FC<{ scan: PositionalScanResult; research?: PositionalResearch }> = ({ scan, research }) => (
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+    <div className="space-y-2">
+      <div className="text-slate-500 uppercase tracking-wider text-[9px]">Technical Reason</div>
+      <div className="text-slate-300 leading-relaxed">{scan.reason || "—"}</div>
+      {research ? (
+        <>
+          <div className="text-slate-500 uppercase tracking-wider text-[9px] pt-2">Analyst Thesis</div>
+          <div className="text-slate-200 leading-relaxed">{research.thesis || "—"}</div>
+          {research.guidance ? (
+            <div className="text-slate-400"><span className="text-slate-500">Guidance:</span> {research.guidance}</div>
+          ) : null}
+          <div className="text-slate-500 text-[10px] pt-1">
+            {research.concall_date ? `Concall: ${research.concall_date}` : "Concall: n/a"}
+            {research.confidence != null ? ` · Confidence: ${(research.confidence * 100).toFixed(0)}%` : ""}
+            {research.researched_at ? ` · ${research.researched_at}` : ""}
+          </div>
+        </>
+      ) : (
+        <div className="text-slate-500 italic pt-2">No analyst research yet — runs on the next scan or research refresh.</div>
+      )}
+    </div>
+    {research ? (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <div className="text-emerald-400 uppercase tracking-wider text-[9px] mb-1">Key Positives</div>
+          {research.key_positives?.length ? (
+            <ul className="list-disc list-inside text-slate-300 space-y-1">
+              {research.key_positives.map((p, i) => <li key={i}>{p}</li>)}
+            </ul>
+          ) : <div className="text-slate-600">—</div>}
+        </div>
+        <div>
+          <div className="text-rose-400 uppercase tracking-wider text-[9px] mb-1">Key Risks</div>
+          {research.key_risks?.length ? (
+            <ul className="list-disc list-inside text-slate-300 space-y-1">
+              {research.key_risks.map((p, i) => <li key={i}>{p}</li>)}
+            </ul>
+          ) : <div className="text-slate-600">—</div>}
+        </div>
+        {research.sources?.length ? (
+          <div className="sm:col-span-2">
+            <div className="text-slate-500 uppercase tracking-wider text-[9px] mb-1">Sources</div>
+            <div className="flex flex-wrap gap-3">
+              {research.sources.map((s, i) => (
+                <a key={i} href={s} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline truncate max-w-[280px]">{s}</a>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    ) : null}
+  </div>
+);
+
+interface PositionalScanTableProps {
+  rows: PositionalScanResult[];
+  research: Record<string, PositionalResearch>;
+  variant: "swing" | "longterm";
+}
+
+const PositionalScanTable: React.FC<PositionalScanTableProps> = ({ rows, research, variant }) => {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const isLong = variant === "longterm";
+  const inr = (v: number | null) => (v != null ? `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : "—");
+  const num = (v: number | null) => (v != null ? v.toFixed(0) : "—");
+  const lookup = (t: string) => research[t.replace(/\.(NS|BO)$/, "")];
+  const toggle = (id: number) =>
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+
+  const title = isLong
+    ? "Long-Term Accumulation Candidates (durable businesses + concall thesis)"
+    : "Latest Swing Scan Results (VCP & Multi-Strategy Checklists)";
+  const unit = isLong ? "long-term candidates" : "setups detected";
+  const headers = isLong
+    ? ["", "Ticker", "Horizon", "Composite", "Durability", "Quality", "Valuation", "Momentum", "Mgmt / Outlook"]
+    : ["", "Ticker", "Horizon", "Confluence", "Strategy", "Price", "Trend", "VCP", "52W %", "ATR %", "Composite", "Timing / Durab", "Mgmt / Outlook"];
+  const colCount = headers.length;
+
+  const mgmtCell = (scan: PositionalScanResult) => {
+    const r = lookup(scan.ticker);
+    return (
+      <td className="py-3 px-4 text-center whitespace-nowrap">
+        <span className="text-teal-400 font-bold mr-1">{num(scan.management_pillar)}</span>
+        {r ? renderOutlookBadge(r.outlook) : null}
+      </td>
+    );
+  };
+
+  return (
+    <div className="glass-panel p-6 rounded-2xl">
+      <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">{title}</h3>
+        <span className="text-xs text-slate-500 font-mono">({rows.length} {unit})</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs font-mono text-left border-collapse">
+          <thead>
+            <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px]">
+              {headers.map((h, i) => (
+                <th key={i} className={`py-3 px-4 ${i >= 3 && !isLong ? "text-center" : ""} ${isLong && i >= 3 ? "text-center" : ""}`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-850">
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={colCount} className="py-8 text-center text-slate-500">
+                  No {isLong ? "long-term" : "swing"} candidates yet. Run a scan{isLong ? " + research refresh" : ""}.
+                </td>
+              </tr>
+            ) : (
+              rows.map((scan) => {
+                const open = expanded.has(scan.id);
+                return (
+                  <React.Fragment key={scan.id}>
+                    <tr className="hover:bg-slate-900/20 cursor-pointer" onClick={() => toggle(scan.id)}>
+                      <td className="py-3 px-4 text-slate-500 text-center w-6">{open ? "▾" : "▸"}</td>
+                      <td className="py-3 px-4 text-slate-200 font-bold">{scan.ticker}</td>
+                      <td className="py-3 px-4 text-center">{renderHorizonBadge(scan.horizon)}</td>
+                      {isLong ? (
+                        <>
+                          <td className="py-3 px-4 text-center text-indigo-400 font-bold">{scan.composite_score != null ? scan.composite_score : scan.score}</td>
+                          <td className="py-3 px-4 text-center text-amber-400 font-bold">{num(scan.durability_score)}</td>
+                          <td className="py-3 px-4 text-center text-slate-300">{num(scan.quality_pillar)}</td>
+                          <td className="py-3 px-4 text-center text-slate-300">{num(scan.valuation_pillar)}</td>
+                          <td className="py-3 px-4 text-center text-slate-300">{num(scan.momentum_pillar)}</td>
+                          {mgmtCell(scan)}
+                        </>
+                      ) : (
+                        <>
+                          <td className="py-3 px-4 text-center" title={scan.strategies_fired || ""}>
+                            {scan.confluence > 0 ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                                {scan.confluence}× {scan.conviction ? scan.conviction.toUpperCase() : ""}
+                              </span>
+                            ) : (
+                              <span className="text-slate-600">—</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center">{renderFiredStrategies(scan.strategies_fired, scan.reason)}</td>
+                          <td className="py-3 px-4 text-right text-slate-300">{scan.price ? inr(scan.price) : "—"}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${scan.trend_template ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border border-rose-500/20"}`}>
+                              {scan.trend_template ? "PASS" : "FAIL"}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${scan.vcp_detected ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-slate-850 text-slate-500"}`}>
+                              {scan.vcp_detected ? "YES" : "—"}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right text-slate-300">{scan.proximity_52w_pct ? `${scan.proximity_52w_pct.toFixed(1)}%` : "—"}</td>
+                          <td className="py-3 px-4 text-right text-purple-400">{scan.atr_pct ? `${scan.atr_pct.toFixed(1)}%` : "—"}</td>
+                          <td className="py-3 px-4 text-center text-indigo-400 font-bold">{scan.composite_score != null ? scan.composite_score : scan.score}</td>
+                          <td className="py-3 px-4 text-center text-slate-400 whitespace-nowrap">
+                            <span className="text-sky-400">{num(scan.timing_score)}</span>
+                            <span className="text-slate-600"> / </span>
+                            <span className="text-amber-400">{num(scan.durability_score)}</span>
+                          </td>
+                          {mgmtCell(scan)}
+                        </>
+                      )}
+                    </tr>
+                    {open && (
+                      <tr className="bg-slate-900/40">
+                        <td colSpan={colCount} className="px-6 py-4">
+                          <ResearchDetail scan={scan} research={lookup(scan.ticker)} />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [showLogs, setShowLogs] = useState<boolean>(true);
@@ -695,7 +881,7 @@ export default function App() {
       fetchClosed();
     }
 
-    if (activeTab === "positional") {
+    if (activeTab === "positional" || activeTab === "longterm") {
       const fetchPositionalData = async () => {
         try {
           const resStat = await fetch(`${API_BASE}/api/positional/status`);
@@ -961,6 +1147,23 @@ export default function App() {
       setErrorMsg("Network error executing choice.");
     } finally {
       setLoading((prev) => ({ ...prev, [actKey]: false }));
+    }
+  };
+
+  const handleResearchRefresh = async () => {
+    setLoading((prev) => ({ ...prev, research_refresh: true }));
+    try {
+      const res = await fetch(`${API_BASE}/api/positional/research/refresh`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setSuccessMsg("Management-research refresh scheduled (holdings + watchlist + shortlist).");
+      } else {
+        setErrorMsg(data.detail || "Failed to start research refresh.");
+      }
+    } catch (e) {
+      setErrorMsg("Network error starting research refresh.");
+    } finally {
+      setLoading((prev) => ({ ...prev, research_refresh: false }));
     }
   };
 
@@ -1245,6 +1448,18 @@ export default function App() {
             >
               <Layers size={16} />
               Swing Positional
+            </button>
+
+            <button
+              onClick={() => setActiveTab("longterm")}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
+                activeTab === "longterm"
+                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
+                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
+              }`}
+            >
+              <TrendingUp size={16} />
+              Long-Term
             </button>
 
             <button
@@ -2507,118 +2722,48 @@ export default function App() {
                 </div>
               </div>
 
-              {/* SCAN CANDIDATES GRID */}
-              <div className="glass-panel p-6 rounded-2xl">
-                <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
-                    Latest Swing Scan Results (VCP & Multi-Strategy Checklists)
-                  </h3>
-                  <span className="text-xs text-slate-500 font-mono">({positionalScanResults.length} setups detected)</span>
-                </div>
+              {/* SCAN CANDIDATES GRID — swing horizons only (POSITIONAL / BOTH); LONG_TERM lives in its own tab */}
+              <PositionalScanTable
+                rows={positionalScanResults.filter((s) => s.horizon === "POSITIONAL" || s.horizon === "BOTH" || !s.horizon)}
+                research={positionalResearch}
+                variant="swing"
+              />
+              <p className="text-[11px] text-slate-500 mt-3">
+                Click any row to expand the analyst thesis (positives, risks, guidance, sources). Long-term-only candidates
+                appear under the <span className="text-amber-400 font-semibold">Long-Term</span> tab.
+              </p>
+            </div>
+          )}
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs font-mono text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px]">
-                        <th className="py-3 px-4">Ticker</th>
-                        <th className="py-3 px-4 text-center">Horizon</th>
-                        <th className="py-3 px-4 text-center">Confluence</th>
-                        <th className="py-3 px-4 text-center">Strategy</th>
-                        <th className="py-3 px-4">Scanned At</th>
-                        <th className="py-3 px-4 text-right">Price</th>
-                        <th className="py-3 px-4 text-center">Trend Template</th>
-                        <th className="py-3 px-4 text-center">VCP Detected</th>
-                        <th className="py-3 px-4 text-right">52W Proximity %</th>
-                        <th className="py-3 px-4 text-right">ATR %</th>
-                        <th className="py-3 px-4 text-center">Composite</th>
-                        <th className="py-3 px-4 text-center">Timing / Durab</th>
-                        <th className="py-3 px-4 text-center">Mgmt / Outlook</th>
-                        <th className="py-3 px-4">Reason Details</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-850">
-                      {positionalScanResults.length === 0 ? (
-                        <tr>
-                          <td colSpan={14} className="py-8 text-center text-slate-500">
-                            No scan candidates populated yet. Ensure whitelists are uploaded!
-                          </td>
-                        </tr>
-                      ) : (
-                        positionalScanResults.map((scan) => (
-                          <tr key={scan.id} className="hover:bg-slate-900/20">
-                            <td className="py-3 px-4 text-slate-200 font-bold">{scan.ticker}</td>
-                            <td className="py-3 px-4 text-center">{renderHorizonBadge(scan.horizon)}</td>
-                            <td className="py-3 px-4 text-center" title={scan.strategies_fired || ""}>
-                              {scan.confluence > 0 ? (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                                  {scan.confluence}× {scan.conviction ? scan.conviction.toUpperCase() : ""}
-                                </span>
-                              ) : (
-                                <span className="text-slate-600">—</span>
-                              )}
-                            </td>
-                            <td className="py-3 px-4 text-center">
-                              {renderFiredStrategies(scan.strategies_fired, scan.reason)}
-                            </td>
-                            <td className="py-3 px-4 text-slate-500">{scan.scanned_at}</td>
-                            <td className="py-3 px-4 text-right text-slate-300">
-                              {scan.price ? formatINR(scan.price) : "—"}
-                            </td>
-                            <td className="py-3 px-4 text-center">
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                  scan.trend_template
-                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                    : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                }`}
-                              >
-                                {scan.trend_template ? "PASSED" : "FAILED"}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 text-center">
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                  scan.vcp_detected
-                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                    : "bg-slate-850 text-slate-500"
-                                }`}
-                              >
-                                {scan.vcp_detected ? "DETEC" : "—"}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 text-right text-slate-300">
-                              {scan.proximity_52w_pct ? `${scan.proximity_52w_pct.toFixed(1)}%` : "—"}
-                            </td>
-                            <td className="py-3 px-4 text-right text-purple-400">
-                              {scan.atr_pct ? `${scan.atr_pct.toFixed(1)}%` : "—"}
-                            </td>
-                            <td className="py-3 px-4 text-center text-indigo-400 font-bold">
-                              {scan.composite_score != null ? scan.composite_score : scan.score}
-                            </td>
-                            <td className="py-3 px-4 text-center text-slate-400 whitespace-nowrap">
-                              <span className="text-sky-400">{scan.timing_score != null ? scan.timing_score.toFixed(0) : "—"}</span>
-                              <span className="text-slate-600"> / </span>
-                              <span className="text-amber-400">{scan.durability_score != null ? scan.durability_score.toFixed(0) : "—"}</span>
-                            </td>
-                            {(() => {
-                              const research = positionalResearch[scan.ticker.replace(/\.(NS|BO)$/, "")];
-                              return (
-                                <td className="py-3 px-4 text-center whitespace-nowrap" title={research?.thesis || ""}>
-                                  <span className="text-teal-400 font-bold mr-1">
-                                    {scan.management_pillar != null ? scan.management_pillar.toFixed(0) : "—"}
-                                  </span>
-                                  {research ? renderOutlookBadge(research.outlook) : null}
-                                </td>
-                              );
-                            })()}
-                            <td className="py-3 px-4 text-slate-400 max-w-[200px] truncate" title={scan.reason}>{scan.reason}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+          {/* ==================== LONG-TERM (durability-led candidates) ==================== */}
+          {activeTab === "longterm" && (
+            <div className="space-y-8 animate-fadeIn">
+              <div className="glass-panel p-6 rounded-2xl flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0 mb-1">
+                    Long-Term Accumulation
+                  </h3>
+                  <p className="text-xs text-slate-500 leading-relaxed max-w-3xl">
+                    Durable businesses surfaced by the scorecard's Axis-B (quality, valuation, management outlook). These have
+                    strong fundamentals but no current swing trigger (or are <span className="text-emerald-400">BOTH</span> — also a swing setup).
+                    They are <span className="text-slate-300">researched but never auto-bought</span> as positional trades. Click a row for the analyst thesis.
+                  </p>
                 </div>
+                <button
+                  onClick={handleResearchRefresh}
+                  disabled={loading["research_refresh"]}
+                  className="shrink-0 py-2.5 px-4 rounded-xl border border-slate-800 hover:bg-slate-900 text-slate-300 font-semibold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <RefreshCw size={14} className={loading["research_refresh"] ? "animate-spin" : ""} />
+                  {loading["research_refresh"] ? "REFRESHING..." : "REFRESH RESEARCH"}
+                </button>
               </div>
+
+              <PositionalScanTable
+                rows={positionalScanResults.filter((s) => s.horizon === "LONG_TERM" || s.horizon === "BOTH")}
+                research={positionalResearch}
+                variant="longterm"
+              />
             </div>
           )}
 

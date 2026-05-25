@@ -256,6 +256,72 @@ def _analyse(cand: dict, vix_regime: str) -> dict | None:
     return res
 
 
+def _apply_research(cand: dict, res: dict) -> None:
+    """Annotate the candidate with the verdict, fold the management pillar into
+    the scorecard (only when the candidate carries real pillar values), and
+    persist the thesis + the updated scan row."""
+    material = res.pop("_material", {})
+    mgmt = res.get("management_score")
+    verdict = res.get("verdict", "PROCEED")
+    outlook = res.get("outlook", "NEUTRAL")
+    thesis = res.get("thesis", "")
+
+    cand["llm_verdict"] = verdict
+    cand["llm_reason"] = thesis or f"Management outlook: {outlook}"
+    cand["management_pillar"] = mgmt
+    cand["outlook"] = outlook
+    cand["thesis"] = thesis
+
+    # Only re-blend the scorecard when this candidate has a real technical pillar
+    # (i.e. came from a scan row). Held/watchlist names refreshed without a scan
+    # still get their thesis + management score persisted, just no composite edit.
+    if mgmt is not None and cand.get("timing_score") is not None:
+        rb = scorer.recompute(
+            timing=cand.get("timing_score"),
+            quality=cand.get("quality_pillar"),
+            valuation=cand.get("valuation_pillar"),
+            momentum=cand.get("momentum_pillar"),
+            sentiment=cand.get("sentiment_pillar"),
+            management=mgmt,
+        )
+        cand["composite_score"] = rb["composite"]
+        cand["score"] = rb["composite"]
+        cand["durability_score"] = rb["durability"]
+        cand["horizon"] = rb["horizon"]
+        _update_scan_row(cand["ticker"], mgmt, rb["composite"], rb["durability"], rb["horizon"])
+
+    _persist_research(cand["ticker"], material, res)
+
+
+def _research_and_apply(cand: dict, vix_regime: str) -> dict | None:
+    """Run the analyst for one candidate and apply the result. Returns the
+    verdict dict (without the internal material), or None when it failed open."""
+    ticker = cand["ticker"]
+    try:
+        res = _analyse(cand, vix_regime)
+    except Exception as e:
+        log.warning("[research] analysis errored for %s: %s — failing open", ticker, e)
+        res = None
+    if res is None:
+        cand.setdefault("llm_verdict", "PROCEED")
+        cand.setdefault("llm_reason", "No management data / LLM unavailable; failed open")
+        return None
+    out = {k: v for k, v in res.items() if k != "_material"}
+    _apply_research(cand, res)
+    log.info("[research] %s verdict=%s outlook=%s mgmt=%s horizon=%s",
+             ticker, out.get("verdict"), out.get("outlook"),
+             out.get("management_score"), cand.get("horizon"))
+    return out
+
+
+def _vix_regime(vix_value: float) -> str:
+    if vix_value <= 15.0:
+        return "LOW / supportive"
+    if vix_value <= 20.0:
+        return "MODERATE / normal"
+    return "HIGH / volatile — be stricter"
+
+
 def run_positional_llm_research(candidates: list[dict], vix_value: float = 0.0) -> list[dict]:
     """Research candidates (BUY setups + LONG_TERM watch), fold the management
     pillar into each scorecard, persist the thesis, and return the buy pool.
@@ -285,63 +351,14 @@ def run_positional_llm_research(candidates: list[dict], vix_value: float = 0.0) 
     if not candidates:
         return []
 
-    if vix_value <= 15.0:
-        vix_regime = "LOW / supportive"
-    elif vix_value <= 20.0:
-        vix_regime = "MODERATE / normal"
-    else:
-        vix_regime = "HIGH / volatile — be stricter"
-
+    vix_regime = _vix_regime(vix_value)
     researched = candidates[:POSITIONAL_RESEARCH_LIMIT]
     overflow = candidates[POSITIONAL_RESEARCH_LIMIT:]
     log.info("[research] analysing %d candidates (VIX %.1f, %s)...",
              len(researched), vix_value, vix_regime)
 
     for cand in researched:
-        ticker = cand["ticker"]
-        try:
-            res = _analyse(cand, vix_regime)
-        except Exception as e:
-            log.warning("[research] analysis errored for %s: %s — failing open", ticker, e)
-            res = None
-
-        if res is None:
-            cand["llm_verdict"] = "PROCEED"
-            cand["llm_reason"] = "No management data / LLM unavailable; failed open"
-            continue
-
-        material = res.pop("_material", {})
-        mgmt = res.get("management_score")
-        verdict = res.get("verdict", "PROCEED")
-        outlook = res.get("outlook", "NEUTRAL")
-        thesis = res.get("thesis", "")
-
-        cand["llm_verdict"] = verdict
-        cand["llm_reason"] = thesis or f"Management outlook: {outlook}"
-        cand["management_pillar"] = mgmt
-        cand["outlook"] = outlook
-        cand["thesis"] = thesis
-
-        # Fold management into the scorecard (timing unchanged → buy/no-buy stable,
-        # but durability can upgrade POSITIONAL → BOTH).
-        if mgmt is not None:
-            rb = scorer.recompute(
-                timing=cand.get("timing_score"),
-                quality=cand.get("quality_pillar"),
-                valuation=cand.get("valuation_pillar"),
-                momentum=cand.get("momentum_pillar"),
-                sentiment=cand.get("sentiment_pillar"),
-                management=mgmt,
-            )
-            cand["composite_score"] = rb["composite"]
-            cand["score"] = rb["composite"]
-            cand["durability_score"] = rb["durability"]
-            cand["horizon"] = rb["horizon"]
-            _update_scan_row(ticker, mgmt, rb["composite"], rb["durability"], rb["horizon"])
-
-        _persist_research(ticker, material, res)
-        log.info("[research] %s verdict=%s outlook=%s mgmt=%s horizon=%s",
-                 ticker, verdict, outlook, mgmt, cand.get("horizon"))
+        _research_and_apply(cand, vix_regime)
 
     # Overflow beyond the research cap is processed technically.
     for c in overflow:
@@ -369,3 +386,147 @@ def run_positional_llm_research(candidates: list[dict], vix_value: float = 0.0) 
     buy_pool.sort(key=lambda x: x.get("score", 0.0), reverse=True)
     log.info("[research] done — %d BUY candidates cleared for entry", len(buy_pool))
     return buy_pool
+
+
+# ── Decoupled daily refresh (holdings + watchlist + recent shortlist) ────────
+
+def _cand_from_scan(ticker: str) -> dict:
+    """Build a candidate dict from a ticker's latest scan row (pillars for the
+    scorecard re-blend). Falls back to just the ticker if it was never scanned."""
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM pos_scans WHERE id = (SELECT MAX(id) FROM pos_scans WHERE ticker = ?)",
+                (ticker,),
+            ).fetchone()
+    except Exception:
+        row = None
+    if not row:
+        return {"ticker": ticker}
+    r = dict(row)
+    return {
+        "ticker": ticker,
+        "alert_type": r.get("alert_type"),
+        "horizon": r.get("horizon"),
+        "score": r.get("score"),
+        "composite_score": r.get("composite_score"),
+        "timing_score": r.get("timing_score"),
+        "confluence": r.get("confluence"),
+        "strategies_fired": r.get("strategies_fired"),
+        "quality_pillar": r.get("quality_pillar"),
+        "valuation_pillar": r.get("valuation_pillar"),
+        "momentum_pillar": r.get("momentum_pillar"),
+        "sentiment_pillar": r.get("sentiment_pillar"),
+    }
+
+
+def _refresh_universe() -> tuple[list[str], set[str]]:
+    """Tickers to refresh = open positions ∪ watchlist ∪ recent shortlist.
+    Returns (ordered_tickers, held_set). Positions/watchlist come first so they
+    always make the cap."""
+    held: set[str] = set()
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(tk):
+        if tk and tk not in seen:
+            seen.add(tk)
+            ordered.append(tk)
+
+    try:
+        with get_conn() as conn:
+            for r in conn.execute("SELECT DISTINCT ticker FROM pos_positions WHERE status='OPEN'").fetchall():
+                held.add(r["ticker"]); _add(r["ticker"])
+            for r in conn.execute("SELECT ticker FROM pos_watchlist").fetchall():
+                _add(r["ticker"])
+            latest = conn.execute(
+                "SELECT substr(scanned_at,1,10) AS d FROM pos_scans ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if latest:
+                rows = conn.execute(
+                    """SELECT ticker FROM pos_scans
+                       WHERE id IN (SELECT MAX(id) FROM pos_scans
+                                    WHERE substr(scanned_at,1,10) = ? GROUP BY ticker)
+                       ORDER BY composite_score DESC LIMIT ?""",
+                    (latest["d"], POSITIONAL_RESEARCH_LIMIT),
+                ).fetchall()
+                for r in rows:
+                    _add(r["ticker"])
+    except Exception as e:
+        log.warning("[research] refresh universe build failed: %s", e)
+    return ordered, held
+
+
+def refresh_management_research(vix_value: float = 0.0) -> dict:
+    """Daily decoupled pass: re-run the concall analyst over holdings + watchlist
+    + recent shortlist. Cheap in steady state (cached by concall date) and the
+    way held positions pick up new quarterly concalls. Raises advisory review
+    alerts when a held stock's management read deteriorates.
+    """
+    if not (config.POSITIONAL_LLM_RESEARCH_ENABLED and config.POSITIONAL_CONCALL_RESEARCH_ENABLED):
+        return {"skipped": True, "reason": "research disabled"}
+
+    tickers, held = _refresh_universe()
+    cap = POSITIONAL_RESEARCH_LIMIT * 3
+    tickers = tickers[:cap]
+    if not tickers:
+        return {"researched": 0, "reviews": []}
+
+    vix_regime = _vix_regime(vix_value)
+    log.info("[research] refresh pass over %d tickers (%d held)...", len(tickers), len(held))
+
+    reviews = []
+    for tk in tickers:
+        cand = _cand_from_scan(tk)
+        res = _research_and_apply(cand, vix_regime)
+        if not res or tk not in held:
+            continue
+        if _is_deteriorating(res):
+            review = {
+                "ticker": tk, "verdict": res.get("verdict"),
+                "outlook": res.get("outlook"),
+                "management_score": res.get("management_score"),
+                "thesis": res.get("thesis", ""),
+            }
+            reviews.append(review)
+            try:
+                from positional.alerts import send_management_review
+                send_management_review(review)
+            except Exception:
+                pass
+
+    log.info("[research] refresh done — %d researched, %d holdings flagged for review",
+             len(tickers), len(reviews))
+    return {"researched": len(tickers), "reviews": reviews}
+
+
+def _is_deteriorating(res: dict) -> bool:
+    mgmt = res.get("management_score")
+    return (
+        res.get("verdict") == "SKIP"
+        or res.get("outlook") == "NEGATIVE"
+        or (mgmt is not None and mgmt <= config.POSITIONAL_MANAGEMENT_REVIEW_SCORE)
+    )
+
+
+def management_exit_reason(ticker: str) -> str | None:
+    """If management auto-exit is enabled and the stored research for this held
+    ticker has deteriorated, return an exit reason string; else None."""
+    if not config.POSITIONAL_MANAGEMENT_AUTO_EXIT:
+        return None
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT verdict, outlook, management_score FROM pos_research WHERE ticker = ?",
+                (ticker.replace(".NS", "").replace(".BO", ""),),
+            ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    r = dict(row)
+    if _is_deteriorating({"verdict": r.get("verdict"), "outlook": r.get("outlook"),
+                          "management_score": r.get("management_score")}):
+        return (f"MANAGEMENT_EXIT: outlook {r.get('outlook')} / verdict {r.get('verdict')} "
+                f"(mgmt {r.get('management_score')})")
+    return None

@@ -364,6 +364,16 @@ POSITIONAL_CONCALL_CACHE_DAYS = int(os.environ.get("POSITIONAL_CONCALL_CACHE_DAY
 # A management score at/below this vetoes the buy regardless of technicals.
 POSITIONAL_MANAGEMENT_VETO_SCORE = float(os.environ.get("POSITIONAL_MANAGEMENT_VETO_SCORE", "25.0"))
 
+# Decoupled daily research refresh — re-runs the concall analyst over open
+# positions + watchlist + recent shortlist regardless of any technical trigger,
+# so holdings pick up new quarterly concalls (staggered across the quarter).
+POSITIONAL_RESEARCH_REFRESH_TIME = os.environ.get("POSITIONAL_RESEARCH_REFRESH_TIME", "08:30")
+# Held stocks whose management read drops to/below this raise an advisory review alert.
+POSITIONAL_MANAGEMENT_REVIEW_SCORE = float(os.environ.get("POSITIONAL_MANAGEMENT_REVIEW_SCORE", "35.0"))
+# When True, deteriorating management (SKIP / NEGATIVE / below review score) also
+# triggers an exit in run_exit_checks. Off by default — advisory alert only.
+POSITIONAL_MANAGEMENT_AUTO_EXIT = os.environ.get("POSITIONAL_MANAGEMENT_AUTO_EXIT", "False").lower() == "true"
+
 # New positional strategy tunables
 POS_BVM_HALT_ON_BEARISH = True
 POS_FTM_TIGHT_RANGE_LIMIT = 15.0

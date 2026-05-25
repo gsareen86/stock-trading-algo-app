@@ -1388,6 +1388,26 @@ def trigger_positional_scan(background_tasks: BackgroundTasks, force: bool = Que
         log.error("Error triggering positional scan: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+def run_research_refresh_task():
+    try:
+        log.info("Starting background management-research refresh...")
+        from positional.research import refresh_management_research
+        result = refresh_management_research()
+        log.info("Research refresh completed: %s", result)
+    except Exception as e:
+        log.error("Error in background research refresh: %s", e)
+
+@app.post("/api/positional/research/refresh")
+def trigger_research_refresh(background_tasks: BackgroundTasks):
+    """Manually run the decoupled management-research refresh (holdings + watchlist
+    + recent shortlist) in the background — picks up new quarterly concalls."""
+    try:
+        background_tasks.add_task(run_research_refresh_task)
+        return {"success": True, "message": "Management-research refresh triggered in background"}
+    except Exception as e:
+        log.error("Error triggering research refresh: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/positional/analytics")
 def get_positional_analytics():
     """Retrieve closed positional metrics breakdown (avg winner/win rate)."""
