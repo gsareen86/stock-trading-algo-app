@@ -42,12 +42,15 @@ _MAX_CHUNKS = 6   # cap transcript chunks summarised per stock (bounds LLM cost)
 # JSON schema: JSON field caps were throwing away the qualitative content
 # (expansion, M&A, new products, industry outlook). Only Stage 3 needs JSON.
 _CONCALL_SYSTEM = (
-    "You are an equity analyst reading an Indian company's earnings concall transcript "
-    "and investor presentation. Report ONLY what management said — do not judge the stock. "
-    "Be COMPREHENSIVE: capture not just financials but expansion plans, M&A, new products / "
-    "segments, growth outlook & guidance, industry/market trends, capital allocation, and "
-    "risks — including insights from the analyst Q&A. Keep specific numbers and names. "
-    "Output well-organised bullet points grouped by theme; no preamble."
+    "You are an equity analyst distilling an Indian company's earnings concall + presentation "
+    "into notes that matter for STOCK ANALYSIS. Report only what management said.\n"
+    "INCLUDE: performance drivers, growth outlook & forward guidance, expansion / capex / M&A / "
+    "partnerships, new products & segments, industry & market trends and competition, capital "
+    "allocation & margins, and risks — with specific numbers and names, including Q&A insights.\n"
+    "EXCLUDE everything administrative: the call date, who hosted or spoke, executive names and "
+    "titles, rescheduling, safe-harbour/disclaimers, greetings and closing remarks.\n"
+    "Output concise PLAIN-TEXT bullet points grouped under short headings. "
+    "No markdown tables, no emojis, no decorative formatting."
 )
 
 # ── Stage 2: fundamentals + ownership + announcements summary ───────────────
@@ -116,21 +119,23 @@ def _summarise_long_text(body: str) -> str:
     chunk = POSITIONAL_RESEARCH_CHUNK_CHARS
     chunks = [body[i:i + chunk] for i in range(0, len(body), chunk)][:_MAX_CHUNKS]
     prompt_head = (
-        "Extract ALL substantive management commentary from this concall / presentation "
-        "excerpt as detailed bullet points. Capture every distinct point, with numbers and "
-        "names, across: (1) business & operational performance; (2) growth outlook, demand "
-        "and forward guidance; (3) expansion plans — capacity, new geographies, M&A / "
-        "acquisitions, partnerships, franchise/distribution; (4) new products / segments / "
-        "launches / technology; (5) industry & market trends, competition; (6) capital "
-        "allocation, margins, costs; (7) risks, headwinds, red flags; (8) notable analyst "
-        "Q&A insights. Do NOT omit qualitative strategy points in favour of only financials."
+        "Extract the management commentary that matters for STOCK ANALYSIS from this concall / "
+        "presentation excerpt, as concise plain-text bullet points with numbers and names, across: "
+        "(1) performance drivers; (2) growth outlook, demand and forward guidance; (3) expansion — "
+        "capacity/capex, new geographies, M&A, partnerships, franchise/distribution; (4) new "
+        "products / segments / launches; (5) industry & market trends, competition; (6) capital "
+        "allocation, margins, costs; (7) risks, headwinds, red flags; (8) notable analyst Q&A.\n"
+        "EXCLUDE administrative/meta content: the call date, who hosted or spoke, executive names "
+        "and titles, rescheduling, safe-harbour/disclaimers, greetings and closing remarks. "
+        "No markdown tables, no emojis, no headers — plain bullets only."
     )
     summaries = []
     for idx, ch in enumerate(chunks):
         txt = call_text(
             prompt=f"{prompt_head}\n\nEXCERPT:\n{ch}",
-            system="You are an equity analyst. Output only the bullet-point notes — no preamble.",
-            model=LLM_VETO_MODEL, max_tokens=800, caller="research_chunk",
+            system="You are an equity analyst. Output concise analysis-relevant bullet points only — "
+                   "no preamble, no meta/admin details, no tables, no emojis.",
+            model=LLM_VETO_MODEL, max_tokens=900, caller="research_chunk",
         )
         if txt:
             summaries.append(txt if len(chunks) == 1 else f"[part {idx + 1}]\n{txt}")
@@ -161,13 +166,15 @@ def _summarise_concall(material: dict) -> str | None:
     # losing nothing meaningful (it's a text→text condense, not a JSON squeeze).
     if "[part " in digest or len(digest) > POSITIONAL_RESEARCH_CHUNK_CHARS:
         consolidated = call_text(
-            prompt=("Consolidate these concall notes into ONE comprehensive, de-duplicated set "
-                    "of bullet points, grouped under headings: Performance; Growth outlook & "
-                    "guidance; Expansion / M&A / partnerships; New products & segments; Industry "
-                    "& market trends; Capital allocation & margins; Risks. Keep ALL distinct "
-                    f"insights, numbers and names:\n\n{digest}"),
+            prompt=("Consolidate these concall notes into ONE concise, de-duplicated set of "
+                    "plain-text bullet points, grouped under short headings: Performance; "
+                    "Growth outlook & guidance; Expansion / capex / M&A; New products & segments; "
+                    "Industry & market trends; Capital allocation & margins; Risks. Keep distinct "
+                    "insights, numbers and names. EXCLUDE the call date, executive names, call "
+                    "logistics and disclaimers. No tables, no emojis, no markdown decoration:\n\n"
+                    f"{digest}"),
             system=_CONCALL_SYSTEM,
-            model=LLM_VETO_MODEL, max_tokens=1500, caller="research_concall_consolidate",
+            model=LLM_VETO_MODEL, max_tokens=2000, caller="research_concall_consolidate",
         )
         if consolidated:
             digest = consolidated
