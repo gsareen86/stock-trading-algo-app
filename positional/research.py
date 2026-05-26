@@ -221,8 +221,42 @@ def _combine(cand: dict, concall: dict | None, fundamentals: dict | None,
         f"{concall_block}\n\n{fund_block}\n\n"
         "Form the holistic thesis, score management, and give an actionable recommendation."
     )
-    return call_json(prompt=prompt, schema=_COMBINE_SCHEMA, system=_COMBINE_SYSTEM,
-                     model=LLM_VETO_MODEL, max_tokens=700, caller="research_combine")
+    res = call_json(prompt=prompt, schema=_COMBINE_SCHEMA, system=_COMBINE_SYSTEM,
+                    model=LLM_VETO_MODEL, max_tokens=700, caller="research_combine")
+    return _coerce_result(res)
+
+
+def _coerce_result(res: dict | None) -> dict | None:
+    """Local models don't hard-enforce JSON enums — normalise the categorical
+    fields so a verbose value can't leak into ``outlook``/``verdict`` (and the logs)."""
+    if not res:
+        return res
+
+    # Recover the common field-swap where the model puts the thesis in `outlook`.
+    outlook_raw = str(res.get("outlook") or "")
+    thesis_raw = str(res.get("thesis") or "")
+    if len(outlook_raw) > 25 and len(thesis_raw) < 25:
+        res["thesis"], res["outlook"] = outlook_raw, thesis_raw
+
+    def pick(val, allowed, default):
+        s = str(val or "").strip().upper().replace(" ", "_").replace("-", "_")
+        if s in allowed:
+            return s
+        for a in allowed:               # tolerate "OUTLOOK: POSITIVE" etc.
+            if a in s:
+                return a
+        return default
+
+    res["verdict"] = pick(res.get("verdict"), {"PROCEED", "REDUCE", "SKIP"}, "PROCEED")
+    res["outlook"] = pick(res.get("outlook"), {"POSITIVE", "NEUTRAL", "MIXED", "NEGATIVE"}, "NEUTRAL")
+    res["recommendation"] = pick(res.get("recommendation"),
+                                 {"SWING_POSITIONAL", "LONG_TERM", "BOTH", "AVOID"}, "")
+    try:
+        ms = res.get("management_score")
+        res["management_score"] = max(0.0, min(100.0, float(ms))) if ms is not None else None
+    except (TypeError, ValueError):
+        res["management_score"] = None
+    return res
 
 
 def _fundamentals(ticker: str) -> dict:
