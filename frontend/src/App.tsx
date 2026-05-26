@@ -522,7 +522,7 @@ const ResearchDetail: React.FC<{ scan: PositionalScanResult; research?: Position
           {research.concall_summary ? (
             <div className="pt-1">
               <div className="text-violet-400 uppercase tracking-wider text-[9px] mb-0.5">Concall Summary</div>
-              <div className="text-slate-300 leading-relaxed">{research.concall_summary}</div>
+              <div className="text-slate-300 leading-relaxed whitespace-pre-line">{research.concall_summary}</div>
             </div>
           ) : (
             <div className="text-slate-600 text-[10px] pt-1">No concall transcript processed (install pypdf / transcript unavailable).</div>

@@ -42,9 +42,19 @@ _CONCALL_SCHEMA = {
     "type": "object",
     "properties": {
         "summary": {"type": "string",
-                    "description": "<=140 word digest of what management actually said: demand/order-book, growth & margin outlook, capital allocation, notable commentary."},
+                    "description": "Comprehensive narrative (150-250 words) of management's commentary: business & operational performance, strategy and overall message."},
+        "growth_outlook": {"type": "string",
+                           "description": "Demand/order-book, growth drivers, and the forward growth outlook management described."},
+        "expansion_plans": {"type": "string",
+                            "description": "Capacity additions, new geographies/markets, M&A / acquisitions, partnerships, distribution/franchise expansion."},
+        "new_initiatives": {"type": "string",
+                            "description": "New products, segments, launches, technology or capability additions discussed."},
+        "industry_trends": {"type": "string",
+                            "description": "Industry / market / sector trends, competitive dynamics and the market outlook management highlighted."},
         "guidance": {"type": "string",
-                     "description": "Management's explicit FORWARD GUIDANCE restated (e.g. revenue/margin/capex targets). 'none given' if absent."},
+                     "description": "Management's explicit FORWARD GUIDANCE restated (revenue/margin/capex/segment targets, numbers). 'none given' if absent."},
+        "key_risks": {"type": "array", "items": {"type": "string"},
+                      "description": "Up to 6 risks, headwinds, concerns or red flags management mentioned or that the commentary implies."},
         "tone": {"type": "string", "enum": ["POSITIVE", "NEUTRAL", "MIXED", "NEGATIVE"],
                  "description": "Tone/confidence of management commentary."},
     },
@@ -55,7 +65,9 @@ _CONCALL_SCHEMA = {
 _CONCALL_SYSTEM = (
     "You are an equity analyst reading an Indian company's earnings concall transcript "
     "and investor presentation. Extract ONLY what management said — do not judge the stock. "
-    "Capture forward guidance verbatim-ish, growth/margin outlook, capital allocation, and tone."
+    "Be COMPREHENSIVE: capture not just financials but expansion plans, M&A, new products / "
+    "segments, growth outlook & guidance, industry/market trends, capital allocation, and "
+    "risks — including insights from the analyst Q&A. Keep specific numbers and names."
 )
 
 # ── Stage 2: fundamentals + ownership + announcements summary ───────────────
@@ -118,33 +130,40 @@ _COMBINE_SYSTEM = (
 
 
 def _summarise_long_text(body: str) -> str:
-    """Map step: compress the (possibly huge) transcript to a free-TEXT bullet
-    digest. Plain text — not JSON — because local models reliably summarise long
-    inputs but lapse into prose when asked for JSON on a large prompt. The JSON
-    extraction runs later on this small digest instead."""
+    """Map step: compress the (possibly huge) transcript to a COMPREHENSIVE free-text
+    bullet digest. Plain text — not JSON — because local models summarise long inputs
+    reliably but lapse into prose when asked for JSON on a large prompt."""
     chunk = POSITIONAL_RESEARCH_CHUNK_CHARS
     chunks = [body[i:i + chunk] for i in range(0, len(body), chunk)][:_MAX_CHUNKS]
+    prompt_head = (
+        "Extract ALL substantive management commentary from this concall / presentation "
+        "excerpt as detailed bullet points. Capture every distinct point, with numbers and "
+        "names, across: (1) business & operational performance; (2) growth outlook, demand "
+        "and forward guidance; (3) expansion plans — capacity, new geographies, M&A / "
+        "acquisitions, partnerships, franchise/distribution; (4) new products / segments / "
+        "launches / technology; (5) industry & market trends, competition; (6) capital "
+        "allocation, margins, costs; (7) risks, headwinds, red flags; (8) notable analyst "
+        "Q&A insights. Do NOT omit qualitative strategy points in favour of only financials."
+    )
     summaries = []
     for idx, ch in enumerate(chunks):
         txt = call_text(
-            prompt=("Summarise the key management commentary in this concall / presentation "
-                    "excerpt as concise bullet points — forward guidance, growth drivers, "
-                    f"margins, capital allocation, demand/order-book, risks and red flags:\n\n{ch}"),
-            system="You are an equity analyst. Output only the bullet-point summary — no preamble.",
-            model=LLM_VETO_MODEL, max_tokens=450, caller="research_chunk",
+            prompt=f"{prompt_head}\n\nEXCERPT:\n{ch}",
+            system="You are an equity analyst. Output only the bullet-point notes — no preamble.",
+            model=LLM_VETO_MODEL, max_tokens=800, caller="research_chunk",
         )
         if txt:
             summaries.append(txt if len(chunks) == 1 else f"[part {idx + 1}]\n{txt}")
-    return "\n\n".join(summaries)[: POSITIONAL_RESEARCH_CHUNK_CHARS]
+    return "\n\n".join(summaries)
 
 
 def _summarise_concall(material: dict) -> dict | None:
     """Stage 1 — summarise the concall transcript + presentation alone.
 
-    Two steps so JSON is reliable even on local models: first compress the
-    transcript to a free-text digest (call_text, chunked), then extract the
-    structured {summary, guidance, tone} from that COMPACT digest (call_json) —
-    the same small-input shape that makes Stages 2 & 3 parse cleanly.
+    Pipeline that keeps JSON reliable AND content rich:
+      map      → comprehensive free-text bullets per chunk (call_text)
+      reduce   → if the digest is still large, consolidate to themed bullets (call_text)
+      extract  → structured themed JSON from the COMPACT digest (call_json)
     Returns the dict, or None when there is no concall material.
     """
     body = "\n\n".join(p for p in (material.get("concall_text", ""),
@@ -156,12 +175,28 @@ def _summarise_concall(material: dict) -> dict | None:
     if not digest:                       # text step failed/unavailable — use a raw excerpt
         digest = body[:POSITIONAL_RESEARCH_CHUNK_CHARS]
 
+    # Keep the JSON-extraction input bounded (large inputs make local models emit prose),
+    # but preserve breadth by consolidating the bullets rather than truncating them.
+    if len(digest) > POSITIONAL_RESEARCH_CHUNK_CHARS:
+        consolidated = call_text(
+            prompt=("Consolidate these concall notes into a comprehensive, de-duplicated set "
+                    "of themed bullet points covering: performance, growth outlook & guidance, "
+                    "expansion / M&A / partnerships, new products & segments, industry trends, "
+                    "capital allocation & margins, and risks. Keep ALL distinct insights, "
+                    f"numbers and names:\n\n{digest}"),
+            system="You are an equity analyst. Output only themed bullet points — no preamble.",
+            model=LLM_VETO_MODEL, max_tokens=1000, caller="research_concall_consolidate",
+        )
+        if consolidated:
+            digest = consolidated
+
     res = call_json(
-        prompt=f"Management concall digest for {material.get('ticker')}:\n\n{digest}\n\n"
-               "From this digest produce the JSON object with: summary (<=140 words), "
-               "guidance (management's forward guidance verbatim-ish, or 'none given'), tone.",
+        prompt=f"Management concall notes for {material.get('ticker')}:\n\n{digest}\n\n"
+               "From these notes produce the JSON object. Be comprehensive across summary, "
+               "growth_outlook, expansion_plans, new_initiatives, industry_trends, guidance "
+               "(management's forward guidance, or 'none given'), key_risks and tone.",
         schema=_CONCALL_SCHEMA, system=_CONCALL_SYSTEM,
-        model=LLM_VETO_MODEL, max_tokens=500, caller="research_concall",
+        model=LLM_VETO_MODEL, max_tokens=1100, caller="research_concall",
     )
     return res
 
@@ -198,13 +233,36 @@ def _summarise_fundamentals(material: dict, f: dict) -> dict | None:
     return res
 
 
+def _compose_concall_text(c: dict | None) -> str:
+    """Flatten the themed concall fields into one readable block (for the combine
+    prompt, storage and the UI)."""
+    if not c:
+        return ""
+    def _ok(v):
+        return v and str(v).strip().lower() not in ("", "none", "n/a", "none given")
+    parts = []
+    if c.get("summary"):
+        parts.append(str(c["summary"]))
+    for label, key in (("Growth outlook", "growth_outlook"),
+                       ("Expansion / M&A", "expansion_plans"),
+                       ("New initiatives", "new_initiatives"),
+                       ("Industry & market trends", "industry_trends")):
+        if _ok(c.get(key)):
+            parts.append(f"{label}: {c[key]}")
+    risks = c.get("key_risks") or []
+    if risks:
+        parts.append("Concall risks: " + "; ".join(str(r) for r in risks))
+    if _ok(c.get("guidance")):
+        parts.append(f"Guidance: {c['guidance']}")
+    return "\n\n".join(parts)
+
+
 def _combine(cand: dict, concall: dict | None, fundamentals: dict | None,
              f: dict, vix_regime: str) -> dict | None:
     """Stage 3 — combine the two summaries into the holistic thesis + verdict."""
     concall_block = (
-        f"CONCALL SUMMARY (tone {concall.get('tone')}):\n{concall.get('summary')}\n"
-        f"Management guidance: {concall.get('guidance')}"
-        if concall else "CONCALL SUMMARY: (no concall transcript available)"
+        f"CONCALL NOTES (tone {concall.get('tone')}):\n{_compose_concall_text(concall)}"
+        if concall else "CONCALL NOTES: (no concall transcript available)"
     )
     fund_block = (
         f"FUNDAMENTALS & OWNERSHIP SUMMARY:\n{fundamentals.get('summary')}\n"
@@ -376,7 +434,7 @@ def _analyse(cand: dict, vix_regime: str) -> dict | None:
         return None
 
     # Keep the two component summaries for transparency / the UI.
-    res["concall_summary"] = (concall or {}).get("summary", "")
+    res["concall_summary"] = _compose_concall_text(concall)
     res["fundamentals_summary"] = (fundamentals or {}).get("summary", "")
     if not res.get("guidance") and concall:
         res["guidance"] = concall.get("guidance", "")
