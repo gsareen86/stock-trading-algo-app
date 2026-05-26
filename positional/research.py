@@ -37,53 +37,7 @@ log = logging.getLogger(__name__)
 
 _MAX_CHUNKS = 6   # cap transcript chunks summarised per stock (bounds LLM cost)
 
-# Final analyst verdict schema
-_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "verdict": {
-            "type": "string",
-            "enum": ["PROCEED", "REDUCE", "SKIP"],
-            "description": "PROCEED: outlook supports a position; REDUCE: proceed at half size due to a concern; SKIP: management/outlook red flags — do not buy.",
-        },
-        "outlook": {
-            "type": "string",
-            "enum": ["POSITIVE", "NEUTRAL", "MIXED", "NEGATIVE"],
-            "description": "Overall management/business outlook from the commentary.",
-        },
-        "management_score": {
-            "type": "number",
-            "description": "0-100 score for management credibility, execution vs past guidance, growth outlook and capital allocation. 50 = neutral.",
-        },
-        "thesis": {
-            "type": "string",
-            "description": "<=120 word investment thesis grounded in the management commentary.",
-        },
-        "key_positives": {"type": "array", "items": {"type": "string"},
-                          "description": "Up to 4 concrete positives."},
-        "key_risks": {"type": "array", "items": {"type": "string"},
-                      "description": "Up to 4 concrete risks / red flags."},
-        "guidance": {"type": "string",
-                     "description": "<=40 word gist of forward guidance, or 'none given'."},
-        "confidence": {"type": "number", "description": "0.0-1.0 confidence in this read."},
-    },
-    "required": ["verdict", "outlook", "management_score", "thesis", "confidence"],
-    "additionalProperties": False,
-}
-
-_SYSTEM_PROMPT = (
-    "You are a senior buy-side equity analyst covering Indian listed companies. "
-    "You read management commentary (concall transcript, investor presentation, "
-    "Screener.in pros/cons, recent announcements) to judge MANAGEMENT OUTLOOK for a "
-    "swing/positional or long-term holding.\n"
-    "Assess: credibility and execution vs prior guidance, demand/order-book and growth "
-    "outlook, margins and capital allocation, balance-sheet/leverage commentary, and any "
-    "governance red flags (pledging, related-party, accounting, promoter conduct).\n"
-    "Score management_score 0-100 (50=neutral). Reserve SKIP for genuine red flags or a "
-    "clearly deteriorating outlook; REDUCE for a real but survivable concern; otherwise PROCEED. "
-    "Be specific and grounded in the material — do not invent facts."
-)
-
+# ── Stage 1: concall transcript / presentation summary ──────────────────────
 _CHUNK_SCHEMA = {
     "type": "object",
     "properties": {
@@ -93,6 +47,84 @@ _CHUNK_SCHEMA = {
     "required": ["summary"],
     "additionalProperties": False,
 }
+
+_CONCALL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string",
+                    "description": "<=140 word digest of what management actually said: demand/order-book, growth & margin outlook, capital allocation, notable commentary."},
+        "guidance": {"type": "string",
+                     "description": "Management's explicit FORWARD GUIDANCE restated (e.g. revenue/margin/capex targets). 'none given' if absent."},
+        "tone": {"type": "string", "enum": ["POSITIVE", "NEUTRAL", "MIXED", "NEGATIVE"],
+                 "description": "Tone/confidence of management commentary."},
+    },
+    "required": ["summary", "guidance", "tone"],
+    "additionalProperties": False,
+}
+
+_CONCALL_SYSTEM = (
+    "You are an equity analyst reading an Indian company's earnings concall transcript "
+    "and investor presentation. Extract ONLY what management said — do not judge the stock. "
+    "Capture forward guidance verbatim-ish, growth/margin outlook, capital allocation, and tone."
+)
+
+# ── Stage 2: fundamentals + ownership + announcements summary ───────────────
+_FUND_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string",
+                    "description": "<=140 word read of financial trajectory (growth, margins, cash flow, returns), valuation, and the OWNERSHIP TREND across quarters (FII/DII vs promoter/public, pledging)."},
+        "ownership_trend": {"type": "string",
+                            "description": "One line: are FIIs/DIIs accumulating or exiting over recent quarters vs public? Promoter/pledge changes?"},
+        "key_positives": {"type": "array", "items": {"type": "string"}, "description": "Up to 4 fundamental/ownership positives."},
+        "key_risks": {"type": "array", "items": {"type": "string"}, "description": "Up to 4 fundamental/ownership/governance risks."},
+    },
+    "required": ["summary", "ownership_trend"],
+    "additionalProperties": False,
+}
+
+_FUND_SYSTEM = (
+    "You are an equity analyst assessing an Indian company's fundamentals from Screener.in data: "
+    "multi-year P&L/cash-flow/returns, valuation ratios, the multi-quarter shareholding pattern, "
+    "auto-generated pros/cons and recent announcements. Focus on TRENDS over time (especially "
+    "FII/DII accumulation vs public, promoter holding & pledging) and capital allocation. Be factual."
+)
+
+# ── Stage 3: combine into the holistic thesis + actionable recommendation ───
+_COMBINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["PROCEED", "REDUCE", "SKIP"],
+                    "description": "PROCEED: outlook supports a position; REDUCE: proceed at half size due to a concern; SKIP: red flags / deteriorating — do not buy."},
+        "outlook": {"type": "string", "enum": ["POSITIVE", "NEUTRAL", "MIXED", "NEGATIVE"],
+                    "description": "Overall business/management outlook."},
+        "management_score": {"type": "number",
+                             "description": "0-100 for management credibility, execution vs guidance, growth outlook, capital allocation, governance. 50=neutral."},
+        "thesis": {"type": "string",
+                   "description": "<=130 word holistic thesis combining concall + fundamentals/ownership."},
+        "key_positives": {"type": "array", "items": {"type": "string"}, "description": "Up to 4 combined positives."},
+        "key_risks": {"type": "array", "items": {"type": "string"}, "description": "Up to 4 combined risks."},
+        "guidance": {"type": "string",
+                     "description": "Restate MANAGEMENT'S forward guidance from the concall (not your opinion). 'none given' if absent."},
+        "recommendation": {"type": "string", "enum": ["SWING_POSITIONAL", "LONG_TERM", "BOTH", "AVOID"],
+                           "description": "Actionable call: SWING_POSITIONAL (trade the move), LONG_TERM (accumulate/hold), BOTH, or AVOID."},
+        "recommendation_rationale": {"type": "string",
+                                     "description": "<=40 words: why this action, referencing timing vs durability."},
+        "confidence": {"type": "number", "description": "0.0-1.0 confidence in this read."},
+    },
+    "required": ["verdict", "outlook", "management_score", "thesis", "recommendation", "confidence"],
+    "additionalProperties": False,
+}
+
+_COMBINE_SYSTEM = (
+    "You are a senior buy-side analyst forming a final view on an Indian stock by combining "
+    "(a) a management/concall summary and (b) a fundamentals & ownership summary, plus the "
+    "technical scorecard context. Score management 0-100. Reserve SKIP for genuine red flags or a "
+    "clearly deteriorating outlook; REDUCE for a real but survivable concern; else PROCEED.\n"
+    "For 'recommendation', decide what to DO: SWING_POSITIONAL when the technical timing is strong "
+    "but durability is ordinary; LONG_TERM when the business can compound but timing is weak; BOTH "
+    "when timing and durability are both strong; AVOID otherwise. Ground every claim in the inputs."
+)
 
 
 def _summarise_long_text(body: str) -> str:
@@ -115,27 +147,82 @@ def _summarise_long_text(body: str) -> str:
     return "\n".join(summaries)[:POSITIONAL_RESEARCH_CHUNK_CHARS]
 
 
-def _build_digest(material: dict) -> str:
-    """Assemble the management material into one prompt-ready digest, map-reducing
-    the transcript/presentation if it exceeds the single-pass char budget."""
-    parts = []
-    if material.get("pros"):
-        parts.append("SCREENER PROS:\n- " + "\n- ".join(material["pros"][:8]))
-    if material.get("cons"):
-        parts.append("SCREENER CONS:\n- " + "\n- ".join(material["cons"][:8]))
-    if material.get("announcements"):
-        parts.append("RECENT ANNOUNCEMENTS:\n- " + "\n- ".join(material["announcements"][:8]))
-
+def _summarise_concall(material: dict) -> dict | None:
+    """Stage 1 — summarise the concall transcript + presentation alone.
+    Returns {summary, guidance, tone} or None when there is no concall material."""
     body = "\n\n".join(p for p in (material.get("concall_text", ""),
                                    material.get("ppt_text", "")) if p)
-    if body:
-        if len(body) <= POSITIONAL_RESEARCH_CHUNK_CHARS:
-            parts.append("CONCALL / PRESENTATION:\n" + body)
-        else:
-            digest = _summarise_long_text(body)
-            if digest:
-                parts.append("CONCALL / PRESENTATION (summarised):\n" + digest)
-    return "\n\n".join(parts).strip()
+    if not body:
+        return None
+    if len(body) > POSITIONAL_RESEARCH_CHUNK_CHARS:
+        body = _summarise_long_text(body)
+        if not body:
+            return None
+    res = call_json(
+        prompt=f"Concall transcript / presentation for {material.get('ticker')}:\n\n{body}\n\n"
+               "Summarise management's commentary and restate their forward guidance.",
+        schema=_CONCALL_SCHEMA, system=_CONCALL_SYSTEM,
+        model=LLM_VETO_MODEL, max_tokens=500, caller="research_concall",
+    )
+    return res
+
+
+def _summarise_fundamentals(material: dict, f: dict) -> dict | None:
+    """Stage 2 — summarise fundamentals, valuation, multi-quarter ownership trend,
+    pros/cons and announcements (everything except the concall)."""
+    parts = []
+    if material.get("financial_trend"):
+        parts.append(material["financial_trend"])
+    if material.get("shareholding_trend"):
+        parts.append(material["shareholding_trend"])
+    if f:
+        parts.append("Universe fundamentals: " + ", ".join(
+            f"{k}={f.get(k)}" for k in ("sector", "roce", "roe", "sales_growth",
+                                        "debt_to_equity", "pe_ratio", "market_cap")
+            if f.get(k) is not None))
+    if material.get("pros"):
+        parts.append("Pros:\n- " + "\n- ".join(material["pros"][:8]))
+    if material.get("cons"):
+        parts.append("Cons:\n- " + "\n- ".join(material["cons"][:8]))
+    if material.get("announcements"):
+        parts.append("Recent announcements:\n- " + "\n- ".join(material["announcements"][:8]))
+    body = "\n\n".join(parts).strip()
+    if not body:
+        return None
+    res = call_json(
+        prompt=f"Fundamentals & ownership data for {material.get('ticker')}:\n\n{body}\n\n"
+               "Summarise the financial trajectory, valuation and especially the multi-quarter "
+               "ownership trend (FII/DII accumulation vs public, promoter/pledge).",
+        schema=_FUND_SCHEMA, system=_FUND_SYSTEM,
+        model=LLM_VETO_MODEL, max_tokens=500, caller="research_fundamentals",
+    )
+    return res
+
+
+def _combine(cand: dict, concall: dict | None, fundamentals: dict | None,
+             f: dict, vix_regime: str) -> dict | None:
+    """Stage 3 — combine the two summaries into the holistic thesis + verdict."""
+    concall_block = (
+        f"CONCALL SUMMARY (tone {concall.get('tone')}):\n{concall.get('summary')}\n"
+        f"Management guidance: {concall.get('guidance')}"
+        if concall else "CONCALL SUMMARY: (no concall transcript available)"
+    )
+    fund_block = (
+        f"FUNDAMENTALS & OWNERSHIP SUMMARY:\n{fundamentals.get('summary')}\n"
+        f"Ownership trend: {fundamentals.get('ownership_trend')}"
+        if fundamentals else "FUNDAMENTALS SUMMARY: (unavailable)"
+    )
+    prompt = (
+        f"Company: {cand['ticker']} ({f.get('company_name', 'Unknown')}), sector {f.get('sector', 'Unknown')}.\n"
+        f"India VIX regime: {vix_regime}.\n"
+        f"Technical scorecard: composite={cand.get('composite_score')}, timing={cand.get('timing_score')}, "
+        f"durability={cand.get('durability_score')}, confluence={cand.get('confluence')} "
+        f"({cand.get('strategies_fired', '')}), current horizon={cand.get('horizon')}.\n\n"
+        f"{concall_block}\n\n{fund_block}\n\n"
+        "Form the holistic thesis, score management, and give an actionable recommendation."
+    )
+    return call_json(prompt=prompt, schema=_COMBINE_SCHEMA, system=_COMBINE_SYSTEM,
+                     model=LLM_VETO_MODEL, max_tokens=700, caller="research_combine")
 
 
 def _fundamentals(ticker: str) -> dict:
@@ -181,6 +268,10 @@ def _cached_research(ticker: str, concall_date) -> dict | None:
         "key_positives": json.loads(r.get("key_positives") or "[]"),
         "key_risks": json.loads(r.get("key_risks") or "[]"),
         "guidance": r.get("guidance", ""),
+        "recommendation": r.get("recommendation", ""),
+        "recommendation_rationale": r.get("recommendation_rationale", ""),
+        "concall_summary": r.get("concall_summary", ""),
+        "fundamentals_summary": r.get("fundamentals_summary", ""),
         "confidence": r.get("confidence", 1.0),
     }
 
@@ -199,6 +290,10 @@ def _persist_research(ticker: str, material: dict, res: dict) -> None:
             key_positives=json.dumps(res.get("key_positives") or []),
             key_risks=json.dumps(res.get("key_risks") or []),
             guidance=res.get("guidance", ""),
+            recommendation=res.get("recommendation", ""),
+            recommendation_rationale=res.get("recommendation_rationale", ""),
+            concall_summary=res.get("concall_summary", ""),
+            fundamentals_summary=res.get("fundamentals_summary", ""),
             sources=json.dumps(material.get("sources") or []),
             confidence=res.get("confidence"),
         )
@@ -222,8 +317,12 @@ def _update_scan_row(ticker: str, management: float, composite: float,
 
 
 def _analyse(cand: dict, vix_regime: str) -> dict | None:
-    """Gather material + run the analyst (or reuse cache). Returns the verdict dict
-    plus the gathered material under '_material', or None if no material at all."""
+    """Gather material, run the two summary passes + the combine pass (or reuse
+    cache). Returns the verdict dict plus '_material', or None if nothing usable.
+
+    Pipeline: concall transcript → Stage-1 summary; fundamentals + multi-quarter
+    ownership + announcements → Stage-2 summary; both → Stage-3 holistic thesis.
+    """
     ticker = cand["ticker"]
     material = gather_management_material(ticker)
     if not material.get("available"):
@@ -237,21 +336,17 @@ def _analyse(cand: dict, vix_regime: str) -> dict | None:
         return cached
 
     f = _fundamentals(ticker)
-    digest = _build_digest(material)
-    prompt = (
-        f"Company: {ticker} ({f.get('company_name', 'Unknown')}), sector {f.get('sector', 'Unknown')}.\n"
-        f"Market context — India VIX regime: {vix_regime}.\n\n"
-        f"Fundamentals: ROCE={f.get('roce')}, ROE={f.get('roe')}, 3Y sales growth={f.get('sales_growth')}, "
-        f"D/E={f.get('debt_to_equity')}, PE={f.get('pe_ratio')}.\n"
-        f"Technical scorecard: composite={cand.get('composite_score')}, timing={cand.get('timing_score')}, "
-        f"confluence={cand.get('confluence')} ({cand.get('strategies_fired', '')}), horizon={cand.get('horizon')}.\n\n"
-        f"MANAGEMENT MATERIAL:\n{digest if digest else '(no concall/presentation text available — judge on pros/cons + fundamentals)'}\n\n"
-        f"Judge management outlook and output the JSON verdict."
-    )
-    res = call_json(prompt=prompt, schema=_SCHEMA, system=_SYSTEM_PROMPT,
-                    model=LLM_VETO_MODEL, max_tokens=600, caller="research")
+    concall = _summarise_concall(material)         # Stage 1 (None if no transcript)
+    fundamentals = _summarise_fundamentals(material, f)  # Stage 2
+    res = _combine(cand, concall, fundamentals, f, vix_regime)  # Stage 3
     if res is None:
         return None
+
+    # Keep the two component summaries for transparency / the UI.
+    res["concall_summary"] = (concall or {}).get("summary", "")
+    res["fundamentals_summary"] = (fundamentals or {}).get("summary", "")
+    if not res.get("guidance") and concall:
+        res["guidance"] = concall.get("guidance", "")
     res["_material"] = material
     return res
 
@@ -271,6 +366,8 @@ def _apply_research(cand: dict, res: dict) -> None:
     cand["management_pillar"] = mgmt
     cand["outlook"] = outlook
     cand["thesis"] = thesis
+    cand["recommendation"] = res.get("recommendation", "")
+    cand["recommendation_rationale"] = res.get("recommendation_rationale", "")
 
     # Only re-blend the scorecard when this candidate has a real technical pillar
     # (i.e. came from a scan row). Held/watchlist names refreshed without a scan

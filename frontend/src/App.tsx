@@ -389,6 +389,10 @@ interface PositionalResearch {
   key_positives: string[];
   key_risks: string[];
   guidance: string;
+  recommendation: string;
+  recommendation_rationale: string;
+  concall_summary: string;
+  fundamentals_summary: string;
   sources: string[];
   confidence: number | null;
 }
@@ -469,6 +473,19 @@ const renderOutlookBadge = (outlook: string) => {
   return <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${map[o]}`}>{o}</span>;
 };
 
+const renderRecommendationBadge = (rec: string) => {
+  const r = (rec || "").toUpperCase();
+  const map: Record<string, { label: string; cls: string }> = {
+    SWING_POSITIONAL: { label: "SWING POSITIONAL", cls: "bg-sky-500/10 text-sky-400 border-sky-500/30" },
+    LONG_TERM: { label: "LONG-TERM", cls: "bg-amber-500/10 text-amber-400 border-amber-500/30" },
+    BOTH: { label: "SWING + LONG-TERM", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
+    AVOID: { label: "AVOID", cls: "bg-rose-500/10 text-rose-400 border-rose-500/30" },
+  };
+  const m = map[r];
+  if (!m) return <span className="text-slate-600">—</span>;
+  return <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${m.cls}`}>{m.label}</span>;
+};
+
 const renderFiredStrategies = (strategiesFired: string, reason: string) => {
   const fired = (strategiesFired || "").split(",").map((s) => s.trim()).filter(Boolean);
   if (fired.length === 0) {
@@ -488,14 +505,33 @@ const renderFiredStrategies = (strategiesFired: string, reason: string) => {
 const ResearchDetail: React.FC<{ scan: PositionalScanResult; research?: PositionalResearch }> = ({ scan, research }) => (
   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
     <div className="space-y-2">
-      <div className="text-slate-500 uppercase tracking-wider text-[9px]">Technical Reason</div>
-      <div className="text-slate-300 leading-relaxed">{scan.reason || "—"}</div>
       {research ? (
         <>
-          <div className="text-slate-500 uppercase tracking-wider text-[9px] pt-2">Analyst Thesis</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-slate-500 uppercase tracking-wider text-[9px]">Recommendation</span>
+            {renderRecommendationBadge(research.recommendation)}
+            {research.recommendation_rationale ? (
+              <span className="text-slate-400 text-[11px]">{research.recommendation_rationale}</span>
+            ) : null}
+          </div>
+          <div className="text-slate-500 uppercase tracking-wider text-[9px] pt-1">Analyst Thesis</div>
           <div className="text-slate-200 leading-relaxed">{research.thesis || "—"}</div>
           {research.guidance ? (
-            <div className="text-slate-400"><span className="text-slate-500">Guidance:</span> {research.guidance}</div>
+            <div className="text-slate-400"><span className="text-slate-500">Mgmt Guidance:</span> {research.guidance}</div>
+          ) : null}
+          {research.concall_summary ? (
+            <div className="pt-1">
+              <div className="text-violet-400 uppercase tracking-wider text-[9px] mb-0.5">Concall Summary</div>
+              <div className="text-slate-300 leading-relaxed">{research.concall_summary}</div>
+            </div>
+          ) : (
+            <div className="text-slate-600 text-[10px] pt-1">No concall transcript processed (install pypdf / transcript unavailable).</div>
+          )}
+          {research.fundamentals_summary ? (
+            <div className="pt-1">
+              <div className="text-cyan-400 uppercase tracking-wider text-[9px] mb-0.5">Fundamentals &amp; Ownership</div>
+              <div className="text-slate-300 leading-relaxed">{research.fundamentals_summary}</div>
+            </div>
           ) : null}
           <div className="text-slate-500 text-[10px] pt-1">
             {research.concall_date ? `Concall: ${research.concall_date}` : "Concall: n/a"}
@@ -504,7 +540,11 @@ const ResearchDetail: React.FC<{ scan: PositionalScanResult; research?: Position
           </div>
         </>
       ) : (
-        <div className="text-slate-500 italic pt-2">No analyst research yet — runs on the next scan or research refresh.</div>
+        <>
+          <div className="text-slate-500 uppercase tracking-wider text-[9px]">Technical Reason</div>
+          <div className="text-slate-300 leading-relaxed">{scan.reason || "—"}</div>
+          <div className="text-slate-500 italic pt-2">No analyst research yet — runs on the next scan or research refresh.</div>
+        </>
       )}
     </div>
     {research ? (
@@ -524,6 +564,9 @@ const ResearchDetail: React.FC<{ scan: PositionalScanResult; research?: Position
               {research.key_risks.map((p, i) => <li key={i}>{p}</li>)}
             </ul>
           ) : <div className="text-slate-600">—</div>}
+        </div>
+        <div className="sm:col-span-2 text-[10px] text-slate-500">
+          Technical: {scan.reason || "—"}
         </div>
         {research.sources?.length ? (
           <div className="sm:col-span-2">

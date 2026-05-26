@@ -394,6 +394,10 @@ CREATE TABLE IF NOT EXISTS pos_research (
     key_positives    TEXT,
     key_risks        TEXT,
     guidance         TEXT,
+    recommendation   TEXT,
+    recommendation_rationale TEXT,
+    concall_summary  TEXT,
+    fundamentals_summary TEXT,
     sources          TEXT,
     confidence       REAL
 );
@@ -737,6 +741,10 @@ CREATE TABLE IF NOT EXISTS pos_research (
     key_positives    TEXT,
     key_risks        TEXT,
     guidance         TEXT,
+    recommendation   TEXT,
+    recommendation_rationale TEXT,
+    concall_summary  TEXT,
+    fundamentals_summary TEXT,
     sources          TEXT,
     confidence       DOUBLE PRECISION
 );
@@ -992,6 +1000,25 @@ def _migrate_pos_scans_scorecard_columns(conn) -> None:
         cur.execute(f"ALTER TABLE pos_scans ADD COLUMN IF NOT EXISTS {name} {pg_type}")
 
 
+def _migrate_pos_research_columns(conn) -> None:
+    """Add the two-stage-summary + recommendation columns to ``pos_research``."""
+    cols = (
+        ("recommendation",           "TEXT", "TEXT"),
+        ("recommendation_rationale", "TEXT", "TEXT"),
+        ("concall_summary",          "TEXT", "TEXT"),
+        ("fundamentals_summary",     "TEXT", "TEXT"),
+    )
+    if BACKEND == "sqlite":
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(pos_research)").fetchall()}
+        for name, sqlite_type, _ in cols:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE pos_research ADD COLUMN {name} {sqlite_type}")
+        return
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    for name, _, pg_type in cols:
+        cur.execute(f"ALTER TABLE pos_research ADD COLUMN IF NOT EXISTS {name} {pg_type}")
+
+
 def init_db() -> None:
     """Create tables + seed bot_control row if absent."""
     if BACKEND == "sqlite":
@@ -1001,6 +1028,7 @@ def init_db() -> None:
             _migrate_positions_atr_columns(conn)
             _migrate_positional_columns(conn)
             _migrate_pos_scans_scorecard_columns(conn)
+            _migrate_pos_research_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
                    VALUES (1, 'STOPPED', 'auto', ?)
@@ -1020,6 +1048,7 @@ def init_db() -> None:
                 _migrate_positions_atr_columns(cur)
                 _migrate_positional_columns(cur)
                 _migrate_pos_scans_scorecard_columns(cur)
+                _migrate_pos_research_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
                        VALUES (1, 'STOPPED', 'auto', %s)
@@ -1087,14 +1116,18 @@ def insert_returning_id(conn, sql: str, params: Iterable[Any] = ()) -> int:
 
 def upsert_pos_research(*, ticker: str, researched_at: str, concall_date,
                         management_score, verdict, outlook, thesis,
-                        key_positives, key_risks, guidance, sources, confidence) -> None:
+                        key_positives, key_risks, guidance, sources, confidence,
+                        recommendation="", recommendation_rationale="",
+                        concall_summary="", fundamentals_summary="") -> None:
     """Insert or update the latest management-outlook research for a ticker."""
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO pos_research
                (ticker, researched_at, concall_date, management_score, verdict,
-                outlook, thesis, key_positives, key_risks, guidance, sources, confidence)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                outlook, thesis, key_positives, key_risks, guidance, recommendation,
+                recommendation_rationale, concall_summary, fundamentals_summary,
+                sources, confidence)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT (ticker) DO UPDATE SET
                    researched_at = excluded.researched_at,
                    concall_date = excluded.concall_date,
@@ -1105,10 +1138,16 @@ def upsert_pos_research(*, ticker: str, researched_at: str, concall_date,
                    key_positives = excluded.key_positives,
                    key_risks = excluded.key_risks,
                    guidance = excluded.guidance,
+                   recommendation = excluded.recommendation,
+                   recommendation_rationale = excluded.recommendation_rationale,
+                   concall_summary = excluded.concall_summary,
+                   fundamentals_summary = excluded.fundamentals_summary,
                    sources = excluded.sources,
                    confidence = excluded.confidence""",
             (ticker, researched_at, concall_date, management_score, verdict,
-             outlook, thesis, key_positives, key_risks, guidance, sources, confidence),
+             outlook, thesis, key_positives, key_risks, guidance, recommendation,
+             recommendation_rationale, concall_summary, fundamentals_summary,
+             sources, confidence),
         )
 
 

@@ -127,14 +127,73 @@ def _latest_with(concalls: list, key: str) -> dict | None:
     return None
 
 
-def gather_management_material(ticker: str) -> Dict:
-    """Collect Pros/Cons + announcements + latest concall/presentation text.
+def _shareholding_trend_text(parsed: Dict, quarters: int = 6) -> str:
+    """Multi-quarter ownership trend (FII / DII / promoter / public / pledge) so the
+    analyst can see *direction*, not just the latest snapshot."""
+    sh = parsed.get("shareholding_quarterly") or []
+    if not sh:
+        return ""
+    take = sh[:quarters]  # most-recent-first
+    periods = [q.get("period", "?") for q in take]
 
-    Returns a dict with at least: pros, cons, announcements, concall_date,
-    concall_text, ppt_text, sources, available.
+    def line(key: str, label: str):
+        vals = [q.get(key) for q in take]
+        if all(v is None for v in vals):
+            return None
+        cells = [f"{p} {('%.1f' % v) if isinstance(v, (int, float)) else '—'}"
+                 for p, v in zip(periods, vals)]
+        return f"  {label}: " + " | ".join(cells)
+
+    lines = [l for l in (
+        line("promoter_pct", "Promoter%"),
+        line("fii_pct", "FII%"),
+        line("dii_pct", "DII%"),
+        line("public_pct", "Public%"),
+        line("pledged_pct", "Pledged%"),
+    ) if l]
+    return "Shareholding trend (most-recent-first):\n" + "\n".join(lines) if lines else ""
+
+
+def _financial_trend_text(parsed: Dict, years: int = 6) -> str:
+    """Multi-year financial + valuation snapshot for the fundamentals summary."""
+    def series(key: str, label: str):
+        recs = [r for r in (parsed.get(key) or []) if r.get("value") is not None][:years]
+        if not recs:
+            return None
+        return f"  {label}: " + ", ".join(f"{r['period']}={r['value']:g}" for r in recs)
+
+    lines = [l for l in (
+        series("revenue_yearly", "Revenue Cr"),
+        series("net_profit_yearly", "Net profit Cr"),
+        series("eps_yearly", "EPS"),
+        series("roce_yearly", "ROCE%"),
+        series("cfo_yearly", "Operating cash flow Cr"),
+    ) if l]
+    ratios = []
+    for k, lbl in (("pe", "PE"), ("roe_pct", "ROE%"), ("roce_pct", "ROCE%"),
+                   ("book_value", "BookValue"), ("dividend_yield_pct", "DivYield%"),
+                   ("market_cap_cr", "MktCap Cr"), ("debt_equity", "D/E")):
+        v = parsed.get(k)
+        if v is not None:
+            ratios.append(f"{lbl}={v:g}")
+    out = ""
+    if lines:
+        out += "Financials (most-recent-first):\n" + "\n".join(lines)
+    if ratios:
+        out += ("\n" if out else "") + "Key ratios: " + ", ".join(ratios)
+    return out
+
+
+def gather_management_material(ticker: str) -> Dict:
+    """Collect Pros/Cons + announcements + multi-quarter trends + latest concall
+    / presentation text.
+
+    Returns a dict with: pros, cons, announcements, shareholding_trend,
+    financial_trend, concall_date, concall_text, ppt_text, sources, available.
     """
     out: Dict = {
         "ticker": _base(ticker), "pros": [], "cons": [], "announcements": [],
+        "shareholding_trend": "", "financial_trend": "",
         "concall_date": None, "concall_text": "", "ppt_text": "",
         "sources": [], "available": False,
     }
@@ -151,6 +210,8 @@ def gather_management_material(ticker: str) -> Dict:
     out["pros"] = parsed.get("pros") or []
     out["cons"] = parsed.get("cons") or []
     out["announcements"] = parsed.get("announcements") or []
+    out["shareholding_trend"] = _shareholding_trend_text(parsed)
+    out["financial_trend"] = _financial_trend_text(parsed)
     if parsed.get("url"):
         out["sources"].append(parsed["url"])
 
@@ -177,5 +238,6 @@ def gather_management_material(ticker: str) -> Dict:
     out["available"] = bool(
         out["pros"] or out["cons"] or out["announcements"]
         or out["concall_text"] or out["ppt_text"]
+        or out["shareholding_trend"] or out["financial_trend"]
     )
     return out

@@ -1280,6 +1280,10 @@ def get_positional_research():
                 "key_positives": _json_list(r.get("key_positives")),
                 "key_risks": _json_list(r.get("key_risks")),
                 "guidance": clean_str(r.get("guidance"), default=""),
+                "recommendation": clean_str(r.get("recommendation"), default=""),
+                "recommendation_rationale": clean_str(r.get("recommendation_rationale"), default=""),
+                "concall_summary": clean_str(r.get("concall_summary"), default=""),
+                "fundamentals_summary": clean_str(r.get("fundamentals_summary"), default=""),
                 "sources": _json_list(r.get("sources")),
                 "confidence": clean_float(r.get("confidence")),
             })

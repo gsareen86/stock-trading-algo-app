@@ -635,22 +635,16 @@ def _parse_documents(soup: BeautifulSoup, base_url: str) -> Dict:
                 out["annual_reports"].append({"label": label,
                                               "url": urljoin(base_url, a["href"])})
 
-    # ---- Recent announcements: title + short description ----
+    # ---- Recent announcements: one clean line per item ----
     ann_box = _find_doc_block(sec, "announcements", "announce")
     if ann_box is not None:
         rows = ann_box.select("ul.list-links > li") or ann_box.find_all("li")
         for li in rows:
-            title_el = li.find("a")
-            title = title_el.get_text(" ", strip=True) if title_el else ""
-            # the description sits in a sibling div within the same <li>
-            desc = ""
-            for d in li.find_all(["div", "span"]):
-                t = d.get_text(" ", strip=True)
-                if t and t != title and len(t) > len(desc):
-                    desc = t
-            text = (f"{title} — {desc}" if desc else title).strip(" —")
+            # Screener packs the title + relative-time + summary into the row; take
+            # the whole row text once (collapsed) to avoid title/description dupes.
+            text = re.sub(r"\s+", " ", li.get_text(" ", strip=True)).strip()
             if text and len(text) > 4:
-                out["announcements"].append(text)
+                out["announcements"].append(text[:240])
         out["announcements"] = out["announcements"][:10]
     return out
 
