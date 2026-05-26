@@ -1193,13 +1193,15 @@ export default function App() {
     }
   };
 
+  // Re-run the analyst over holdings + watchlist + recent shortlist. force=true
+  // bypasses the by-concall cache so it re-summarises with the CURRENT prompts/logic.
   const handleResearchRefresh = async () => {
     setLoading((prev) => ({ ...prev, research_refresh: true }));
     try {
-      const res = await fetch(`${API_BASE}/api/positional/research/refresh`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/positional/research/refresh?force=true`, { method: "POST" });
       const data = await res.json();
       if (data.success) {
-        setSuccessMsg("Management-research refresh scheduled (holdings + watchlist + shortlist).");
+        setSuccessMsg("Re-running research (cache bypassed) on holdings + watchlist + recent shortlist.");
       } else {
         setErrorMsg(data.detail || "Failed to start research refresh.");
       }
@@ -1207,6 +1209,25 @@ export default function App() {
       setErrorMsg("Network error starting research refresh.");
     } finally {
       setLoading((prev) => ({ ...prev, research_refresh: false }));
+    }
+  };
+
+  // Complete refresh: re-scan the whole universe (regenerate the candidate list) AND
+  // force fresh research on every candidate — the full pipeline end to end.
+  const handleFullRescan = async () => {
+    setLoading((prev) => ({ ...prev, full_rescan: true }));
+    try {
+      const res = await fetch(`${API_BASE}/api/positional/scan?force=true`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setSuccessMsg("Full re-scan + research started in the background. Candidates and summaries will update when it finishes (can take several minutes).");
+      } else {
+        setErrorMsg(data.detail || "Failed to start full re-scan.");
+      }
+    } catch (e) {
+      setErrorMsg("Network error starting full re-scan.");
+    } finally {
+      setLoading((prev) => ({ ...prev, full_rescan: false }));
     }
   };
 
@@ -2766,6 +2787,26 @@ export default function App() {
               </div>
 
               {/* SCAN CANDIDATES GRID — swing horizons only (POSITIONAL / BOTH); LONG_TERM lives in its own tab */}
+              <div className="flex items-center justify-end gap-2 mb-3">
+                <button
+                  onClick={handleResearchRefresh}
+                  disabled={loading["research_refresh"] || loading["full_rescan"]}
+                  title="Re-summarise holdings + watchlist + recent shortlist with the current prompts (bypasses the concall cache). No universe re-scan."
+                  className="py-2 px-3 rounded-lg border border-slate-800 hover:bg-slate-900 text-slate-300 font-semibold text-[11px] cursor-pointer flex items-center gap-1.5 transition-colors"
+                >
+                  <RefreshCw size={13} className={loading["research_refresh"] ? "animate-spin" : ""} />
+                  {loading["research_refresh"] ? "RE-RUNNING..." : "RE-RUN RESEARCH"}
+                </button>
+                <button
+                  onClick={handleFullRescan}
+                  disabled={loading["full_rescan"] || loading["research_refresh"]}
+                  title="Re-scan the entire universe to regenerate the candidate list AND force fresh research on every candidate. Full pipeline; can take several minutes."
+                  className="py-2 px-3 rounded-lg border border-indigo-700/60 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-300 font-semibold text-[11px] cursor-pointer flex items-center gap-1.5 transition-colors"
+                >
+                  <RefreshCw size={13} className={loading["full_rescan"] ? "animate-spin" : ""} />
+                  {loading["full_rescan"] ? "RE-SCANNING..." : "FULL RE-SCAN + RESEARCH"}
+                </button>
+              </div>
               <PositionalScanTable
                 rows={positionalScanResults.filter((s) => s.horizon === "POSITIONAL" || s.horizon === "BOTH" || !s.horizon)}
                 research={positionalResearch}
@@ -2774,6 +2815,7 @@ export default function App() {
               <p className="text-[11px] text-slate-500 mt-3">
                 Click any row to expand the analyst thesis (positives, risks, guidance, sources). Long-term-only candidates
                 appear under the <span className="text-amber-400 font-semibold">Long-Term</span> tab.
+                <span className="text-slate-400"> Made prompt/logic changes? Use <b>Full Re-Scan + Research</b> to rebuild the candidate list and re-run every summary.</span>
               </p>
             </div>
           )}
@@ -2792,14 +2834,26 @@ export default function App() {
                     They are <span className="text-slate-300">researched but never auto-bought</span> as positional trades. Click a row for the analyst thesis.
                   </p>
                 </div>
-                <button
-                  onClick={handleResearchRefresh}
-                  disabled={loading["research_refresh"]}
-                  className="shrink-0 py-2.5 px-4 rounded-xl border border-slate-800 hover:bg-slate-900 text-slate-300 font-semibold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <RefreshCw size={14} className={loading["research_refresh"] ? "animate-spin" : ""} />
-                  {loading["research_refresh"] ? "REFRESHING..." : "REFRESH RESEARCH"}
-                </button>
+                <div className="shrink-0 flex flex-col gap-2">
+                  <button
+                    onClick={handleResearchRefresh}
+                    disabled={loading["research_refresh"] || loading["full_rescan"]}
+                    title="Re-summarise holdings + watchlist + recent shortlist with the current prompts (bypasses the concall cache). No universe re-scan."
+                    className="py-2.5 px-4 rounded-xl border border-slate-800 hover:bg-slate-900 text-slate-300 font-semibold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <RefreshCw size={14} className={loading["research_refresh"] ? "animate-spin" : ""} />
+                    {loading["research_refresh"] ? "RE-RUNNING..." : "RE-RUN RESEARCH"}
+                  </button>
+                  <button
+                    onClick={handleFullRescan}
+                    disabled={loading["full_rescan"] || loading["research_refresh"]}
+                    title="Re-scan the entire universe to regenerate the candidate list AND force fresh research on every candidate. Full pipeline; can take several minutes."
+                    className="py-2.5 px-4 rounded-xl border border-indigo-700/60 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-300 font-semibold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <RefreshCw size={14} className={loading["full_rescan"] ? "animate-spin" : ""} />
+                    {loading["full_rescan"] ? "RE-SCANNING..." : "FULL RE-SCAN + RESEARCH"}
+                  </button>
+                </div>
               </div>
 
               <PositionalScanTable

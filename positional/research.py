@@ -112,7 +112,7 @@ _COMBINE_SYSTEM = (
 )
 
 
-def _summarise_long_text(body: str) -> str:
+def _summarise_long_text(body: str, company_name: str = "", quarter_and_year: str = "") -> str:
     """Map step: compress the (possibly huge) transcript to a COMPREHENSIVE free-text
     bullet digest. Plain text — not JSON — because local models summarise long inputs
     reliably but lapse into prose when asked for JSON on a large prompt."""
@@ -169,6 +169,10 @@ Analyze the transcript and generate a structured report covering the following f
 * Be quantitative: Never say "revenues grew significantly"; say "revenues increased by 21% YoY to INR 829 crores".
 * If a metric or guidance point is not mentioned in the transcript, do not invent data; explicitly state "Not discussed by management".
 * Keep the tone objective, analytical, and critical.\n\n""")
+    # Substitute the template placeholders with the actual company/quarter.
+    prompt_head = (prompt_head
+                   .replace("{{company_name}}", company_name or "the company")
+                   .replace("{{quarter_and_year}}", quarter_and_year or "the latest reported quarter"))
     summaries = []
     for idx, ch in enumerate(chunks):
         txt = call_text(
@@ -197,7 +201,11 @@ def _summarise_concall(material: dict) -> str | None:
     if not body:
         return None
 
-    digest = _summarise_long_text(body)
+    digest = _summarise_long_text(
+        body,
+        company_name=material.get("ticker", ""),
+        quarter_and_year=material.get("concall_date", "") or "",
+    )
     if not digest:                       # text step failed/unavailable — use a raw excerpt
         return body[:POSITIONAL_RESEARCH_CHUNK_CHARS]
 
@@ -445,24 +453,28 @@ def _update_scan_row(ticker: str, management: float, composite: float,
         log.debug("[research] scan-row update failed for %s: %s", ticker, e)
 
 
-def _analyse(cand: dict, vix_regime: str) -> dict | None:
+def _analyse(cand: dict, vix_regime: str, force: bool = False) -> dict | None:
     """Gather material, run the two summary passes + the combine pass (or reuse
     cache). Returns the verdict dict plus '_material', or None if nothing usable.
 
     Pipeline: concall transcript → Stage-1 summary; fundamentals + multi-quarter
     ownership + announcements → Stage-2 summary; both → Stage-3 holistic thesis.
+
+    ``force=True`` bypasses the by-concall-date cache and re-runs the full LLM
+    pipeline — use it after changing prompts/logic to regenerate every summary.
     """
     ticker = cand["ticker"]
     material = gather_management_material(ticker)
     if not material.get("available"):
         return None
 
-    cached = _cached_research(ticker, material.get("concall_date"))
-    if cached is not None:
-        log.info("[research] %s: reusing cached analyst read (concall %s)",
-                 ticker, material.get("concall_date"))
-        cached["_material"] = material
-        return cached
+    if not force:
+        cached = _cached_research(ticker, material.get("concall_date"))
+        if cached is not None:
+            log.info("[research] %s: reusing cached analyst read (concall %s)",
+                     ticker, material.get("concall_date"))
+            cached["_material"] = material
+            return cached
 
     f = _fundamentals(ticker)
     concall_text = _summarise_concall(material)          # Stage 1 — rich text (None if no transcript)
@@ -517,12 +529,12 @@ def _apply_research(cand: dict, res: dict) -> None:
     _persist_research(cand["ticker"], material, res)
 
 
-def _research_and_apply(cand: dict, vix_regime: str) -> dict | None:
+def _research_and_apply(cand: dict, vix_regime: str, force: bool = False) -> dict | None:
     """Run the analyst for one candidate and apply the result. Returns the
     verdict dict (without the internal material), or None when it failed open."""
     ticker = cand["ticker"]
     try:
-        res = _analyse(cand, vix_regime)
+        res = _analyse(cand, vix_regime, force=force)
     except Exception as e:
         log.warning("[research] analysis errored for %s: %s — failing open", ticker, e)
         res = None
@@ -546,7 +558,8 @@ def _vix_regime(vix_value: float) -> str:
     return "HIGH / volatile — be stricter"
 
 
-def run_positional_llm_research(candidates: list[dict], vix_value: float = 0.0) -> list[dict]:
+def run_positional_llm_research(candidates: list[dict], vix_value: float = 0.0,
+                                force: bool = False) -> list[dict]:
     """Research candidates (BUY setups + LONG_TERM watch), fold the management
     pillar into each scorecard, persist the thesis, and return the buy pool.
 
@@ -555,6 +568,7 @@ def run_positional_llm_research(candidates: list[dict], vix_value: float = 0.0) 
     the updated composite. LONG_TERM candidates are researched and persisted for
     the dashboard but never returned for buying.
 
+    ``force=True`` bypasses the analyst cache and re-runs every summary.
     Fails open: on disabled/empty/LLM-down it returns the BUY candidates as-is.
     """
     llm_enabled = config.POSITIONAL_LLM_RESEARCH_ENABLED and config.POSITIONAL_CONCALL_RESEARCH_ENABLED
@@ -582,7 +596,7 @@ def run_positional_llm_research(candidates: list[dict], vix_value: float = 0.0) 
              len(researched), vix_value, vix_regime)
 
     for cand in researched:
-        _research_and_apply(cand, vix_regime)
+        _research_and_apply(cand, vix_regime, force=force)
 
     # Overflow beyond the research cap is processed technically.
     for c in overflow:
@@ -681,11 +695,14 @@ def _refresh_universe() -> tuple[list[str], set[str]]:
     return ordered, held
 
 
-def refresh_management_research(vix_value: float = 0.0) -> dict:
+def refresh_management_research(vix_value: float = 0.0, force: bool = False) -> dict:
     """Daily decoupled pass: re-run the concall analyst over holdings + watchlist
     + recent shortlist. Cheap in steady state (cached by concall date) and the
     way held positions pick up new quarterly concalls. Raises advisory review
     alerts when a held stock's management read deteriorates.
+
+    ``force=True`` bypasses the analyst cache so every stock is re-summarised
+    with the current prompts/logic (use after changing the research pipeline).
     """
     if not (config.POSITIONAL_LLM_RESEARCH_ENABLED and config.POSITIONAL_CONCALL_RESEARCH_ENABLED):
         return {"skipped": True, "reason": "research disabled"}
@@ -697,12 +714,13 @@ def refresh_management_research(vix_value: float = 0.0) -> dict:
         return {"researched": 0, "reviews": []}
 
     vix_regime = _vix_regime(vix_value)
-    log.info("[research] refresh pass over %d tickers (%d held)...", len(tickers), len(held))
+    log.info("[research] refresh pass over %d tickers (%d held, force=%s)...",
+             len(tickers), len(held), force)
 
     reviews = []
     for tk in tickers:
         cand = _cand_from_scan(tk)
-        res = _research_and_apply(cand, vix_regime)
+        res = _research_and_apply(cand, vix_regime, force=force)
         if not res or tk not in held:
             continue
         if _is_deteriorating(res):

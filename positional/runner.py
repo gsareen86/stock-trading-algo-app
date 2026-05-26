@@ -648,8 +648,10 @@ def run_eod_scan(force: bool = False) -> dict:
     buy_candidates = list(buy_alerts_scanned)
     if POSITIONAL_LLM_RESEARCH_ENABLED:
         from positional.research import run_positional_llm_research
+        # A manually forced scan also forces fresh research (bypass analyst cache)
+        # so prompt/logic changes are reflected across the whole candidate list.
         buy_candidates = run_positional_llm_research(
-            buy_alerts_scanned + longterm_watch, vix_value
+            buy_alerts_scanned + longterm_watch, vix_value, force=force
         )
 
     buy_alerts_taken: list[dict] = []

@@ -1392,22 +1392,26 @@ def trigger_positional_scan(background_tasks: BackgroundTasks, force: bool = Que
         log.error("Error triggering positional scan: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
-def run_research_refresh_task():
+def run_research_refresh_task(force: bool = False):
     try:
-        log.info("Starting background management-research refresh...")
+        log.info("Starting background management-research refresh (force=%s)...", force)
         from positional.research import refresh_management_research
-        result = refresh_management_research()
+        result = refresh_management_research(force=force)
         log.info("Research refresh completed: %s", result)
     except Exception as e:
         log.error("Error in background research refresh: %s", e)
 
 @app.post("/api/positional/research/refresh")
-def trigger_research_refresh(background_tasks: BackgroundTasks):
+def trigger_research_refresh(background_tasks: BackgroundTasks, force: bool = Query(False)):
     """Manually run the decoupled management-research refresh (holdings + watchlist
-    + recent shortlist) in the background — picks up new quarterly concalls."""
+    + recent shortlist) in the background — picks up new quarterly concalls.
+    ``force=true`` bypasses the analyst cache and re-summarises every stock with
+    the current prompts/logic."""
     try:
-        background_tasks.add_task(run_research_refresh_task)
-        return {"success": True, "message": "Management-research refresh triggered in background"}
+        background_tasks.add_task(run_research_refresh_task, force)
+        msg = ("Full re-research (cache bypassed) triggered in background" if force
+               else "Management-research refresh triggered in background")
+        return {"success": True, "message": msg}
     except Exception as e:
         log.error("Error triggering research refresh: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
