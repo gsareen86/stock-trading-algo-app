@@ -313,28 +313,56 @@ def _schema_to_prompt_hint(schema: dict) -> str:
     return "{\n" + "\n".join(lines) + "\n}"
 
 
+def _first_json_object(text: str) -> Optional[dict]:
+    """Return the first complete, balanced, parseable JSON object in ``text``,
+    even when it's surrounded by prose or markdown. Brace-counting (string-aware)
+    so a ``}`` inside prose after the object doesn't truncate it."""
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_str = esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except json.JSONDecodeError:
+                        break  # malformed; advance to the next "{"
+        start = text.find("{", start + 1)
+    return None
+
+
 def _extract_json(text: str) -> Optional[dict]:
-    """Parse JSON from model output, tolerating markdown code fences."""
+    """Parse JSON from model output, tolerating markdown fences and prose
+    preamble/epilogue that local models often add around the object."""
+    if not text:
+        return None
     text = text.strip()
     # Strip ```json ... ``` or ``` ... ``` fences if present
-    if text.startswith("```"):
-        lines = text.splitlines()
-        text = "\n".join(
-            line for line in lines
-            if not line.strip().startswith("```")
-        ).strip()
+    if "```" in text:
+        import re
+        text = re.sub(r"```(?:json)?", "", text).strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Try to find the first {...} block
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(text[start:end + 1])
-            except json.JSONDecodeError:
-                pass
-    log.warning("LLM: could not parse JSON from response: %.120s", text)
+        pass
+    obj = _first_json_object(text)
+    if obj is not None:
+        return obj
+    log.warning("LLM: could not parse JSON from response: %.160s", text)
     return None
 
 
@@ -380,39 +408,41 @@ def _call_ollama(*, prompt, schema, system, model, max_tokens):
     messages.append({"role": "user", "content": prompt})
 
     schema_hint = _schema_to_prompt_hint(schema)
-    if system:
-        messages[0]["content"] += f"\n\nRespond with a valid JSON object only matching the requested schema.\nRequired structure:\n{schema_hint}"
+    instr = ("\n\nRespond with a JSON object ONLY — no prose, no markdown, no preamble. "
+             f"Match this structure exactly:\n{schema_hint}")
+    if messages and messages[0]["role"] == "system":
+        messages[0]["content"] += instr
     else:
-        messages.insert(0, {"role": "system", "content": f"Respond with a valid JSON object only matching the requested schema.\nRequired structure:\n{schema_hint}"})
+        messages.insert(0, {"role": "system", "content": instr.strip()})
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-        # Force valid-JSON-only output: stops local models prepending prose like
-        # "Based on the transcript, here is a ..." which broke JSON parsing.
-        "format": "json",
-        "options": {
-            "temperature": 0.0,
-            "num_predict": max_tokens
-        },
-        "think": False
-    }
-
-    try:
+    def _post(fmt):
+        """POST once with a given Ollama ``format`` (a JSON schema dict, or "json")."""
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "format": fmt,
+            "options": {"temperature": 0.0, "num_predict": max_tokens},
+            "think": False,
+        }
         res = requests.post(url, json=payload, timeout=OLLAMA_REQUEST_TIMEOUT_S)
         if res.status_code != 200:
-            log.warning("Ollama native call failed with status %d: %s", res.status_code, res.text)
+            log.warning("Ollama call HTTP %d (format=%s): %s", res.status_code,
+                        "schema" if isinstance(fmt, dict) else fmt, res.text[:200])
             return None, None, None
         data = res.json()
         content = data.get("message", {}).get("content", "") or ""
-        parsed = _extract_json(content)
-        
-        # Estimate token count since Ollama returns actual counts
-        pt = data.get("prompt_eval_count")
-        ct = data.get("eval_count")
-        
-        return parsed, pt, ct
+        return _extract_json(content), data.get("prompt_eval_count"), data.get("eval_count")
+
+    try:
+        # 1) Grammar-constrained structured output — the model is forced to emit
+        #    schema-conforming JSON (strongest guarantee for local models).
+        parsed, pt, ct = _post(schema)
+        if parsed is not None:
+            return parsed, pt, ct
+        # 2) Fallback for older Ollama (or a rejected schema): plain JSON mode.
+        log.info("Ollama: schema-constrained output unusable — retrying in plain json mode")
+        return _post("json")
     except Exception as e:
         log.warning("Ollama native call exception (%s): %s", model, e)
         raise
