@@ -581,8 +581,23 @@ def _nearest_period(node) -> Optional[str]:
     return None
 
 
+def _find_doc_block(sec, class_name: str, heading_kw: str):
+    """Locate one Documents column (Concalls / Announcements / Annual reports).
+
+    Screener wraps each column in ``<div class="documents <name> flex-column">``.
+    Prefer the class; fall back to the column whose heading matches the keyword.
+    """
+    block = sec.select_one(f"div.{class_name}")
+    if block is not None:
+        return block
+    for h in sec.find_all(["h2", "h3", "h4"]):
+        if heading_kw in h.get_text(" ", strip=True).lower():
+            return h.find_parent("div", class_="documents") or h.parent
+    return None
+
+
 def _parse_documents(soup: BeautifulSoup, base_url: str) -> Dict:
-    """Parse ``<section id="documents">`` for concall transcript/PPT/notes links,
+    """Parse ``<section id="documents">`` for concall transcript/PPT links,
     annual reports and recent announcements. All defensive: missing → empty.
     """
     out: Dict = {"concalls": [], "annual_reports": [], "announcements": []}
@@ -590,55 +605,53 @@ def _parse_documents(soup: BeautifulSoup, base_url: str) -> Dict:
     if sec is None:
         return out
 
-    # The Concalls sub-list. Screener groups it under a heading containing
-    # "Concall"; each row carries Transcript / Notes / PPT anchors.
-    concall_box = None
-    for h in sec.find_all(["h2", "h3", "h4", "div", "span"]):
-        if "concall" in h.get_text(" ", strip=True).lower():
-            concall_box = h.find_parent(class_="documents") or h.parent
-            break
-    search_root = concall_box or sec
-    for li in search_root.select("li"):
-        links = li.find_all("a")
-        if not links:
-            continue
-        row = {"date": _nearest_period(li), "transcript_url": None,
-               "ppt_url": None, "notes_url": None}
-        for a in links:
-            label = a.get_text(" ", strip=True).lower()
-            href = a.get("href") or ""
-            if not href:
-                continue
-            full = urljoin(base_url, href)
-            if "transcript" in label:
-                row["transcript_url"] = full
-            elif "ppt" in label or "presentation" in label:
-                row["ppt_url"] = full
-            elif "notes" in label:
-                row["notes_url"] = full
-        if row["transcript_url"] or row["ppt_url"] or row["notes_url"]:
-            out["concalls"].append(row)
+    # ---- Concalls: rows of (date, Transcript, PPT, Notes, REC) ----
+    concall_box = _find_doc_block(sec, "concalls", "concall")
+    if concall_box is not None:
+        rows = concall_box.select("ul.list-links > li") or concall_box.find_all("li")
+        for li in rows:
+            row = {"date": _nearest_period(li), "transcript_url": None,
+                   "ppt_url": None, "notes_url": None, "rec_url": None}
+            for a in li.find_all("a", href=True):
+                label = a.get_text(" ", strip=True).lower()
+                full = urljoin(base_url, a["href"])
+                if "transcript" in label:
+                    row["transcript_url"] = full
+                elif "ppt" in label or "present" in label:
+                    row["ppt_url"] = full
+                elif "notes" in label:
+                    row["notes_url"] = full
+                elif label in ("rec", "recording"):
+                    row["rec_url"] = full
+            if row["transcript_url"] or row["ppt_url"] or row["notes_url"]:
+                out["concalls"].append(row)
 
-    # Annual report PDFs
-    for a in sec.select("a"):
-        label = a.get_text(" ", strip=True).lower()
-        href = a.get("href") or ""
-        if href and ("annual report" in label or "from bse" in label and "annual" in label):
-            out["annual_reports"].append({"label": a.get_text(" ", strip=True),
-                                          "url": urljoin(base_url, href)})
+    # ---- Annual reports ----
+    ar_box = _find_doc_block(sec, "annual-reports", "annual report")
+    if ar_box is not None:
+        for a in ar_box.find_all("a", href=True):
+            label = a.get_text(" ", strip=True)
+            if label and "add" not in label.lower():
+                out["annual_reports"].append({"label": label,
+                                              "url": urljoin(base_url, a["href"])})
 
-    # Recent announcements (titles only — lightweight, high-signal)
-    ann_box = None
-    for h in sec.find_all(["h2", "h3", "h4"]):
-        if "announce" in h.get_text(" ", strip=True).lower():
-            ann_box = h.find_parent(class_="documents") or h.parent
-            break
-    if ann_box:
-        for a in ann_box.select("a"):
-            t = a.get_text(" ", strip=True)
-            if t and len(t) > 4:
-                out["announcements"].append(t)
-    out["announcements"] = out["announcements"][:12]
+    # ---- Recent announcements: title + short description ----
+    ann_box = _find_doc_block(sec, "announcements", "announce")
+    if ann_box is not None:
+        rows = ann_box.select("ul.list-links > li") or ann_box.find_all("li")
+        for li in rows:
+            title_el = li.find("a")
+            title = title_el.get_text(" ", strip=True) if title_el else ""
+            # the description sits in a sibling div within the same <li>
+            desc = ""
+            for d in li.find_all(["div", "span"]):
+                t = d.get_text(" ", strip=True)
+                if t and t != title and len(t) > len(desc):
+                    desc = t
+            text = (f"{title} — {desc}" if desc else title).strip(" —")
+            if text and len(text) > 4:
+                out["announcements"].append(text)
+        out["announcements"] = out["announcements"][:10]
     return out
 
 
