@@ -357,9 +357,9 @@ POSITIONAL_CONFLUENCE_BONUS  = 8.0
 # latest concall transcript / investor presentation PDFs, then have the local
 # LLM judge management outlook (feeds the "management" pillar) and a verdict.
 POSITIONAL_CONCALL_RESEARCH_ENABLED = os.environ.get("POSITIONAL_CONCALL_RESEARCH_ENABLED", "True").lower() == "true"
-POSITIONAL_RESEARCH_LIMIT     = int(os.environ.get("POSITIONAL_RESEARCH_LIMIT", "15"))   # candidates researched per run
+POSITIONAL_RESEARCH_LIMIT     = int(os.environ.get("POSITIONAL_RESEARCH_LIMIT", "25"))   # candidates researched per run
 POSITIONAL_CONCALL_MAX_PAGES  = int(os.environ.get("POSITIONAL_CONCALL_MAX_PAGES", "40")) # cap PDF pages extracted
-POSITIONAL_RESEARCH_CHUNK_CHARS = int(os.environ.get("POSITIONAL_RESEARCH_CHUNK_CHARS", "12000"))  # map-reduce threshold
+POSITIONAL_RESEARCH_CHUNK_CHARS = int(os.environ.get("POSITIONAL_RESEARCH_CHUNK_CHARS", "80000"))  # map-reduce threshold
 POSITIONAL_CONCALL_CACHE_DAYS = int(os.environ.get("POSITIONAL_CONCALL_CACHE_DAYS", "25"))  # reuse research within this window
 # A management score at/below this vetoes the buy regardless of technicals.
 POSITIONAL_MANAGEMENT_VETO_SCORE = float(os.environ.get("POSITIONAL_MANAGEMENT_VETO_SCORE", "25.0"))
@@ -454,6 +454,7 @@ if LLM_PROVIDER == "anthropic":
 elif LLM_PROVIDER == "ollama":
     # Local Ollama model. Override via OLLAMA_MODEL in .env
     _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
+    # _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "granite4.1:8b")
     LLM_DEFAULT_MODEL    = _OLLAMA_MODEL
     LLM_SENTIMENT_MODEL  = _OLLAMA_MODEL
     LLM_VETO_MODEL       = _OLLAMA_MODEL

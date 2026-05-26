@@ -59,8 +59,8 @@ def main() -> None:
         print("      PDF host blocked the download. The analyst will fall back to")
         print("      fundamentals + pros/cons only.")
 
-    _hr("3) EXTRACTED CONCALL TEXT — first 800 chars (proof it came from the PDF)")
-    print((ct or "(empty)")[:800])
+    _hr("3) EXTRACTED CONCALL TEXT — first 8000 chars (proof it came from the PDF)")
+    print((ct or "(empty)")[:8000])
 
     _hr("4) CHUNKING")
     body = "\n\n".join(p for p in (ct, pt) if p)

@@ -118,24 +118,64 @@ def _summarise_long_text(body: str) -> str:
     reliably but lapse into prose when asked for JSON on a large prompt."""
     chunk = POSITIONAL_RESEARCH_CHUNK_CHARS
     chunks = [body[i:i + chunk] for i in range(0, len(body), chunk)][:_MAX_CHUNKS]
+    # prompt_head = (
+    #     "Extract the management commentary that matters for STOCK ANALYSIS from this concall / "
+    #     "presentation excerpt, as concise plain-text bullet points with numbers and names, across: "
+    #     "(1) performance drivers; (2) growth outlook, demand and forward guidance; (3) expansion — "
+    #     "capacity/capex, new geographies, M&A, partnerships, franchise/distribution; (4) new "
+    #     "products / segments / launches; (5) industry & market trends, competition; (6) capital "
+    #     "allocation, margins, costs; (7) risks, headwinds, red flags; (8) notable analyst Q&A.\n"
+    #     "EXCLUDE administrative/meta content: the call date, who hosted or spoke, executive names "
+    #     "and titles, rescheduling, safe-harbour/disclaimers, greetings and closing remarks. "
+    #     "No markdown tables, no emojis, no headers — plain bullets only."
+    # )
     prompt_head = (
-        "Extract the management commentary that matters for STOCK ANALYSIS from this concall / "
-        "presentation excerpt, as concise plain-text bullet points with numbers and names, across: "
-        "(1) performance drivers; (2) growth outlook, demand and forward guidance; (3) expansion — "
-        "capacity/capex, new geographies, M&A, partnerships, franchise/distribution; (4) new "
-        "products / segments / launches; (5) industry & market trends, competition; (6) capital "
-        "allocation, margins, costs; (7) risks, headwinds, red flags; (8) notable analyst Q&A.\n"
-        "EXCLUDE administrative/meta content: the call date, who hosted or spoke, executive names "
-        "and titles, rescheduling, safe-harbour/disclaimers, greetings and closing remarks. "
-        "No markdown tables, no emojis, no headers — plain bullets only."
-    )
+        """You are an expert Equity Research Analyst and an Institutional Investor. Your task is to analyze the provided management conference call transcript for {{company_name}} for {{quarter_and_year}} and extract high-signal, actionable insights that are critical for a stock investor making a buy/sell/hold decision.
+
+Focus strictly on hard data, structural shifts, underlying operational realities, and risk vectors. Ignore generic corporate platitudes, marketing jargon, and routine pleasantries.
+
+### Extraction Framework
+
+Analyze the transcript and generate a structured report covering the following five categories:
+
+1. FINANCIAL PERFORMANCE & MARGIN HEALTH
+   * Growth Metrics: Extract absolute numbers and Year-on-Year (YoY) or Quarter-on-Quarter (QoQ) percentage growth for Revenue, Profit After Tax (PAT), and EBITDA.
+   * Margin Trends: Note changes in Gross Margin and EBITDA Margin. Specify the exact drivers behind margin expansion or contraction (e.g., vendor discounts, input cost inflation, operating leverage).
+   * Balance Sheet & Cash Flows: Identify debt levels, cash reserves, operating cash flow generation, and capital allocation decisions (e.g., dividends, share buybacks).
+
+2. CORE OPERATIONAL DRIVERS & VOLUME STRATEGIES
+   * Volume vs. Price: Is growth driven by volume expansion or price hikes? Note the management's pricing power and near-term strategy.
+   * Distribution & Network: Capture key metrics regarding distribution footprint (franchisees, store count, geographic reach, or active users) and growth velocity.
+   * Key Business Verticals: Detail the performance of core verticals, including specific segment growth rates, customer retention trends, or B2B vs. B2C mix shifts.
+
+3. STRATEGIC PIVOTS & CURATIVE GROWTH INITIATIVES
+   * New Segments & Products: Identify any foray into new markets, specialty products, or service categories. Detail the timeline, pilot results, and target addressable market (TAM).
+   * Asset Efficiency & Capex: Characterize the business model (asset-light vs. asset-heavy). Detail the projected capex (maintenance vs. growth capex) and capacity utilization rates.
+   * Backward/Forward Integration: Note any strategic investments in supply chain consolidation or proprietary technology.
+
+4. FORWARD OUTLOOK & MANAGEMENT GUIDANCE
+   * Performance Targets: Extract specific management guidance for revenue CAGR, volume growth, and target EBITDA/Gross margins for the upcoming quarters/fiscal years.
+   * Growth Horizon: Identify what work done in previous years is expected to yield results now versus what current investments are multi-year long-term plays.
+
+5. RED FLAGS, RISKS, & OPERATIONAL DRAGS
+   * Underperforming Segments: Highlight segments, geographies, or business lines experiencing negative growth or structural declines.
+   * Breakeven Timelines: Note gestational losses in international or new operations and when management expects them to break even.
+   * Macro & External Factors: Extract supply chain vulnerabilities, vendor cost pressures, currency/FX headwinds, regulatory or compliance shifts, and high base-effect impacts.
+
+### Formatting & Output Constraints
+
+* Use Markdown formatting with clear headers matching the framework above.
+* Use bullet points for readability. Every point must lead with a bolded keyword summarizing the insight.
+* Be quantitative: Never say "revenues grew significantly"; say "revenues increased by 21% YoY to INR 829 crores".
+* If a metric or guidance point is not mentioned in the transcript, do not invent data; explicitly state "Not discussed by management".
+* Keep the tone objective, analytical, and critical.\n\n""")
     summaries = []
     for idx, ch in enumerate(chunks):
         txt = call_text(
             prompt=f"{prompt_head}\n\nEXCERPT:\n{ch}",
-            system="You are an equity analyst. Output concise analysis-relevant bullet points only — "
-                   "no preamble, no meta/admin details, no tables, no emojis.",
-            model=LLM_VETO_MODEL, max_tokens=900, caller="research_chunk",
+            # system="You are an equity analyst. Output concise analysis-relevant bullet points only — "
+            #        "no preamble, no meta/admin details, no tables, no emojis.",
+            model=LLM_VETO_MODEL, max_tokens=2000, caller="research_chunk",
         )
         if txt:
             summaries.append(txt if len(chunks) == 1 else f"[part {idx + 1}]\n{txt}")
@@ -166,12 +206,52 @@ def _summarise_concall(material: dict) -> str | None:
     # losing nothing meaningful (it's a text→text condense, not a JSON squeeze).
     if "[part " in digest or len(digest) > POSITIONAL_RESEARCH_CHUNK_CHARS:
         consolidated = call_text(
-            prompt=("Consolidate these concall notes into ONE concise, de-duplicated set of "
-                    "plain-text bullet points, grouped under short headings: Performance; "
-                    "Growth outlook & guidance; Expansion / capex / M&A; New products & segments; "
-                    "Industry & market trends; Capital allocation & margins; Risks. Keep distinct "
-                    "insights, numbers and names. EXCLUDE the call date, executive names, call "
-                    "logistics and disclaimers. No tables, no emojis, no markdown decoration:\n\n"
+            # prompt=("Consolidate these concall notes into ONE concise, de-duplicated set of "
+            #         "plain-text bullet points, grouped under short headings: Performance; "
+            #         "Growth outlook & guidance; Expansion / capex / M&A; New products & segments; "
+            #         "Industry & market trends; Capital allocation & margins; Risks. Keep distinct "
+            #         "insights, numbers and names. EXCLUDE the call date, executive names, call "
+            #         "logistics and disclaimers. No tables, no emojis, no markdown decoration:\n\n"
+            #         f"{digest}"),
+            prompt=("""You are an expert Equity Research Analyst and an Institutional Investor. Your task is to analyze the provided management conference call transcript for {{company_name}} for {{quarter_and_year}} and extract high-signal, actionable insights that are critical for a stock investor making a buy/sell/hold decision.
+
+Focus strictly on hard data, structural shifts, underlying operational realities, and risk vectors. Ignore generic corporate platitudes, marketing jargon, and routine pleasantries.
+
+### Extraction Framework
+
+Analyze the transcript and generate a structured report covering the following five categories:
+
+1. FINANCIAL PERFORMANCE & MARGIN HEALTH
+   * Growth Metrics: Extract absolute numbers and Year-on-Year (YoY) or Quarter-on-Quarter (QoQ) percentage growth for Revenue, Profit After Tax (PAT), and EBITDA.
+   * Margin Trends: Note changes in Gross Margin and EBITDA Margin. Specify the exact drivers behind margin expansion or contraction (e.g., vendor discounts, input cost inflation, operating leverage).
+   * Balance Sheet & Cash Flows: Identify debt levels, cash reserves, operating cash flow generation, and capital allocation decisions (e.g., dividends, share buybacks).
+
+2. CORE OPERATIONAL DRIVERS & VOLUME STRATEGIES
+   * Volume vs. Price: Is growth driven by volume expansion or price hikes? Note the management's pricing power and near-term strategy.
+   * Distribution & Network: Capture key metrics regarding distribution footprint (franchisees, store count, geographic reach, or active users) and growth velocity.
+   * Key Business Verticals: Detail the performance of core verticals, including specific segment growth rates, customer retention trends, or B2B vs. B2C mix shifts.
+
+3. STRATEGIC PIVOTS & CURATIVE GROWTH INITIATIVES
+   * New Segments & Products: Identify any foray into new markets, specialty products, or service categories. Detail the timeline, pilot results, and target addressable market (TAM).
+   * Asset Efficiency & Capex: Characterize the business model (asset-light vs. asset-heavy). Detail the projected capex (maintenance vs. growth capex) and capacity utilization rates.
+   * Backward/Forward Integration: Note any strategic investments in supply chain consolidation or proprietary technology.
+
+4. FORWARD OUTLOOK & MANAGEMENT GUIDANCE
+   * Performance Targets: Extract specific management guidance for revenue CAGR, volume growth, and target EBITDA/Gross margins for the upcoming quarters/fiscal years.
+   * Growth Horizon: Identify what work done in previous years is expected to yield results now versus what current investments are multi-year long-term plays.
+
+5. RED FLAGS, RISKS, & OPERATIONAL DRAGS
+   * Underperforming Segments: Highlight segments, geographies, or business lines experiencing negative growth or structural declines.
+   * Breakeven Timelines: Note gestational losses in international or new operations and when management expects them to break even.
+   * Macro & External Factors: Extract supply chain vulnerabilities, vendor cost pressures, currency/FX headwinds, regulatory or compliance shifts, and high base-effect impacts.
+
+### Formatting & Output Constraints
+
+* Use Markdown formatting with clear headers matching the framework above.
+* Use bullet points for readability. Every point must lead with a bolded keyword summarizing the insight.
+* Be quantitative: Never say "revenues grew significantly"; say "revenues increased by 21% YoY to INR 829 crores".
+* If a metric or guidance point is not mentioned in the transcript, do not invent data; explicitly state "Not discussed by management".
+* Keep the tone objective, analytical, and critical.\n\n"""
                     f"{digest}"),
             system=_CONCALL_SYSTEM,
             model=LLM_VETO_MODEL, max_tokens=2000, caller="research_concall_consolidate",
@@ -208,7 +288,7 @@ def _summarise_fundamentals(material: dict, f: dict) -> dict | None:
                "Summarise the financial trajectory, valuation and especially the multi-quarter "
                "ownership trend (FII/DII accumulation vs public, promoter/pledge).",
         schema=_FUND_SCHEMA, system=_FUND_SYSTEM,
-        model=LLM_VETO_MODEL, max_tokens=500, caller="research_fundamentals",
+        model=LLM_VETO_MODEL, max_tokens=1000, caller="research_fundamentals",
     )
     return res
 
@@ -237,7 +317,7 @@ def _combine(cand: dict, concall_text: str | None, fundamentals: dict | None,
         "Form the holistic thesis, score management, and give an actionable recommendation."
     )
     res = call_json(prompt=prompt, schema=_COMBINE_SCHEMA, system=_COMBINE_SYSTEM,
-                    model=LLM_VETO_MODEL, max_tokens=700, caller="research_combine")
+                    model=LLM_VETO_MODEL, max_tokens=1500, caller="research_combine")
     return _coerce_result(res)
 
 
