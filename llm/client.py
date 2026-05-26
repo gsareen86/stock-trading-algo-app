@@ -389,6 +389,9 @@ def _call_ollama(*, prompt, schema, system, model, max_tokens):
         "model": model,
         "messages": messages,
         "stream": False,
+        # Force valid-JSON-only output: stops local models prepending prose like
+        # "Based on the transcript, here is a ..." which broke JSON parsing.
+        "format": "json",
         "options": {
             "temperature": 0.0,
             "num_predict": max_tokens
