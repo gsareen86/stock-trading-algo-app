@@ -242,6 +242,105 @@ def call_json(
     return result
 
 
+def call_text(
+    *,
+    prompt: str,
+    system: Optional[str] = None,
+    model: Optional[str] = None,
+    max_tokens: int = 512,
+    caller: str = "",
+) -> Optional[str]:
+    """Free-form text completion (no JSON, no schema). Returns the string or None.
+
+    Use this for "map" steps — e.g. summarising a long concall transcript — where
+    we want the model's natural prose output. Asking a local model for JSON on a
+    very large input makes it lapse into prose; produce text here, then run a small
+    JSON-extraction call (call_json) on the compact result.
+    """
+    from llm.observability import record as _obs_record
+    model = model or LLM_DEFAULT_MODEL
+
+    if _cb_is_open():
+        return None
+    client = get_client()
+    if client is None and LLM_PROVIDER != "ollama":
+        return None
+
+    t0 = time.monotonic()
+    text = None
+    pt = ct = None
+    error_msg = None
+    try:
+        if LLM_PROVIDER == "ollama":
+            text, pt, ct = _text_ollama(prompt=prompt, system=system, model=model, max_tokens=max_tokens)
+        elif LLM_PROVIDER == "anthropic":
+            text, pt, ct = _text_anthropic(client, prompt=prompt, system=system, model=model, max_tokens=max_tokens)
+        else:
+            text, pt, ct = _text_openrouter(client, prompt=prompt, system=system, model=model, max_tokens=max_tokens)
+    except Exception as e:
+        text = None
+        error_msg = str(e)
+
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    if text is None:
+        if "429" in (error_msg or ""):
+            _cb_record_429(model)
+        _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
+                    status="error", latency_ms=latency_ms, error_msg=error_msg)
+        return None
+    _cb_record_success()
+    _obs_record(provider=LLM_PROVIDER, model=model, caller=caller, status="ok",
+                prompt_tokens=pt, completion_tokens=ct, latency_ms=latency_ms)
+    return text
+
+
+def _text_ollama(*, prompt, system, model, max_tokens):
+    import requests
+    from config import OLLAMA_REQUEST_TIMEOUT_S
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3]
+    url = f"{base_url}/api/chat"
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    payload = {
+        "model": model, "messages": messages, "stream": False,
+        "options": {"temperature": 0.0, "num_predict": max_tokens}, "think": False,
+    }
+    res = requests.post(url, json=payload, timeout=OLLAMA_REQUEST_TIMEOUT_S)
+    if res.status_code != 200:
+        log.warning("Ollama text call HTTP %d: %s", res.status_code, res.text[:200])
+        return None, None, None
+    data = res.json()
+    content = (data.get("message", {}) or {}).get("content", "") or ""
+    return (content.strip() or None), data.get("prompt_eval_count"), data.get("eval_count")
+
+
+def _text_openrouter(client, *, prompt, system, model, max_tokens):
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    resp = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
+    usage = getattr(resp, "usage", None)
+    content = resp.choices[0].message.content or ""
+    return (content.strip() or None), getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None)
+
+
+def _text_anthropic(client, *, prompt, system, model, max_tokens):
+    kwargs: dict[str, Any] = {"model": model, "max_tokens": max_tokens,
+                              "messages": [{"role": "user", "content": prompt}]}
+    if system:
+        kwargs["system"] = system
+    resp = client.messages.create(**kwargs)
+    pt = getattr(getattr(resp, "usage", None), "input_tokens", None)
+    ct = getattr(getattr(resp, "usage", None), "output_tokens", None)
+    txt = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), None)
+    return (txt.strip() if txt else None), pt, ct
+
+
 def _call_anthropic(client, *, prompt, schema, system, model, max_tokens):
     """Returns (parsed_dict_or_None, prompt_tokens, completion_tokens)."""
     kwargs: dict[str, Any] = {

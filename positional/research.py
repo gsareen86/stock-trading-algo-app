@@ -29,7 +29,7 @@ from config import (
     POSITIONAL_RESEARCH_LIMIT,
 )
 from db.models import get_conn
-from llm.client import call_json
+from llm.client import call_json, call_text
 from positional import scorer
 from positional.concalls import gather_management_material
 
@@ -38,16 +38,6 @@ log = logging.getLogger(__name__)
 _MAX_CHUNKS = 6   # cap transcript chunks summarised per stock (bounds LLM cost)
 
 # ── Stage 1: concall transcript / presentation summary ──────────────────────
-_CHUNK_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "summary": {"type": "string",
-                    "description": "Concise bullet digest of management commentary in this excerpt: guidance, growth drivers, margins, capital allocation, risks, red flags."}
-    },
-    "required": ["summary"],
-    "additionalProperties": False,
-}
-
 _CONCALL_SCHEMA = {
     "type": "object",
     "properties": {
@@ -128,39 +118,48 @@ _COMBINE_SYSTEM = (
 
 
 def _summarise_long_text(body: str) -> str:
-    """Map step: summarise each transcript chunk, then concatenate the digests."""
+    """Map step: compress the (possibly huge) transcript to a free-TEXT bullet
+    digest. Plain text — not JSON — because local models reliably summarise long
+    inputs but lapse into prose when asked for JSON on a large prompt. The JSON
+    extraction runs later on this small digest instead."""
     chunk = POSITIONAL_RESEARCH_CHUNK_CHARS
     chunks = [body[i:i + chunk] for i in range(0, len(body), chunk)][:_MAX_CHUNKS]
     summaries = []
     for idx, ch in enumerate(chunks):
-        res = call_json(
-            prompt=("Summarise the management commentary in this concall/presentation excerpt "
-                    "as concise bullet points (guidance, growth drivers, margins, capital "
-                    f"allocation, risks, red flags):\n\n{ch}"),
-            schema=_CHUNK_SCHEMA,
-            model=LLM_VETO_MODEL,
-            max_tokens=400,
-            caller="research_chunk",
+        txt = call_text(
+            prompt=("Summarise the key management commentary in this concall / presentation "
+                    "excerpt as concise bullet points — forward guidance, growth drivers, "
+                    f"margins, capital allocation, demand/order-book, risks and red flags:\n\n{ch}"),
+            system="You are an equity analyst. Output only the bullet-point summary — no preamble.",
+            model=LLM_VETO_MODEL, max_tokens=450, caller="research_chunk",
         )
-        if res and res.get("summary"):
-            summaries.append(f"[part {idx + 1}] {res['summary']}")
-    return "\n".join(summaries)[:POSITIONAL_RESEARCH_CHUNK_CHARS]
+        if txt:
+            summaries.append(txt if len(chunks) == 1 else f"[part {idx + 1}]\n{txt}")
+    return "\n\n".join(summaries)[: POSITIONAL_RESEARCH_CHUNK_CHARS]
 
 
 def _summarise_concall(material: dict) -> dict | None:
     """Stage 1 — summarise the concall transcript + presentation alone.
-    Returns {summary, guidance, tone} or None when there is no concall material."""
+
+    Two steps so JSON is reliable even on local models: first compress the
+    transcript to a free-text digest (call_text, chunked), then extract the
+    structured {summary, guidance, tone} from that COMPACT digest (call_json) —
+    the same small-input shape that makes Stages 2 & 3 parse cleanly.
+    Returns the dict, or None when there is no concall material.
+    """
     body = "\n\n".join(p for p in (material.get("concall_text", ""),
                                    material.get("ppt_text", "")) if p)
     if not body:
         return None
-    if len(body) > POSITIONAL_RESEARCH_CHUNK_CHARS:
-        body = _summarise_long_text(body)
-        if not body:
-            return None
+
+    digest = _summarise_long_text(body)
+    if not digest:                       # text step failed/unavailable — use a raw excerpt
+        digest = body[:POSITIONAL_RESEARCH_CHUNK_CHARS]
+
     res = call_json(
-        prompt=f"Concall transcript / presentation for {material.get('ticker')}:\n\n{body}\n\n"
-               "Summarise management's commentary and restate their forward guidance.",
+        prompt=f"Management concall digest for {material.get('ticker')}:\n\n{digest}\n\n"
+               "From this digest produce the JSON object with: summary (<=140 words), "
+               "guidance (management's forward guidance verbatim-ish, or 'none given'), tone.",
         schema=_CONCALL_SCHEMA, system=_CONCALL_SYSTEM,
         model=LLM_VETO_MODEL, max_tokens=500, caller="research_concall",
     )
