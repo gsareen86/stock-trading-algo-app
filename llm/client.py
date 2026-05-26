@@ -367,6 +367,7 @@ def _cache_put(key: str, value: dict) -> None:
 def _call_ollama(*, prompt, schema, system, model, max_tokens):
     """Call local Ollama native chat endpoint, explicitly disabling thinking mode."""
     import requests
+    from config import OLLAMA_REQUEST_TIMEOUT_S
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
     # Clean and convert OpenAI v1 compatibility base URL to raw Ollama base URL
     if base_url.endswith("/v1"):
@@ -396,7 +397,7 @@ def _call_ollama(*, prompt, schema, system, model, max_tokens):
     }
 
     try:
-        res = requests.post(url, json=payload, timeout=60)
+        res = requests.post(url, json=payload, timeout=OLLAMA_REQUEST_TIMEOUT_S)
         if res.status_code != 200:
             log.warning("Ollama native call failed with status %d: %s", res.status_code, res.text)
             return None, None, None

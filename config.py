@@ -475,7 +475,10 @@ else:
     LLM_META_MODEL       = _OR_MODEL
 
 LLM_MAX_RETRIES       = 2    # retries on 429 / 5xx
-LLM_REQUEST_TIMEOUT_S = 90   # per-request timeout in seconds
+LLM_REQUEST_TIMEOUT_S = 90   # per-request timeout in seconds (hosted APIs)
+# Local Ollama is much slower (large prompts like concall transcripts can take
+# minutes), so it gets its own, longer timeout. Override via OLLAMA_REQUEST_TIMEOUT_S.
+OLLAMA_REQUEST_TIMEOUT_S = int(os.environ.get("OLLAMA_REQUEST_TIMEOUT_S", "600"))
 
 # Emit a clear startup line so you can always verify which model/provider is active.
 import logging as _logging
