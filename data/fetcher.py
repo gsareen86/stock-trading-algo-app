@@ -219,8 +219,7 @@ NSE_HOLIDAYS: set[str] = {
     "2026-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
     "2026-04-21",  # Ram Navami
     "2026-04-30",  # Mahavir Jayanti  ← user reported "market closed today"
-    "2026-05-01",  # Maharashtra Day
-    "2026-05-27",  # Buddha Pournima
+    "2026-05-01",  # Maharashtra Day (also Buddha Pournima 2026 — full-moon Vaisakha falls May 1)
     "2026-08-15",  # Independence Day
     "2026-08-27",  # Ganesh Chaturthi
     "2026-10-02",  # Mahatma Gandhi Jayanti / Dussehra
