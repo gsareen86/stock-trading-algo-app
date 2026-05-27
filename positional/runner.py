@@ -258,6 +258,26 @@ def _close_position(pos: dict, current_price: float, reason: str) -> bool:
 
 # ── EOD Exit Management ───────────────────────────────────────────────────────
 
+def _calendar_days_held(entry_date) -> int:
+    """Calendar days a position has been held, derived from its entry date.
+
+    Hold duration must come from the entry date — the old approach incremented
+    a stored counter on every exit-check run, so extra EOD scans, manual
+    triggers and server restarts inflated it (e.g. 51 "days" for a 16-day hold).
+    """
+    if not entry_date:
+        return 0
+    raw = str(entry_date)
+    try:
+        ed = datetime.fromisoformat(raw)
+    except ValueError:
+        try:
+            ed = datetime.fromisoformat(raw.replace("Z", "").split(".")[0].replace(" ", "T"))
+        except ValueError:
+            return 0
+    return max(0, (datetime.now(IST).date() - ed.date()).days)
+
+
 def run_exit_checks(force: bool = False) -> dict:
     """
     Check all OPEN pos_positions for exit conditions.
@@ -302,8 +322,10 @@ def run_exit_checks(force: bool = False) -> dict:
             if current_price > peak:
                 peak = current_price
 
-            # Increment days_held
-            days_held = int(pos.get("days_held", 0)) + 1
+            # Derive hold duration from the entry date (not a per-run counter).
+            # Set it on the pos dict too so check_time_stop sees the right value.
+            days_held = _calendar_days_held(pos.get("entry_date"))
+            pos["days_held"] = days_held
 
             # Evaluate exit (technical first, then optional management-based exit)
             exit_reason = evaluate_exits(pos, df)
