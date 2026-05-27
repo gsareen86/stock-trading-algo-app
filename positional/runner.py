@@ -785,15 +785,17 @@ def run_positional_forever() -> None:
     alert_h, alert_m = [int(x) for x in POSITIONAL_ALERT_TIME.split(":")]
     refresh_h, refresh_m = [int(x) for x in POSITIONAL_RESEARCH_REFRESH_TIME.split(":")]
 
-    # If booted after the scheduled scan/alert time, mark today as already
-    # handled so we do NOT auto-run a catch-up scan on startup. Today's scan
-    # has effectively been missed for this boot — trigger it manually from the
-    # UI if needed; otherwise it resumes at the scheduled time tomorrow.
+    # If booted after a scheduled time, mark it as already handled so we do
+    # NOT auto-run a catch-up scan / research pass on startup. The scheduled
+    # work has effectively been missed for this boot — trigger it manually from
+    # the UI if needed; otherwise it resumes at its scheduled time tomorrow.
     now = datetime.now(IST)
     if (now.hour, now.minute) >= (scan_h, scan_m):
         _last_scan_date = now.date()
     if (now.hour, now.minute) >= (alert_h, alert_m):
         _last_alert_date = now.date()
+    if (now.hour, now.minute) >= (refresh_h, refresh_m):
+        _last_refresh_date = now.date()
 
     while True:
         try:
