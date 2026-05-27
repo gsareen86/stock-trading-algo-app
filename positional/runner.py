@@ -769,17 +769,12 @@ def run_positional_forever() -> None:
     """
     log.info("[pos_runner] positional daemon started")
 
-    # Startup EOD scan hook
-    if _positional_enabled():
-        import threading
-        log.info("[pos_runner] Spawning startup EOD scan thread (pos-startup-scan)...")
-        t = threading.Thread(
-            target=run_eod_scan,
-            args=(False,),
-            daemon=True,
-            name="pos-startup-scan"
-        )
-        t.start()
+    # NOTE: no scan/research is triggered on startup. The full-universe
+    # technical scan + LLM management research run ONLY at the scheduled
+    # times below (POSITIONAL_SCAN_TIME / POSITIONAL_RESEARCH_REFRESH_TIME)
+    # or via the manual UI triggers (/api/positional/scan and
+    # /api/positional/research/refresh). This avoids re-scanning the whole
+    # universe and re-running LLM summaries on every server restart.
 
     _last_scan_date:   object = None
     _last_alert_date:  object = None
@@ -790,7 +785,10 @@ def run_positional_forever() -> None:
     alert_h, alert_m = [int(x) for x in POSITIONAL_ALERT_TIME.split(":")]
     refresh_h, refresh_m = [int(x) for x in POSITIONAL_RESEARCH_REFRESH_TIME.split(":")]
 
-    # If booted after scan time, set last_scan_date to today so we don't double scan
+    # If booted after the scheduled scan/alert time, mark today as already
+    # handled so we do NOT auto-run a catch-up scan on startup. Today's scan
+    # has effectively been missed for this boot — trigger it manually from the
+    # UI if needed; otherwise it resumes at the scheduled time tomorrow.
     now = datetime.now(IST)
     if (now.hour, now.minute) >= (scan_h, scan_m):
         _last_scan_date = now.date()
