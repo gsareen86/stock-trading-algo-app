@@ -1145,6 +1145,24 @@ def get_positional_regime():
         log.error("Error in get_positional_regime: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+def run_regime_check_task():
+    try:
+        log.info("Starting background manual regime check...")
+        run_regime_check()
+        log.info("Background manual regime check completed.")
+    except Exception as e:
+        log.error("Error in background regime check: %s", e)
+
+@app.post("/api/positional/regime/run")
+def trigger_regime_check(background_tasks: BackgroundTasks):
+    """Manually recompute the monthly macro market regime in the background."""
+    try:
+        background_tasks.add_task(run_regime_check_task)
+        return {"success": True, "message": "Market regime recomputation triggered in background"}
+    except Exception as e:
+        log.error("Error triggering regime check: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 def merge_and_process_screener_csvs(file_a: bytes, file_b: bytes) -> dict:
     try:
         df_a = pd.read_csv(io.BytesIO(file_a))

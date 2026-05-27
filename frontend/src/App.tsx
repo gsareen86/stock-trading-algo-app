@@ -1282,6 +1282,23 @@ export default function App() {
     }
   };
 
+  const handleRunRegimeCheck = async () => {
+    setLoading((prev) => ({ ...prev, regime: true }));
+    try {
+      const res = await fetch(`${API_BASE}/api/positional/regime/run`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setSuccessMsg("Market regime recomputation started in the background. The panel will refresh once it finishes.");
+      } else {
+        setErrorMsg(data.detail || "Failed to start regime recomputation.");
+      }
+    } catch (e) {
+      setErrorMsg("Network error starting regime recomputation.");
+    } finally {
+      setLoading((prev) => ({ ...prev, regime: false }));
+    }
+  };
+
   const handleTogglePositionalConfig = async (field: "llm" | "swap") => {
     if (!positionalStatus) return;
     const newLlm = field === "llm" ? !positionalStatus.llm_research_enabled : !!positionalStatus.llm_research_enabled;
@@ -2597,6 +2614,15 @@ export default function App() {
                       </div>
                     </div>
                   )}
+                  <button
+                    onClick={handleRunRegimeCheck}
+                    disabled={loading["regime"]}
+                    title="Recompute the monthly macro market regime now (Nifty/Smallcap ROC, size multiplier). Runs in the background; normally auto-runs on the first trading days of the month."
+                    className="w-full py-2.5 px-4 rounded-xl border border-slate-800 hover:bg-slate-900 text-slate-300 font-semibold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <Activity size={14} className={loading["regime"] ? "animate-spin" : ""} />
+                    {loading["regime"] ? "RECOMPUTING REGIME..." : "RECOMPUTE MARKET REGIME"}
+                  </button>
                 </div>
 
                 <div className="glass-panel p-6 rounded-2xl space-y-4">

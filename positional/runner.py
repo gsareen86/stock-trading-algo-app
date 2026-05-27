@@ -796,6 +796,10 @@ def run_positional_forever() -> None:
         _last_alert_date = now.date()
     if (now.hour, now.minute) >= (refresh_h, refresh_m):
         _last_refresh_date = now.date()
+    # Regime is a monthly job (first trading days of the month). Mark the
+    # current month handled on boot so a fresh start within that window does
+    # not auto-recompute it — use the manual trigger or wait for next month.
+    _last_regime_month = now.month
 
     while True:
         try:
