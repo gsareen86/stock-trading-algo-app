@@ -109,8 +109,8 @@ def nifty_returns() -> Tuple[Optional[float], Optional[float]]:
         n = len(close)
         i3 = min(63, n - 1)
         i6 = min(126, n - 1)
-        r3 = (float(close.iloc[-1]) - float(close.iloc[-i3])) / float(close.iloc[-i3]) * 100
-        r6 = (float(close.iloc[-1]) - float(close.iloc[-i6])) / float(close.iloc[-i6]) * 100
+        r3 = (float(close.iloc[-1]) - float(close.iloc[-1 - i3])) / float(close.iloc[-1 - i3]) * 100
+        r6 = (float(close.iloc[-1]) - float(close.iloc[-1 - i6])) / float(close.iloc[-1 - i6]) * 100
         return r3, r6
     except Exception as e:
         log.debug("[pillars] nifty returns failed: %s", e)
@@ -132,8 +132,8 @@ def relative_momentum_pillar(
             return None
         i3 = min(63, n - 1)
         i6 = min(126, n - 1)
-        r3 = (float(close.iloc[-1]) - float(close.iloc[-i3])) / float(close.iloc[-i3]) * 100
-        r6 = (float(close.iloc[-1]) - float(close.iloc[-i6])) / float(close.iloc[-i6]) * 100
+        r3 = (float(close.iloc[-1]) - float(close.iloc[-1 - i3])) / float(close.iloc[-1 - i3]) * 100
+        r6 = (float(close.iloc[-1]) - float(close.iloc[-1 - i6])) / float(close.iloc[-1 - i6]) * 100
     except Exception:
         return None
 

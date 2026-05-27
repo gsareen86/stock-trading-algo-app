@@ -23,7 +23,7 @@ class MomentumStrategy(BaseStrategy):
         close = df["Close"]
         volume = df["Volume"]
 
-        ret_n = (close.iloc[-1] / close.iloc[-self.lookback] - 1) * 100
+        ret_n = (close.iloc[-1] / close.iloc[-self.lookback - 1] - 1) * 100
         vol_now = float(volume.iloc[-1])
         vol_avg = float(volume.iloc[-self.lookback:].mean())
         vol_ratio = (vol_now / vol_avg) if vol_avg else 1.0

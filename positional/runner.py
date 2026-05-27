@@ -344,13 +344,10 @@ def run_exit_checks(force: bool = False) -> dict:
                 })
                 exited += 1
             else:
-                # Update current EMA trail stop and counters
+                # Persist the EMA-trail level + the trailing below-EMA count
+                # already computed by check_ema_trailing_stop (no re-increment).
                 ema21_val = compute_ema21(df)
                 below_ema = int(pos.get("below_ema_consecutive", 0))
-                if current_price < ema21_val:
-                    below_ema += 1
-                else:
-                    below_ema = 0
                 try:
                     with get_conn() as conn:
                         conn.execute(

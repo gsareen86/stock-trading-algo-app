@@ -88,7 +88,7 @@ def _aggregate_technical(signals: List[Signal]) -> tuple[str, float, List[str]]:
 
     # Normalize: map (net, total) to 0-100 where 50 = neutral
     if abs(net) < 5:
-        return "HOLD", 50.0 + net, reasons
+        return "HOLD", round(max(0.0, min(100.0, 50.0 + net)), 2), reasons
     if net > 0:
         # higher conviction when strong buy and weak sell
         score = 50 + min(net, 50)
