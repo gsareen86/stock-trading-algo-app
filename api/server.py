@@ -772,43 +772,359 @@ def clean_str(v, default="—") -> str:
     return val
 
 
-@app.get("/api/fundamentals")
-def get_fundamentals_table():
-    """Retrieve fundamental scorecards with financial warnings flags."""
+# Tickers stored elsewhere can carry a yfinance suffix (".NS"/".BO"). The
+# fundamentals table and screener URLs use the bare NSE symbol, so we strip
+# the suffix when building the union universe.
+def _bare(ticker: str) -> str:
+    t = (ticker or "").strip().upper()
+    if t.endswith(".NS") or t.endswith(".BO"):
+        return t[:-3]
+    return t
+
+
+_FUNDAMENTALS_TOP_SCANS = 30
+
+
+def _build_fundamentals_universe(top_scans: int = _FUNDAMENTALS_TOP_SCANS) -> Dict[str, List[str]]:
+    """Return mapping of bare ticker -> sorted list of source-tags.
+
+    Tags (in order of importance for display):
+      * ``intraday_open``   - in the intraday positions table, status=OPEN
+      * ``positional_open`` - in pos_positions, status=OPEN
+      * ``lt_universe``     - shortlisted for long-term tracking
+      * ``pos_scan_top``    - top N from latest positional scan
+      * ``pinned``          - user-pinned via the Fundamentals tab
+    """
+    from collections import defaultdict
+    sources: Dict[str, set] = defaultdict(set)
+    with get_conn() as conn:
+        for r in conn.execute("SELECT DISTINCT ticker FROM positions WHERE status='OPEN'").fetchall():
+            sources[_bare(r["ticker"])].add("intraday_open")
+        for r in conn.execute("SELECT DISTINCT ticker FROM pos_positions WHERE status='OPEN'").fetchall():
+            sources[_bare(r["ticker"])].add("positional_open")
+        for r in conn.execute("SELECT ticker FROM lt_universe WHERE in_universe=1").fetchall():
+            sources[_bare(r["ticker"])].add("lt_universe")
+        # Top N from the most recent scan — composite_score may be NULL on
+        # pre-migration rows, so COALESCE keeps the ordering stable.
+        for r in conn.execute(
+            """SELECT ticker FROM pos_scans
+                ORDER BY scanned_at DESC,
+                         COALESCE(composite_score, 0) DESC,
+                         COALESCE(score, 0) DESC
+                LIMIT ?""",
+            (top_scans,),
+        ).fetchall():
+            sources[_bare(r["ticker"])].add("pos_scan_top")
+        for r in conn.execute("SELECT ticker FROM fundamentals_pins").fetchall():
+            sources[_bare(r["ticker"])].add("pinned")
+    return {t: sorted(s) for t, s in sources.items() if t}
+
+
+@app.get("/api/fundamentals/universe")
+def get_fundamentals_universe():
+    """List of tickers in the auto-built fundamentals universe with sources."""
     try:
-        df = query_df("SELECT * FROM fundamentals ORDER BY fundamental_score DESC, ticker ASC")
-        if df.empty:
-            return []
-        
+        uni = _build_fundamentals_universe()
+        return [{"ticker": t, "sources": s} for t, s in sorted(uni.items())]
+    except Exception as e:
+        log.error("Error in get_fundamentals_universe: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/fundamentals")
+def get_fundamentals_table(scope: str = Query("universe")):
+    """Retrieve fundamental scorecards with financial warnings flags.
+
+    ``scope`` defaults to ``universe`` — tickers held in any book, in the
+    long-term watchlist, in the top-30 of the latest positional scan, or
+    manually pinned. ``scope=all`` returns the legacy full-table view.
+    """
+    try:
+        df = query_df("SELECT * FROM fundamentals")
+        existing = {r["ticker"]: r for _, r in df.iterrows()} if not df.empty else {}
+
+        if scope == "all":
+            ordered_tickers = list(existing.keys())
+            universe: Dict[str, List[str]] = {}
+        else:
+            universe = _build_fundamentals_universe()
+            # Include every ticker in the universe even if we don't yet have a
+            # fundamentals row for it - the UI surfaces a "needs fetch" badge.
+            ordered_tickers = list(universe.keys())
+
         results = []
-        for idx, r in df.iterrows():
-            ticker = r["ticker"]
-            is_bank_flag = is_bank(
-                clean_str(r.get("sector"), ""),
-                clean_str(r.get("industry"), "")
-            )
-            results.append({
-                "ticker": ticker,
-                "screener_url": screener_url(ticker),
-                "is_bank": is_bank_flag,
-                "fetched_at": to_ist_str(r["fetched_at"]),
-                "pe_ratio": clean_float(r["pe_ratio"], round_digits=2),
-                "peg_ratio": clean_float(r["peg_ratio"], round_digits=2),
-                "eps": clean_float(r["eps"], round_digits=2),
-                "revenue_growth": clean_float(r["revenue_growth"], round_digits=2, multiplier=100.0),
-                "earnings_growth": clean_float(r["earnings_growth"], round_digits=2, multiplier=100.0),
-                "debt_to_equity": clean_float(r["debt_to_equity"], round_digits=2),
-                "roe": clean_float(r["roe"], round_digits=2, multiplier=100.0),
-                "profit_margin": clean_float(r["profit_margin"], round_digits=2, multiplier=100.0),
-                "market_cap": clean_float(r["market_cap"], round_digits=2),
-                "dividend_yield": clean_float(r["dividend_yield"], round_digits=2, multiplier=100.0),
-                "sector": clean_str(r["sector"]),
-                "industry": clean_str(r["industry"]),
-                "fundamental_score": r["fundamental_score"]
-            })
+        for ticker in ordered_tickers:
+            r = existing.get(ticker)
+            sources = universe.get(ticker, [])
+            if r is not None:
+                is_bank_flag = is_bank(
+                    clean_str(r.get("sector"), ""),
+                    clean_str(r.get("industry"), "")
+                )
+                results.append({
+                    "ticker": ticker,
+                    "screener_url": screener_url(ticker),
+                    "is_bank": is_bank_flag,
+                    "sources": sources,
+                    "fetched_at": to_ist_str(r["fetched_at"]),
+                    "pe_ratio": clean_float(r["pe_ratio"], round_digits=2),
+                    "peg_ratio": clean_float(r["peg_ratio"], round_digits=2),
+                    "eps": clean_float(r["eps"], round_digits=2),
+                    "revenue_growth": clean_float(r["revenue_growth"], round_digits=2, multiplier=100.0),
+                    "earnings_growth": clean_float(r["earnings_growth"], round_digits=2, multiplier=100.0),
+                    "debt_to_equity": clean_float(r["debt_to_equity"], round_digits=2),
+                    "roe": clean_float(r["roe"], round_digits=2, multiplier=100.0),
+                    "profit_margin": clean_float(r["profit_margin"], round_digits=2, multiplier=100.0),
+                    "market_cap": clean_float(r["market_cap"], round_digits=2),
+                    "dividend_yield": clean_float(r["dividend_yield"], round_digits=2, multiplier=100.0),
+                    "sector": clean_str(r["sector"]),
+                    "industry": clean_str(r["industry"]),
+                    "fundamental_score": r["fundamental_score"],
+                })
+            else:
+                # Universe ticker with no fundamentals row yet — sparse stub
+                # so the UI can still render it and offer a refresh button.
+                results.append({
+                    "ticker": ticker,
+                    "screener_url": screener_url(ticker),
+                    "is_bank": False,
+                    "sources": sources,
+                    "fetched_at": "—",
+                    "pe_ratio": None, "peg_ratio": None, "eps": None,
+                    "revenue_growth": None, "earnings_growth": None,
+                    "debt_to_equity": None, "roe": None, "profit_margin": None,
+                    "market_cap": None, "dividend_yield": None,
+                    "sector": "—", "industry": "—",
+                    "fundamental_score": None,
+                })
+
+        # Sort: open positions first, then by fundamental_score desc, then ticker
+        def _rank(item) -> tuple:
+            srcs = set(item.get("sources") or [])
+            priority = 0
+            if "intraday_open" in srcs:    priority -= 8
+            if "positional_open" in srcs:  priority -= 8
+            if "pinned" in srcs:           priority -= 4
+            if "lt_universe" in srcs:      priority -= 2
+            score = item.get("fundamental_score")
+            score = -float(score) if score is not None else 0.0
+            return (priority, score, item.get("ticker") or "")
+
+        results.sort(key=_rank)
         return results
     except Exception as e:
         log.error("Error in get_fundamentals_table: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/fundamentals/detail/{ticker}")
+def get_fundamentals_detail(ticker: str, refresh: bool = Query(False)):
+    """Deep Screener.in fundamentals view for one ticker.
+
+    Returns multi-year P&L, balance sheet, cash flow, ratios, quarterly
+    results, shareholding pattern, pros/cons and recent announcements. The
+    underlying scraper has a 24h on-disk cache - first call on a cold ticker
+    can take 5-10 seconds (rate-limited HTTP); subsequent calls are cheap.
+    Pass ``refresh=true`` to bypass the cache.
+    """
+    try:
+        from longterm.screener_scraper import fetch_company
+        tk = _bare(ticker)
+        parsed = fetch_company(tk, force=bool(refresh))
+        if not parsed:
+            raise HTTPException(status_code=404, detail=f"Screener.in returned no data for {tk}")
+
+        # Light sanitisation: cast Nones / pandas-NA-ish to plain JSON.
+        def _scrub_series(rows):
+            out = []
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                out.append({
+                    "period": clean_str(row.get("period"), default=""),
+                    "value": clean_float(row.get("value")),
+                })
+            return out
+
+        def _scrub_shareholding(rows):
+            out = []
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                out.append({
+                    "period": clean_str(row.get("period"), default=""),
+                    "promoter_pct": clean_float(row.get("promoter_pct"), round_digits=2),
+                    "fii_pct":      clean_float(row.get("fii_pct"), round_digits=2),
+                    "dii_pct":      clean_float(row.get("dii_pct"), round_digits=2),
+                    "govt_pct":     clean_float(row.get("govt_pct"), round_digits=2),
+                    "public_pct":   clean_float(row.get("public_pct"), round_digits=2),
+                    "pledged_pct":  clean_float(row.get("pledged_pct"), round_digits=2),
+                    "shareholders": clean_float(row.get("shareholders")),
+                })
+            return out
+
+        return {
+            "ticker": tk,
+            "screener_url": parsed.get("url") or screener_url(tk),
+            "view": parsed.get("view") or "—",
+            "fetched_at": to_ist_str(parsed.get("fetched_at")),
+            "warnings": parsed.get("warnings") or [],
+            "top_ratios": {
+                "market_cap_cr":      clean_float(parsed.get("market_cap_cr"), round_digits=2),
+                "pe":                 clean_float(parsed.get("pe"), round_digits=2),
+                "industry_pe":        clean_float(parsed.get("industry_pe"), round_digits=2),
+                "roe_pct":            clean_float(parsed.get("roe_pct"), round_digits=2),
+                "roce_pct":           clean_float(parsed.get("roce_pct"), round_digits=2),
+                "debt_equity":        clean_float(parsed.get("debt_equity"), round_digits=2),
+                "dividend_yield_pct": clean_float(parsed.get("dividend_yield_pct"), round_digits=2),
+                "book_value":         clean_float(parsed.get("book_value"), round_digits=2),
+                "face_value":         clean_float(parsed.get("face_value"), round_digits=2),
+            },
+            "profit_loss": {
+                "revenue":          _scrub_series(parsed.get("revenue_yearly")),
+                "operating_profit": _scrub_series(parsed.get("operating_profit_yearly")),
+                "net_profit":       _scrub_series(parsed.get("net_profit_yearly")),
+                "eps":              _scrub_series(parsed.get("eps_yearly")),
+            },
+            "balance_sheet": {
+                "equity_capital":   _scrub_series(parsed.get("equity_capital_yearly")),
+                "reserves":         _scrub_series(parsed.get("reserves_yearly")),
+                "borrowings":       _scrub_series(parsed.get("borrowings_yearly")),
+                "other_liabilities":_scrub_series(parsed.get("other_liab_yearly")),
+                "total_liabilities":_scrub_series(parsed.get("total_liab_yearly")),
+                "fixed_assets":     _scrub_series(parsed.get("fixed_assets_yearly")),
+                "cwip":             _scrub_series(parsed.get("cwip_yearly")),
+                "investments":      _scrub_series(parsed.get("investments_yearly")),
+                "other_assets":     _scrub_series(parsed.get("other_assets_yearly")),
+                "total_assets":     _scrub_series(parsed.get("total_assets_yearly")),
+            },
+            "cash_flow": {
+                "cfo":      _scrub_series(parsed.get("cfo_yearly")),
+                "cfi":      _scrub_series(parsed.get("cfi_yearly")),
+                "cff":      _scrub_series(parsed.get("cff_yearly")),
+                "net_cash": _scrub_series(parsed.get("net_cash_yearly")),
+            },
+            "ratios": {
+                "roe":         _scrub_series(parsed.get("roe_yearly")),
+                "roce":        _scrub_series(parsed.get("roce_yearly")),
+                "opm":         _scrub_series(parsed.get("opm_yearly")),
+                "debtor_days": _scrub_series(parsed.get("debtor_days_yearly")),
+            },
+            "quarterly_results": {
+                "revenue":          _scrub_series(parsed.get("quarterly_revenue")),
+                "operating_profit": _scrub_series(parsed.get("quarterly_operating_profit")),
+                "net_profit":       _scrub_series(parsed.get("quarterly_net_profit")),
+                "eps":              _scrub_series(parsed.get("quarterly_eps")),
+                "opm":              _scrub_series(parsed.get("quarterly_opm")),
+            },
+            "shareholding": _scrub_shareholding(parsed.get("shareholding_quarterly")),
+            "pros": parsed.get("pros") or [],
+            "cons": parsed.get("cons") or [],
+            "concalls": parsed.get("concalls") or [],
+            "annual_reports": parsed.get("annual_reports") or [],
+            "announcements": parsed.get("announcements") or [],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Error in get_fundamentals_detail(%s): %s", ticker, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/fundamentals/price-history/{ticker}")
+def get_fundamentals_price_history(ticker: str, years: int = Query(5)):
+    """Multi-year daily price series for the Fundamentals detail chart.
+
+    Reuses the cached candle fetcher (parquet on disk) so repeated views
+    are free. Returns a thinned list of date/close pairs - we down-sample
+    to weekly closes when the requested span exceeds 2 years to keep the
+    payload small for the SVG chart.
+    """
+    try:
+        from data.fetcher import fetch_candles
+        tk = _bare(ticker)
+        years = max(1, min(int(years), 10))
+        df = fetch_candles(tk, interval="1d", days=365 * years)
+        if df.empty:
+            return {"ticker": tk, "years": years, "series": []}
+
+        if years > 2:
+            df = df.resample("W").last().dropna()
+
+        series = []
+        for ts, row in df.iterrows():
+            try:
+                close = float(row["Close"])
+            except Exception:
+                continue
+            if np.isnan(close) or np.isinf(close):
+                continue
+            series.append({
+                "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                "close": round(close, 2),
+            })
+        return {"ticker": tk, "years": years, "series": series}
+    except Exception as e:
+        log.error("Error in get_fundamentals_price_history(%s): %s", ticker, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class PinInput(BaseModel):
+    ticker: str
+    notes: Optional[str] = ""
+
+
+@app.get("/api/fundamentals/pins")
+def list_fundamentals_pins():
+    """List user-pinned tickers in the Fundamentals tab."""
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT ticker, added_at, notes FROM fundamentals_pins ORDER BY added_at DESC"
+            ).fetchall()
+        return [
+            {"ticker": r["ticker"], "added_at": to_ist_str(r["added_at"]), "notes": r["notes"] or ""}
+            for r in rows
+        ]
+    except Exception as e:
+        log.error("Error in list_fundamentals_pins: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/fundamentals/pin")
+def pin_fundamentals(input_data: PinInput):
+    """Pin a ticker into the Fundamentals universe so it always shows up."""
+    try:
+        tk = _bare(input_data.ticker)
+        if not tk:
+            raise HTTPException(status_code=400, detail="ticker is required")
+        with get_conn() as conn:
+            conn.execute(
+                """INSERT INTO fundamentals_pins (ticker, added_at, notes)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT (ticker) DO UPDATE SET
+                       added_at = excluded.added_at,
+                       notes    = excluded.notes""",
+                (tk, datetime.now(timezone.utc).isoformat(), input_data.notes or ""),
+            )
+        return {"success": True, "ticker": tk}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Error in pin_fundamentals: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/fundamentals/pin/{ticker}")
+def unpin_fundamentals(ticker: str):
+    """Remove a ticker from the user-pinned set."""
+    try:
+        tk = _bare(ticker)
+        with get_conn() as conn:
+            conn.execute("DELETE FROM fundamentals_pins WHERE ticker = ?", (tk,))
+        return {"success": True, "ticker": tk}
+    except Exception as e:
+        log.error("Error in unpin_fundamentals(%s): %s", ticker, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

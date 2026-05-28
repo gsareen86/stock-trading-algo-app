@@ -402,6 +402,12 @@ CREATE TABLE IF NOT EXISTS pos_research (
     confidence       REAL
 );
 
+CREATE TABLE IF NOT EXISTS fundamentals_pins (
+    ticker     TEXT PRIMARY KEY,
+    added_at   TEXT NOT NULL,
+    notes      TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_tick     ON pos_scans(ticker);
@@ -747,6 +753,12 @@ CREATE TABLE IF NOT EXISTS pos_research (
     fundamentals_summary TEXT,
     sources          TEXT,
     confidence       DOUBLE PRECISION
+);
+
+CREATE TABLE IF NOT EXISTS fundamentals_pins (
+    ticker     TEXT PRIMARY KEY,
+    added_at   TEXT NOT NULL,
+    notes      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);

@@ -237,6 +237,7 @@ interface FundamentalStock {
   ticker: string;
   screener_url: string;
   is_bank: boolean;
+  sources?: string[];
   fetched_at: string;
   pe_ratio: number | null;
   peg_ratio: number | null;
@@ -250,8 +251,85 @@ interface FundamentalStock {
   dividend_yield: number | null;
   sector: string;
   industry: string;
-  fundamental_score: number;
+  fundamental_score: number | null;
 }
+
+interface SeriesPoint { period: string; value: number | null; }
+interface ShareholdingRow {
+  period: string;
+  promoter_pct: number | null;
+  fii_pct: number | null;
+  dii_pct: number | null;
+  govt_pct: number | null;
+  public_pct: number | null;
+  pledged_pct: number | null;
+  shareholders: number | null;
+}
+interface ConcallRow {
+  date: string | null;
+  transcript_url: string | null;
+  ppt_url: string | null;
+  notes_url: string | null;
+  rec_url: string | null;
+}
+interface AnnualReportRow { label: string; url: string; }
+
+interface FundamentalsDetail {
+  ticker: string;
+  screener_url: string;
+  view: string;
+  fetched_at: string;
+  warnings: string[];
+  top_ratios: {
+    market_cap_cr: number | null;
+    pe: number | null;
+    industry_pe: number | null;
+    roe_pct: number | null;
+    roce_pct: number | null;
+    debt_equity: number | null;
+    dividend_yield_pct: number | null;
+    book_value: number | null;
+    face_value: number | null;
+  };
+  profit_loss: {
+    revenue: SeriesPoint[];
+    operating_profit: SeriesPoint[];
+    net_profit: SeriesPoint[];
+    eps: SeriesPoint[];
+  };
+  balance_sheet: {
+    equity_capital: SeriesPoint[]; reserves: SeriesPoint[];
+    borrowings: SeriesPoint[]; other_liabilities: SeriesPoint[];
+    total_liabilities: SeriesPoint[]; fixed_assets: SeriesPoint[];
+    cwip: SeriesPoint[]; investments: SeriesPoint[];
+    other_assets: SeriesPoint[]; total_assets: SeriesPoint[];
+  };
+  cash_flow: {
+    cfo: SeriesPoint[]; cfi: SeriesPoint[]; cff: SeriesPoint[]; net_cash: SeriesPoint[];
+  };
+  ratios: {
+    roe: SeriesPoint[]; roce: SeriesPoint[]; opm: SeriesPoint[]; debtor_days: SeriesPoint[];
+  };
+  quarterly_results: {
+    revenue: SeriesPoint[]; operating_profit: SeriesPoint[];
+    net_profit: SeriesPoint[]; eps: SeriesPoint[]; opm: SeriesPoint[];
+  };
+  shareholding: ShareholdingRow[];
+  pros: string[];
+  cons: string[];
+  concalls: ConcallRow[];
+  annual_reports: AnnualReportRow[];
+  announcements: string[];
+}
+
+interface PriceHistoryPoint { ts: string; close: number; }
+interface FundamentalsPriceHistory {
+  ticker: string;
+  years: number;
+  series: PriceHistoryPoint[];
+}
+
+interface FundamentalsPin { ticker: string; added_at: string; notes: string; }
 
 interface AnalyticsSummary {
   total_trades: number;
@@ -714,6 +792,386 @@ const PositionalScanTable: React.FC<PositionalScanTableProps> = ({ rows, researc
   );
 };
 
+// -----------------------------------------------------------------------------
+// FUNDAMENTALS DETAIL PANEL
+// -----------------------------------------------------------------------------
+// Screener.in-style deep view rendered inside the expanded row of the
+// Fundamentals tab. The data is fetched by `toggleFundamentalsRow` in App() and
+// passed in via props so this component stays stateless and reusable.
+const fmtNumber = (val: number | null | undefined, digits = 2) => {
+  if (val === null || val === undefined || isNaN(val)) return "—";
+  return val.toLocaleString("en-IN", { maximumFractionDigits: digits });
+};
+
+const SeriesTable: React.FC<{
+  caption: string;
+  rows: { label: string; series: SeriesPoint[]; unit?: string }[];
+}> = ({ caption, rows }) => {
+  // Build canonical period list from the first row that has data — Screener
+  // tables share a common header set per section so this is safe.
+  const firstWithData = rows.find((r) => r.series && r.series.length > 0);
+  const periods = firstWithData ? firstWithData.series.map((p) => p.period) : [];
+  if (periods.length === 0) {
+    return (
+      <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-850">
+        <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-2">{caption}</h4>
+        <div className="text-[11px] text-slate-500">No data available for this section.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-850">
+      <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-2">{caption}</h4>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px] font-mono">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-850">
+              <th className="text-left py-1.5 px-2 w-[140px]">Metric</th>
+              {periods.map((p) => (
+                <th key={p} className="text-right py-1.5 px-2 whitespace-nowrap">{p}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const byPeriod: Record<string, number | null> = {};
+              for (const pt of row.series || []) byPeriod[pt.period] = pt.value;
+              return (
+                <tr key={row.label} className="border-b border-slate-850/60">
+                  <td className="py-1.5 px-2 text-slate-300">{row.label}</td>
+                  {periods.map((p) => {
+                    const v = byPeriod[p];
+                    const display = v === null || v === undefined
+                      ? "—"
+                      : `${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}${row.unit || ""}`;
+                    return (
+                      <td key={p} className="py-1.5 px-2 text-right text-slate-300 whitespace-nowrap">
+                        {display}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+const FundamentalsDetailPanel: React.FC<{
+  stock: FundamentalStock;
+  detail?: FundamentalsDetail;
+  priceHistory?: FundamentalsPriceHistory;
+  loading: boolean;
+  onRefresh: () => void;
+}> = ({ stock, detail, priceHistory, loading, onRefresh }) => {
+  if (loading && !detail) {
+    return (
+      <div className="py-10 text-center text-slate-500 text-xs">
+        Fetching Screener.in fundamentals for {stock.ticker}… (first call may take a few seconds)
+      </div>
+    );
+  }
+  if (!detail) {
+    return (
+      <div className="py-10 text-center text-slate-500 text-xs">
+        Could not load Screener.in data for {stock.ticker}.
+        <button
+          onClick={onRefresh}
+          className="ml-3 px-2 py-1 rounded border border-slate-700 text-indigo-300 hover:bg-slate-800 cursor-pointer"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const tr = detail.top_ratios;
+  const topRatioCards: { label: string; value: string; hint?: string }[] = [
+    { label: "Market Cap",     value: tr.market_cap_cr !== null ? `₹${tr.market_cap_cr.toLocaleString("en-IN")} Cr` : "—" },
+    { label: "Stock P/E",      value: fmtNumber(tr.pe) },
+    { label: "Industry P/E",   value: fmtNumber(tr.industry_pe) },
+    { label: "ROE",            value: tr.roe_pct !== null ? `${tr.roe_pct}%` : "—" },
+    { label: "ROCE",           value: tr.roce_pct !== null ? `${tr.roce_pct}%` : "—" },
+    { label: "Debt to Equity", value: fmtNumber(tr.debt_equity) },
+    { label: "Dividend Yield", value: tr.dividend_yield_pct !== null ? `${tr.dividend_yield_pct}%` : "—" },
+    { label: "Book Value",     value: tr.book_value !== null ? `₹${tr.book_value}` : "—", hint: "Per-share book value as reported by Screener.in" },
+    { label: "Face Value",     value: tr.face_value !== null ? `₹${tr.face_value}` : "—" },
+  ];
+
+  const priceSeries = (priceHistory?.series || []).map((p) => ({
+    ts: p.ts.slice(0, 10),
+    close: p.close,
+  }));
+
+  return (
+    <div className="space-y-5">
+      {/* HEADER */}
+      <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-850">
+        <div>
+          <h3 className="text-sm font-bold text-slate-100">
+            {stock.ticker}
+            <span className="text-[10px] text-slate-500 font-mono ml-2 uppercase">
+              {detail.view} view · {detail.fetched_at}
+            </span>
+          </h3>
+          <a
+            href={detail.screener_url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[10px] text-indigo-300 hover:underline font-mono"
+            onClick={(e) => e.stopPropagation()}
+          >
+            View on Screener.in →
+          </a>
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+          className="px-3 py-1.5 border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold cursor-pointer flex items-center gap-1.5"
+          disabled={loading}
+        >
+          <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+          {loading ? "Refreshing…" : "Refresh from Screener.in"}
+        </button>
+      </div>
+
+      {detail.warnings && detail.warnings.length > 0 && (
+        <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-300 font-mono">
+          ⚠ {detail.warnings.join("; ")}
+        </div>
+      )}
+
+      {/* TOP RATIOS GRID */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        {topRatioCards.map((card) => (
+          <div key={card.label} className="p-2.5 rounded-lg bg-slate-950/50 border border-slate-850" title={card.hint || ""}>
+            <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">{card.label}</div>
+            <div className="text-sm font-mono text-slate-200 mt-0.5">{card.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* PRICE CHART */}
+      {priceSeries.length > 0 && (
+        <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-850">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+              Price History — {priceHistory?.years || 5} years
+            </h4>
+            <span className="text-[10px] text-slate-500 font-mono">{priceSeries.length} points</span>
+          </div>
+          <div className="h-44 font-mono text-[10px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={priceSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#818cf8" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#818cf8" stopOpacity={0.0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+                <XAxis dataKey="ts" stroke="#475569" minTickGap={40} />
+                <YAxis stroke="#475569" domain={["auto", "auto"]} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "#090d1a", borderColor: "#1e293b", color: "#e2e8f0" }}
+                  formatter={(value: any) => [`₹${value}`, "Close"]}
+                />
+                <Area type="monotone" dataKey="close" stroke="#818cf8" fill="url(#priceGrad)" strokeWidth={1.5} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* PROS & CONS */}
+      {((detail.pros && detail.pros.length > 0) || (detail.cons && detail.cons.length > 0)) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+            <h4 className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 mb-2">Pros</h4>
+            {detail.pros && detail.pros.length > 0 ? (
+              <ul className="text-[11px] text-slate-300 space-y-1.5 list-disc pl-4">
+                {detail.pros.map((p, i) => <li key={i}>{p}</li>)}
+              </ul>
+            ) : (
+              <div className="text-[10px] text-slate-500">None listed.</div>
+            )}
+          </div>
+          <div className="p-3 rounded-lg bg-rose-500/5 border border-rose-500/20">
+            <h4 className="text-[10px] font-bold uppercase tracking-wider text-rose-300 mb-2">Cons</h4>
+            {detail.cons && detail.cons.length > 0 ? (
+              <ul className="text-[11px] text-slate-300 space-y-1.5 list-disc pl-4">
+                {detail.cons.map((c, i) => <li key={i}>{c}</li>)}
+              </ul>
+            ) : (
+              <div className="text-[10px] text-slate-500">None listed.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* QUARTERLY RESULTS */}
+      <SeriesTable
+        caption="Quarterly Results (₹ Cr unless stated)"
+        rows={[
+          { label: "Revenue",          series: detail.quarterly_results.revenue },
+          { label: "Operating Profit", series: detail.quarterly_results.operating_profit },
+          { label: "Net Profit",       series: detail.quarterly_results.net_profit },
+          { label: "EPS",              series: detail.quarterly_results.eps,  unit: "" },
+          { label: "OPM",              series: detail.quarterly_results.opm,  unit: "%" },
+        ]}
+      />
+
+      {/* PROFIT & LOSS */}
+      <SeriesTable
+        caption="Profit & Loss — Yearly (₹ Cr)"
+        rows={[
+          { label: "Revenue",          series: detail.profit_loss.revenue },
+          { label: "Operating Profit", series: detail.profit_loss.operating_profit },
+          { label: "Net Profit",       series: detail.profit_loss.net_profit },
+          { label: "EPS (₹)",          series: detail.profit_loss.eps },
+        ]}
+      />
+
+      {/* BALANCE SHEET */}
+      <SeriesTable
+        caption="Balance Sheet — Yearly (₹ Cr)"
+        rows={[
+          { label: "Equity Capital",    series: detail.balance_sheet.equity_capital },
+          { label: "Reserves",          series: detail.balance_sheet.reserves },
+          { label: "Borrowings",        series: detail.balance_sheet.borrowings },
+          { label: "Other Liabilities", series: detail.balance_sheet.other_liabilities },
+          { label: "Total Liabilities", series: detail.balance_sheet.total_liabilities },
+          { label: "Fixed Assets",      series: detail.balance_sheet.fixed_assets },
+          { label: "CWIP",              series: detail.balance_sheet.cwip },
+          { label: "Investments",       series: detail.balance_sheet.investments },
+          { label: "Other Assets",      series: detail.balance_sheet.other_assets },
+          { label: "Total Assets",      series: detail.balance_sheet.total_assets },
+        ]}
+      />
+
+      {/* CASH FLOW */}
+      <SeriesTable
+        caption="Cash Flow — Yearly (₹ Cr)"
+        rows={[
+          { label: "Operating CF",   series: detail.cash_flow.cfo },
+          { label: "Investing CF",   series: detail.cash_flow.cfi },
+          { label: "Financing CF",   series: detail.cash_flow.cff },
+          { label: "Net Cash Flow",  series: detail.cash_flow.net_cash },
+        ]}
+      />
+
+      {/* RATIOS HISTORY */}
+      <SeriesTable
+        caption="Ratios — Yearly"
+        rows={[
+          { label: "ROE",         series: detail.ratios.roe,         unit: "%" },
+          { label: "ROCE",        series: detail.ratios.roce,        unit: "%" },
+          { label: "OPM",         series: detail.ratios.opm,         unit: "%" },
+          { label: "Debtor Days", series: detail.ratios.debtor_days, unit: "" },
+        ]}
+      />
+
+      {/* SHAREHOLDING PATTERN */}
+      {detail.shareholding && detail.shareholding.length > 0 && (
+        <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-850">
+          <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-2">Shareholding Pattern (Quarterly)</h4>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[11px] font-mono">
+              <thead>
+                <tr className="text-slate-500 border-b border-slate-850">
+                  <th className="text-left py-1.5 px-2">Holder</th>
+                  {detail.shareholding.map((q) => (
+                    <th key={q.period} className="text-right py-1.5 px-2 whitespace-nowrap">{q.period}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Promoters %", "promoter_pct"],
+                  ["FII %",       "fii_pct"],
+                  ["DII %",       "dii_pct"],
+                  ["Govt %",      "govt_pct"],
+                  ["Public %",    "public_pct"],
+                  ["Pledged %",   "pledged_pct"],
+                  ["Shareholders","shareholders"],
+                ].map(([label, key]) => (
+                  <tr key={key} className="border-b border-slate-850/60">
+                    <td className="py-1.5 px-2 text-slate-300">{label}</td>
+                    {detail.shareholding.map((q) => {
+                      const v = (q as any)[key as string];
+                      const isShareholderCount = key === "shareholders";
+                      return (
+                        <td key={`${q.period}-${key}`} className="py-1.5 px-2 text-right text-slate-300 whitespace-nowrap">
+                          {v === null || v === undefined
+                            ? "—"
+                            : isShareholderCount
+                            ? v.toLocaleString("en-IN")
+                            : `${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}%`}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* CONCALLS / ANNUAL REPORTS / ANNOUNCEMENTS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-850">
+          <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-2">Recent Concalls</h4>
+          {detail.concalls && detail.concalls.length > 0 ? (
+            <ul className="text-[11px] space-y-1.5">
+              {detail.concalls.slice(0, 6).map((c, i) => (
+                <li key={i} className="text-slate-300">
+                  <span className="text-slate-500 font-mono">{c.date || "—"}</span>{" "}
+                  <span className="space-x-2">
+                    {c.transcript_url && <a href={c.transcript_url} target="_blank" rel="noreferrer" className="text-indigo-300 hover:underline">Transcript</a>}
+                    {c.ppt_url        && <a href={c.ppt_url}        target="_blank" rel="noreferrer" className="text-indigo-300 hover:underline">PPT</a>}
+                    {c.notes_url      && <a href={c.notes_url}      target="_blank" rel="noreferrer" className="text-indigo-300 hover:underline">Notes</a>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-[10px] text-slate-500">No concall links found.</div>
+          )}
+        </div>
+        <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-850">
+          <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-2">Annual Reports</h4>
+          {detail.annual_reports && detail.annual_reports.length > 0 ? (
+            <ul className="text-[11px] space-y-1.5">
+              {detail.annual_reports.slice(0, 8).map((a, i) => (
+                <li key={i}>
+                  <a href={a.url} target="_blank" rel="noreferrer" className="text-indigo-300 hover:underline">{a.label}</a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-[10px] text-slate-500">No annual reports listed.</div>
+          )}
+        </div>
+        <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-850">
+          <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-2">Announcements</h4>
+          {detail.announcements && detail.announcements.length > 0 ? (
+            <ul className="text-[11px] space-y-1 text-slate-300">
+              {detail.announcements.slice(0, 8).map((a, i) => (
+                <li key={i} className="text-[10px]">• {a}</li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-[10px] text-slate-500">No recent announcements.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [showLogs, setShowLogs] = useState<boolean>(true);
@@ -743,10 +1201,21 @@ export default function App() {
   const [tickerSearch, setTickerSearch] = useState<string>("");
   const [tickerNewsFeed, setTickerNewsFeed] = useState<TickerNews[]>([]);
   const [tickerStats, setTickerStats] = useState<any>(null);
+  // Per-ticker expansion in the news leaderboard.
+  const [newsExpanded, setNewsExpanded] = useState<Set<string>>(new Set());
+  const [newsArticlesByTicker, setNewsArticlesByTicker] = useState<Record<string, TickerNews[]>>({});
+  const [newsArticlesLoading, setNewsArticlesLoading] = useState<Set<string>>(new Set());
+  const [showNewsHelp, setShowNewsHelp] = useState<boolean>(true);
 
   // Fundamentals states
   const [fundamentals, setFundamentals] = useState<FundamentalStock[]>([]);
   const [fundamentalsSearch, setFundamentalsSearch] = useState<string>("");
+  const [fundamentalsExpanded, setFundamentalsExpanded] = useState<Set<string>>(new Set());
+  const [fundamentalsDetailByTicker, setFundamentalsDetailByTicker] = useState<Record<string, FundamentalsDetail>>({});
+  const [fundamentalsPriceByTicker, setFundamentalsPriceByTicker] = useState<Record<string, FundamentalsPriceHistory>>({});
+  const [fundamentalsDetailLoading, setFundamentalsDetailLoading] = useState<Set<string>>(new Set());
+  const [fundamentalsPinInput, setFundamentalsPinInput] = useState<string>("");
+  const [fundamentalsPins, setFundamentalsPins] = useState<FundamentalsPin[]>([]);
 
   // Analytics states
   const [analyticsSummary, setAnalyticsSummary] = useState<AnalyticsSummary | null>(null);
@@ -972,16 +1441,8 @@ export default function App() {
     }
 
     if (activeTab === "fundamentals") {
-      const fetchFundamentals = async () => {
-        try {
-          const res = await fetch(`${API_BASE}/api/fundamentals`);
-          const data = await res.json();
-          setFundamentals(data);
-        } catch (e) {
-          console.error("Failed to fetch fundamentals:", e);
-        }
-      };
-      fetchFundamentals();
+      loadFundamentalsTable();
+      loadFundamentalsPins();
     }
 
     if (activeTab === "analytics") {
@@ -1081,6 +1542,122 @@ export default function App() {
       setTickerNewsFeed(data);
     } catch (e) {
       console.error("Failed ticker news search:", e);
+    }
+  };
+
+  const toggleNewsRow = async (ticker: string) => {
+    const upper = ticker.toUpperCase();
+    setNewsExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(upper) ? next.delete(upper) : next.add(upper);
+      return next;
+    });
+    // Lazy-fetch the full article list on first expansion.
+    if (!newsArticlesByTicker[upper] && !newsArticlesLoading.has(upper)) {
+      setNewsArticlesLoading((prev) => new Set(prev).add(upper));
+      try {
+        const res = await fetch(`${API_BASE}/api/news/ticker/${upper}`);
+        const data: TickerNews[] = await res.json();
+        setNewsArticlesByTicker((prev) => ({ ...prev, [upper]: data }));
+      } catch (e) {
+        console.error(`Failed to load articles for ${upper}:`, e);
+      } finally {
+        setNewsArticlesLoading((prev) => {
+          const next = new Set(prev);
+          next.delete(upper);
+          return next;
+        });
+      }
+    }
+  };
+
+  const loadFundamentalsTable = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/fundamentals?scope=universe`);
+      const data = await res.json();
+      setFundamentals(data);
+    } catch (e) {
+      console.error("Failed to fetch fundamentals:", e);
+    }
+  };
+
+  const loadFundamentalsPins = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/fundamentals/pins`);
+      const data = await res.json();
+      setFundamentalsPins(data);
+    } catch (e) {
+      console.error("Failed to load pins:", e);
+    }
+  };
+
+  const toggleFundamentalsRow = async (ticker: string, opts?: { refresh?: boolean }) => {
+    const upper = ticker.toUpperCase();
+    const wasOpen = fundamentalsExpanded.has(upper);
+    setFundamentalsExpanded((prev) => {
+      const next = new Set(prev);
+      if (opts?.refresh) {
+        next.add(upper);
+      } else {
+        next.has(upper) ? next.delete(upper) : next.add(upper);
+      }
+      return next;
+    });
+    // Only fetch when opening (or explicit refresh) and not already cached.
+    const needsFetch = opts?.refresh ||
+      (!wasOpen && !fundamentalsDetailByTicker[upper] && !fundamentalsDetailLoading.has(upper));
+    if (!needsFetch) return;
+    setFundamentalsDetailLoading((prev) => new Set(prev).add(upper));
+    try {
+      const url = `${API_BASE}/api/fundamentals/detail/${upper}${opts?.refresh ? "?refresh=true" : ""}`;
+      const detailRes = await fetch(url);
+      if (!detailRes.ok) throw new Error(`Detail HTTP ${detailRes.status}`);
+      const detail: FundamentalsDetail = await detailRes.json();
+      setFundamentalsDetailByTicker((prev) => ({ ...prev, [upper]: detail }));
+      // Pull price history alongside the detail. Don't block the panel
+      // render if it fails - the chart panel renders a "no data" message.
+      try {
+        const phRes = await fetch(`${API_BASE}/api/fundamentals/price-history/${upper}?years=5`);
+        if (phRes.ok) {
+          const ph: FundamentalsPriceHistory = await phRes.json();
+          setFundamentalsPriceByTicker((prev) => ({ ...prev, [upper]: ph }));
+        }
+      } catch (e) {
+        console.warn(`Price history fetch failed for ${upper}:`, e);
+      }
+    } catch (e) {
+      console.error(`Failed to load fundamentals detail for ${upper}:`, e);
+    } finally {
+      setFundamentalsDetailLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(upper);
+        return next;
+      });
+    }
+  };
+
+  const pinFundamentalsTicker = async () => {
+    const tk = fundamentalsPinInput.trim().toUpperCase().replace(/\.(NS|BO)$/, "");
+    if (!tk) return;
+    try {
+      await fetch(`${API_BASE}/api/fundamentals/pin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: tk }),
+      });
+      setFundamentalsPinInput("");
+      await Promise.all([loadFundamentalsTable(), loadFundamentalsPins()]);
+    } catch (e) {
+      console.error("Failed to pin ticker:", e);
+    }
+  };
+
+  const unpinFundamentalsTicker = async (ticker: string) => {
+    try {
+      await fetch(`${API_BASE}/api/fundamentals/pin/${ticker.toUpperCase()}`, { method: "DELETE" });
+      await Promise.all([loadFundamentalsTable(), loadFundamentalsPins()]);
+    } catch (e) {
+      console.error(`Failed to unpin ${ticker}:`, e);
     }
   };
 
@@ -3028,11 +3605,19 @@ export default function App() {
               <div className="glass-panel p-6 rounded-2xl">
                 <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3 flex-wrap gap-4">
                   <div>
-                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0 flex items-center gap-2">
                       Recency-Decay Sentiment Leaderboard
+                      <button
+                        type="button"
+                        onClick={() => setShowNewsHelp((v) => !v)}
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-indigo-300 hover:border-indigo-500/40 cursor-pointer"
+                        title="Toggle column definitions"
+                      >
+                        {showNewsHelp ? "Hide help" : "What do these columns mean?"}
+                      </button>
                     </h3>
                     <span className="text-xs text-slate-500">
-                      Weighted score decay: recent headlines weigh exponentially more.
+                      Weighted score decay: recent headlines weigh exponentially more. Click any row to see every article scored for that ticker.
                     </span>
                   </div>
 
@@ -3087,16 +3672,42 @@ export default function App() {
                   </div>
                 </div>
 
+                {showNewsHelp && (
+                  <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px] font-mono">
+                    <div className="p-3 rounded-lg bg-slate-900/50 border border-slate-800">
+                      <div className="text-indigo-300 font-bold uppercase tracking-wider text-[10px] mb-1">Breakdown</div>
+                      <div className="text-slate-400">
+                        Article counts in the window split as <span className="text-emerald-400">positive</span> /{" "}
+                        <span className="text-slate-300">neutral</span> /{" "}
+                        <span className="text-rose-400">negative</span>. A score ≥ +0.05 counts as positive, ≤ −0.05 as negative.
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-slate-900/50 border border-slate-800">
+                      <div className="text-indigo-300 font-bold uppercase tracking-wider text-[10px] mb-1">Unweighted Avg</div>
+                      <div className="text-slate-400">
+                        Plain arithmetic mean of every article&rsquo;s sentiment score (−1 to +1). Old and fresh headlines count the same.
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-lg bg-slate-900/50 border border-slate-800">
+                      <div className="text-indigo-300 font-bold uppercase tracking-wider text-[10px] mb-1">Decay Weighted Avg</div>
+                      <div className="text-slate-400">
+                        Same mean, but each article is weighted by an exponential half-life ≈ window/4 (≈6h for a 24h view). Recent news dominates.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs font-mono text-left border-collapse">
                     <thead>
                       <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px]">
+                        <th className="py-3 px-4 w-6"></th>
                         <th className="py-3 px-4">Ticker</th>
                         <th className="py-3 px-4">Sector Type</th>
-                        <th className="py-3 px-4 text-center">Article Count</th>
-                        <th className="py-3 px-4 text-center">Breakdown</th>
-                        <th className="py-3 px-4 text-center">Unweighted Avg</th>
-                        <th className="py-3 px-4 text-center">Decay Weighted Avg</th>
+                        <th className="py-3 px-4 text-center" title="Total articles tagged to this ticker in the selected time window.">Article Count</th>
+                        <th className="py-3 px-4 text-center" title="Positive / Neutral / Negative article counts. Positive = score ≥ +0.05, Negative = ≤ −0.05.">Breakdown</th>
+                        <th className="py-3 px-4 text-center" title="Plain arithmetic mean of all article sentiment scores. Range −1 to +1.">Unweighted Avg</th>
+                        <th className="py-3 px-4 text-center" title="Recency-weighted mean (exponential half-life ≈ window/4). Old headlines fade out.">Decay Weighted Avg</th>
                         <th className="py-3 px-4">Latest Headline Scored</th>
                         <th className="py-3 px-4">Scored Date</th>
                       </tr>
@@ -3104,42 +3715,117 @@ export default function App() {
                     <tbody className="divide-y divide-slate-850">
                       {newsLeaderboard.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center text-slate-500">
+                          <td colSpan={9} className="py-8 text-center text-slate-500">
                             No matching headlines sentiment logs found in this period.
                           </td>
                         </tr>
                       ) : (
-                        newsLeaderboard.map((newsItem, idx) => (
-                          <tr key={idx} className="hover:bg-slate-900/20">
-                            <td className="py-3 px-4 text-slate-200 font-bold flex items-center gap-1.5">
-                              {newsItem.ticker}
-                              {newsItem.is_open_position && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 active-pulse" title="Holding active" />
+                        newsLeaderboard.map((newsItem, idx) => {
+                          const open = newsExpanded.has(newsItem.ticker);
+                          const articles = newsArticlesByTicker[newsItem.ticker] || [];
+                          const isLoadingArticles = newsArticlesLoading.has(newsItem.ticker);
+                          return (
+                            <React.Fragment key={`${newsItem.ticker}-${idx}`}>
+                              <tr
+                                className="hover:bg-slate-900/20 cursor-pointer"
+                                onClick={() => toggleNewsRow(newsItem.ticker)}
+                              >
+                                <td className="py-3 px-4 text-slate-500 text-center w-6">{open ? "▾" : "▸"}</td>
+                                <td className="py-3 px-4 text-slate-200 font-bold flex items-center gap-1.5">
+                                  {newsItem.ticker}
+                                  {newsItem.is_open_position && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 active-pulse" title="Holding active" />
+                                  )}
+                                </td>
+                                <td className="py-3 px-4 text-slate-400">{newsItem.sector}</td>
+                                <td className="py-3 px-4 text-center text-slate-300">{newsItem.articles}</td>
+                                <td className="py-3 px-4 text-center text-slate-500">{newsItem.breakdown}</td>
+                                <td className="py-3 px-4 text-center text-slate-300">{newsItem.avg_sentiment.toFixed(3)}</td>
+                                <td
+                                  className={`py-3 px-4 text-center font-bold ${
+                                    newsItem.weighted_sentiment >= 0.05
+                                      ? "text-emerald-400"
+                                      : newsItem.weighted_sentiment <= -0.05
+                                      ? "text-rose-500"
+                                      : "text-slate-400"
+                                  }`}
+                                >
+                                  {newsItem.weighted_sentiment.toFixed(3)}
+                                </td>
+                                <td className="py-3 px-4 text-slate-400 max-w-[220px] truncate">
+                                  <a
+                                    href={newsItem.latest_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="hover:underline"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {newsItem.latest_headline}
+                                  </a>
+                                </td>
+                                <td className="py-3 px-4 text-slate-500">{newsItem.last_update}</td>
+                              </tr>
+                              {open && (
+                                <tr className="bg-slate-900/40">
+                                  <td colSpan={9} className="px-6 py-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                      <h4 className="text-[11px] font-bold uppercase tracking-wider text-indigo-300">
+                                        Articles scored for {newsItem.ticker}
+                                      </h4>
+                                      <span className="text-[10px] text-slate-500 font-mono">
+                                        {isLoadingArticles ? "Loading…" : `${articles.length} article${articles.length === 1 ? "" : "s"} (last 24h)`}
+                                      </span>
+                                    </div>
+                                    {isLoadingArticles && articles.length === 0 ? (
+                                      <div className="py-4 text-center text-slate-500 text-xs">Loading articles…</div>
+                                    ) : articles.length === 0 ? (
+                                      <div className="py-4 text-center text-slate-500 text-xs">No detailed articles available.</div>
+                                    ) : (
+                                      <div className="space-y-3 max-h-[420px] overflow-y-auto pr-2">
+                                        {articles.map((a, aIdx) => (
+                                          <div key={aIdx} className="p-3 rounded-lg bg-slate-950/60 border border-slate-850">
+                                            <div className="flex items-baseline justify-between gap-3">
+                                              <h5 className="text-xs font-bold text-slate-200">
+                                                <a
+                                                  href={a.url}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                  className="hover:underline text-indigo-300"
+                                                  onClick={(e) => e.stopPropagation()}
+                                                >
+                                                  {a.title}
+                                                </a>
+                                              </h5>
+                                              <span
+                                                className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold shrink-0 ${
+                                                  a.sentiment !== null && a.sentiment >= 0.05
+                                                    ? "bg-emerald-500/10 text-emerald-400"
+                                                    : a.sentiment !== null && a.sentiment <= -0.05
+                                                    ? "bg-rose-500/10 text-rose-400"
+                                                    : "bg-slate-800 text-slate-400"
+                                                }`}
+                                              >
+                                                {a.sentiment !== null ? a.sentiment.toFixed(3) : "NEUTRAL"}
+                                              </span>
+                                            </div>
+                                            {a.summary && (
+                                              <p className="text-slate-400 text-[11px] mt-2 font-mono">{a.summary}</p>
+                                            )}
+                                            <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-500 font-mono">
+                                              <span>{a.source}</span>
+                                              <span>•</span>
+                                              <span>{a.ts}</span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                            <td className="py-3 px-4 text-slate-400">{newsItem.sector}</td>
-                            <td className="py-3 px-4 text-center text-slate-300">{newsItem.articles}</td>
-                            <td className="py-3 px-4 text-center text-slate-500">{newsItem.breakdown}</td>
-                            <td className="py-3 px-4 text-center text-slate-300">{newsItem.avg_sentiment.toFixed(3)}</td>
-                            <td
-                              className={`py-3 px-4 text-center font-bold ${
-                                newsItem.weighted_sentiment >= 0.05
-                                  ? "text-emerald-400"
-                                  : newsItem.weighted_sentiment <= -0.05
-                                  ? "text-rose-500"
-                                  : "text-slate-400"
-                              }`}
-                            >
-                              {newsItem.weighted_sentiment.toFixed(3)}
-                            </td>
-                            <td className="py-3 px-4 text-slate-400 max-w-[220px] truncate">
-                              <a href={newsItem.latest_url} target="_blank" rel="noreferrer" className="hover:underline">
-                                {newsItem.latest_headline}
-                              </a>
-                            </td>
-                            <td className="py-3 px-4 text-slate-500">{newsItem.last_update}</td>
-                          </tr>
-                        ))
+                            </React.Fragment>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -3151,12 +3837,87 @@ export default function App() {
           {/* ==================== 6. FUNDAMENTALS ==================== */}
           {activeTab === "fundamentals" && (
             <div className="space-y-8 animate-fadeIn">
+              {/* SOURCES LEGEND + PIN INPUT */}
+              <div className="glass-panel p-5 rounded-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
+                      Universe Sources
+                    </h3>
+                    <span className="text-xs text-slate-500">
+                      Tickers shown are auto-selected from the books that need fundamentals attention.
+                      Click any row to load the deep Screener.in view.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => { loadFundamentalsTable(); loadFundamentalsPins(); }}
+                    className="px-3 py-1.5 border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold cursor-pointer flex items-center gap-1.5"
+                  >
+                    <RefreshCw size={11} /> Reload
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-2 text-[10px] font-mono">
+                  {[
+                    { key: "intraday_open",   label: "Intraday Open",   color: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" },
+                    { key: "positional_open", label: "Positional Open", color: "bg-sky-500/10 text-sky-300 border-sky-500/30" },
+                    { key: "pinned",          label: "Pinned",          color: "bg-amber-500/10 text-amber-300 border-amber-500/30" },
+                    { key: "lt_universe",     label: "LT Universe",     color: "bg-indigo-500/10 text-indigo-300 border-indigo-500/30" },
+                    { key: "pos_scan_top",    label: "Pos Scan Top",    color: "bg-purple-500/10 text-purple-300 border-purple-500/30" },
+                  ].map((src) => {
+                    const count = fundamentals.filter((s) => (s.sources || []).includes(src.key)).length;
+                    return (
+                      <div key={src.key} className={`p-2 rounded-lg border flex items-center justify-between ${src.color}`}>
+                        <span className="font-bold uppercase tracking-wider">{src.label}</span>
+                        <span className="font-mono">{count}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-800/60">
+                  <div className="flex gap-2 flex-1 min-w-[260px]">
+                    <input
+                      type="text"
+                      placeholder="Pin a ticker (e.g. INFY)"
+                      value={fundamentalsPinInput}
+                      onChange={(e) => setFundamentalsPinInput(e.target.value.toUpperCase())}
+                      onKeyDown={(e) => { if (e.key === "Enter") pinFundamentalsTicker(); }}
+                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500/40 font-mono"
+                    />
+                    <button
+                      onClick={pinFundamentalsTicker}
+                      className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-lg text-[10px] font-semibold cursor-pointer"
+                    >
+                      PIN
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {fundamentalsPins.length === 0 ? (
+                      <span className="text-[10px] text-slate-500 font-mono">No pinned tickers yet.</span>
+                    ) : fundamentalsPins.map((p) => (
+                      <span
+                        key={p.ticker}
+                        className="px-2 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/30 font-mono flex items-center gap-1.5"
+                      >
+                        {p.ticker}
+                        <button
+                          onClick={() => unpinFundamentalsTicker(p.ticker)}
+                          className="text-amber-200/70 hover:text-rose-300 cursor-pointer"
+                          title={`Unpin ${p.ticker}`}
+                        >×</button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               {/* SEARCH INPUT CARD */}
-              <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+              <div className="glass-panel p-4 rounded-2xl flex items-center gap-4">
                 <Search size={16} className="text-slate-500" />
                 <input
                   type="text"
-                  placeholder="Search SQLite whitelists (e.g. INFOSYS, PE, DEBT)..."
+                  placeholder="Filter by ticker or sector…"
                   value={fundamentalsSearch}
                   onChange={(e) => setFundamentalsSearch(e.target.value)}
                   className="flex-1 bg-transparent border-none text-slate-200 text-xs focus:outline-none font-mono"
@@ -3167,7 +3928,7 @@ export default function App() {
               <div className="glass-panel p-6 rounded-2xl">
                 <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
-                    Scored Whitelist Fundamentals Table
+                    Fundamentals — Investable Universe
                   </h3>
                   <span className="text-xs text-slate-500 font-mono">({fundamentals.length} companies)</span>
                 </div>
@@ -3176,88 +3937,144 @@ export default function App() {
                   <table className="w-full text-xs font-mono text-left border-collapse">
                     <thead>
                       <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px]">
+                        <th className="py-3 px-4 w-6"></th>
                         <th className="py-3 px-4">Ticker</th>
-                        <th className="py-3 px-4">Sector Category</th>
+                        <th className="py-3 px-4">Sources</th>
+                        <th className="py-3 px-4">Sector</th>
                         <th className="py-3 px-4 text-center">Score</th>
-                        <th className="py-3 px-4 text-right">P/E Ratio</th>
-                        <th className="py-3 px-4 text-right">PEG Ratio</th>
-                        <th className="py-3 px-4 text-right">Market Cap (Cr)</th>
-                        <th className="py-3 px-4 text-right">Revenue growth</th>
-                        <th className="py-3 px-4 text-right">Solvency (D/E)</th>
-                        <th className="py-3 px-4 text-right">ROE (%)</th>
-                        <th className="py-3 px-4 text-right">Profit Margin (%)</th>
-                        <th className="py-3 px-4">Financial Caution Warnings</th>
+                        <th className="py-3 px-4 text-right" title="Trailing P/E from yfinance.">P/E</th>
+                        <th className="py-3 px-4 text-right" title="Price/Earnings to Growth.">PEG</th>
+                        <th className="py-3 px-4 text-right" title="Market capitalization in INR.">Market Cap</th>
+                        <th className="py-3 px-4 text-right">Rev Growth</th>
+                        <th className="py-3 px-4 text-right">D/E</th>
+                        <th className="py-3 px-4 text-right">ROE %</th>
+                        <th className="py-3 px-4 text-right">Profit Margin</th>
+                        <th className="py-3 px-4">Warnings</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-850">
-                      {fundamentals
+                      {fundamentals.length === 0 ? (
+                        <tr>
+                          <td colSpan={13} className="py-8 text-center text-slate-500">
+                            No tickers in the fundamentals universe yet. Open or pin a position to populate this view.
+                          </td>
+                        </tr>
+                      ) : fundamentals
                         .filter(
                           (stock) =>
                             stock.ticker.toUpperCase().includes(fundamentalsSearch.toUpperCase()) ||
                             stock.sector.toUpperCase().includes(fundamentalsSearch.toUpperCase())
                         )
-                        .map((stock, idx) => (
-                          <tr key={idx} className="hover:bg-slate-900/20">
-                            <td className="py-3 px-4 font-bold text-slate-200">
-                              <a
-                                href={stock.screener_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-indigo-300 hover:underline flex items-center gap-1.5"
+                        .map((stock, idx) => {
+                          const open = fundamentalsExpanded.has(stock.ticker);
+                          const detail = fundamentalsDetailByTicker[stock.ticker];
+                          const priceHist = fundamentalsPriceByTicker[stock.ticker];
+                          const detailLoading = fundamentalsDetailLoading.has(stock.ticker);
+                          return (
+                            <React.Fragment key={`${stock.ticker}-${idx}`}>
+                              <tr
+                                className="hover:bg-slate-900/20 cursor-pointer"
+                                onClick={() => toggleFundamentalsRow(stock.ticker)}
                               >
-                                {stock.ticker}
-                              </a>
-                            </td>
-                            <td className="py-3 px-4 text-slate-400">{stock.sector}</td>
-                            <td className="py-3 px-4 text-center text-indigo-400 font-bold">{stock.fundamental_score}</td>
-                            <td className="py-3 px-4 text-right text-slate-300">
-                              {stock.pe_ratio !== null ? stock.pe_ratio.toFixed(2) : "—"}
-                            </td>
-                            <td className="py-3 px-4 text-right text-slate-300">
-                              {stock.peg_ratio !== null ? stock.peg_ratio.toFixed(2) : "—"}
-                            </td>
-                            <td className="py-3 px-4 text-right text-slate-300">
-                              {stock.market_cap !== null ? formatINR(stock.market_cap).replace("₹", "") : "—"}
-                            </td>
-                            <td className="py-3 px-4 text-right text-emerald-400 font-bold">
-                              {stock.revenue_growth !== null ? `+${stock.revenue_growth.toFixed(1)}%` : "—"}
-                            </td>
-                            <td
-                              className={`py-3 px-4 text-right ${
-                                stock.debt_to_equity !== null && stock.debt_to_equity > 2.0
-                                  ? "text-rose-500 font-bold"
-                                  : "text-slate-300"
-                              }`}
-                            >
-                              {stock.debt_to_equity !== null ? stock.debt_to_equity.toFixed(2) : "—"}
-                            </td>
-                            <td className="py-3 px-4 text-right text-emerald-400">
-                              {stock.roe !== null ? `${stock.roe.toFixed(1)}%` : "—"}
-                            </td>
-                            <td className="py-3 px-4 text-right text-slate-300">
-                              {stock.profit_margin !== null ? `${stock.profit_margin.toFixed(1)}%` : "—"}
-                            </td>
-                            <td className="py-3 px-4">
-                              {stock.is_bank ? (
-                                <span
-                                  className="px-2 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 font-bold"
-                                  title="Banks/NBFCs follow unique capital ratios"
+                                <td className="py-3 px-4 text-slate-500 text-center w-6">{open ? "▾" : "▸"}</td>
+                                <td className="py-3 px-4 font-bold text-slate-200">{stock.ticker}</td>
+                                <td className="py-3 px-4">
+                                  <div className="flex flex-wrap gap-1">
+                                    {(stock.sources || []).map((s) => {
+                                      const styles: Record<string, string> = {
+                                        intraday_open:   "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
+                                        positional_open: "bg-sky-500/10 text-sky-300 border-sky-500/30",
+                                        pinned:          "bg-amber-500/10 text-amber-300 border-amber-500/30",
+                                        lt_universe:     "bg-indigo-500/10 text-indigo-300 border-indigo-500/30",
+                                        pos_scan_top:    "bg-purple-500/10 text-purple-300 border-purple-500/30",
+                                      };
+                                      const labels: Record<string, string> = {
+                                        intraday_open:   "Intraday",
+                                        positional_open: "Positional",
+                                        pinned:          "Pinned",
+                                        lt_universe:     "LT",
+                                        pos_scan_top:    "Scan",
+                                      };
+                                      return (
+                                        <span
+                                          key={s}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${styles[s] || "bg-slate-800 text-slate-400 border-slate-700"}`}
+                                        >
+                                          {labels[s] || s}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4 text-slate-400">{stock.sector}</td>
+                                <td className="py-3 px-4 text-center text-indigo-400 font-bold">
+                                  {stock.fundamental_score !== null ? stock.fundamental_score : "—"}
+                                </td>
+                                <td className="py-3 px-4 text-right text-slate-300">
+                                  {stock.pe_ratio !== null ? stock.pe_ratio.toFixed(2) : "—"}
+                                </td>
+                                <td className="py-3 px-4 text-right text-slate-300">
+                                  {stock.peg_ratio !== null ? stock.peg_ratio.toFixed(2) : "—"}
+                                </td>
+                                <td className="py-3 px-4 text-right text-slate-300">
+                                  {stock.market_cap !== null ? formatINR(stock.market_cap).replace("₹", "") : "—"}
+                                </td>
+                                <td className="py-3 px-4 text-right text-emerald-400 font-bold">
+                                  {stock.revenue_growth !== null ? `${stock.revenue_growth >= 0 ? "+" : ""}${stock.revenue_growth.toFixed(1)}%` : "—"}
+                                </td>
+                                <td
+                                  className={`py-3 px-4 text-right ${
+                                    stock.debt_to_equity !== null && stock.debt_to_equity > 2.0
+                                      ? "text-rose-500 font-bold"
+                                      : "text-slate-300"
+                                  }`}
                                 >
-                                  🏦 Banking rules
-                                </span>
-                              ) : stock.debt_to_equity !== null && stock.debt_to_equity > 1.5 ? (
-                                <span
-                                  className="px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold flex items-center gap-1 w-max"
-                                  title="Caution: Debt-to-Equity exceeds 1.5!"
-                                >
-                                  <AlertCircle size={10} /> Highly Leveraged
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-slate-500">Passed standard bounds</span>
+                                  {stock.debt_to_equity !== null ? stock.debt_to_equity.toFixed(2) : "—"}
+                                </td>
+                                <td className="py-3 px-4 text-right text-emerald-400">
+                                  {stock.roe !== null ? `${stock.roe.toFixed(1)}%` : "—"}
+                                </td>
+                                <td className="py-3 px-4 text-right text-slate-300">
+                                  {stock.profit_margin !== null ? `${stock.profit_margin.toFixed(1)}%` : "—"}
+                                </td>
+                                <td className="py-3 px-4">
+                                  {stock.is_bank ? (
+                                    <span
+                                      className="px-2 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 font-bold"
+                                      title="Banks/NBFCs follow unique capital ratios"
+                                    >
+                                      Banking rules
+                                    </span>
+                                  ) : stock.debt_to_equity !== null && stock.debt_to_equity > 1.5 ? (
+                                    <span
+                                      className="px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold flex items-center gap-1 w-max"
+                                      title="Caution: Debt-to-Equity exceeds 1.5!"
+                                    >
+                                      <AlertCircle size={10} /> Highly Leveraged
+                                    </span>
+                                  ) : stock.fetched_at === "—" ? (
+                                    <span className="text-[10px] text-slate-500 italic">Fundamentals not fetched yet</span>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-500">Passed standard bounds</span>
+                                  )}
+                                </td>
+                              </tr>
+                              {open && (
+                                <tr className="bg-slate-900/40">
+                                  <td colSpan={13} className="px-6 py-5">
+                                    <FundamentalsDetailPanel
+                                      stock={stock}
+                                      detail={detail}
+                                      priceHistory={priceHist}
+                                      loading={detailLoading}
+                                      onRefresh={() => toggleFundamentalsRow(stock.ticker, { refresh: true })}
+                                    />
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                          </tr>
-                        ))}
+                            </React.Fragment>
+                          );
+                        })}
                     </tbody>
                   </table>
                 </div>

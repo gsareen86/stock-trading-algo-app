@@ -446,6 +446,77 @@ def _parse_cashflow_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
     return out
 
 
+def _parse_balance_sheet_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
+    """Parse ``<section id="balance-sheet">``.
+
+    Screener exposes the consolidated balance sheet as a single ``data-table``
+    with rows like "Equity Capital", "Reserves", "Borrowings", "Other
+    Liabilities", "Total Liabilities", "Fixed Assets", "CWIP", "Investments",
+    "Other Assets", "Total Assets". We pick the rows our UI displays;
+    anything missing returns an empty list, callers must tolerate.
+    """
+    sec = _extract_section_table(soup, "balance-sheet")
+    headers, rows = _parse_data_table(sec)
+    out: Dict[str, List[Dict]] = {
+        "equity_capital_yearly": [], "reserves_yearly": [],
+        "borrowings_yearly": [], "other_liab_yearly": [], "total_liab_yearly": [],
+        "fixed_assets_yearly": [], "cwip_yearly": [], "investments_yearly": [],
+        "other_assets_yearly": [], "total_assets_yearly": [],
+    }
+    if not rows:
+        return out
+
+    def find_row(*keys: str) -> Optional[List[Optional[float]]]:
+        for label, vals in rows.items():
+            low = label.lower()
+            if all(k in low for k in keys):
+                return vals
+        return None
+
+    out["equity_capital_yearly"] = _row_to_records(headers, find_row("equity", "capital") or [])
+    out["reserves_yearly"]       = _row_to_records(headers, find_row("reserves") or [])
+    out["borrowings_yearly"]     = _row_to_records(headers, find_row("borrowings") or [])
+    out["other_liab_yearly"]     = _row_to_records(headers, find_row("other", "liabilities") or [])
+    out["total_liab_yearly"]     = _row_to_records(headers, find_row("total", "liabilities") or [])
+    out["fixed_assets_yearly"]   = _row_to_records(headers, find_row("fixed", "assets") or [])
+    out["cwip_yearly"]           = _row_to_records(headers, find_row("cwip") or [])
+    out["investments_yearly"]    = _row_to_records(headers, find_row("investments") or [])
+    out["other_assets_yearly"]   = _row_to_records(headers, find_row("other", "assets") or [])
+    out["total_assets_yearly"]   = _row_to_records(headers, find_row("total", "assets") or [])
+    return out
+
+
+def _parse_quarterly_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
+    """Parse ``<section id="quarters">`` for the last ~5 quarters of P&L.
+
+    The Screener page shows columns like "Sep 2024", "Dec 2024", etc. Rows
+    include Sales, Operating Profit, Net Profit, EPS, OPM%. We return them
+    in the same most-recent-first record-list shape as the yearly P&L.
+    """
+    sec = _extract_section_table(soup, "quarters")
+    headers, rows = _parse_data_table(sec)
+    out: Dict[str, List[Dict]] = {
+        "quarterly_revenue": [], "quarterly_operating_profit": [],
+        "quarterly_net_profit": [], "quarterly_eps": [], "quarterly_opm": [],
+    }
+    if not rows:
+        return out
+
+    def find_row(*keys: str) -> Optional[List[Optional[float]]]:
+        for label, vals in rows.items():
+            low = label.lower()
+            if all(k in low for k in keys):
+                return vals
+        return None
+
+    out["quarterly_revenue"]          = _row_to_records(headers, find_row("sales") or find_row("revenue") or [])
+    out["quarterly_operating_profit"] = _row_to_records(headers, find_row("operating", "profit") or [])
+    out["quarterly_net_profit"]       = _row_to_records(headers, find_row("net", "profit") or [])
+    out["quarterly_eps"]              = _row_to_records(headers, find_row("eps") or [])
+    out["quarterly_opm"]              = _row_to_records(headers, find_row("opm") or [])
+    return out
+
+
 def _parse_ratios_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
     sec = _extract_section_table(soup, "ratios")
     headers, rows = _parse_data_table(sec)
@@ -674,6 +745,14 @@ def _parse_html(ticker: str, html: str, used_view: str) -> Dict:
     if not rt["roe_yearly"]:
         warnings.append("ratios section missing")
 
+    bs = _parse_balance_sheet_section(soup)
+    if not bs["total_assets_yearly"]:
+        warnings.append("balance-sheet section missing")
+
+    qt = _parse_quarterly_section(soup)
+    if not qt["quarterly_revenue"]:
+        warnings.append("quarterly results section missing")
+
     sh = _parse_shareholding_section(soup)
     if not sh:
         warnings.append("shareholding section missing")
@@ -691,6 +770,8 @@ def _parse_html(ticker: str, html: str, used_view: str) -> Dict:
         **pl,
         **cf,
         **rt,
+        **bs,
+        **qt,
         "shareholding_quarterly": sh,
         "pros": pros_cons["pros"],
         "cons": pros_cons["cons"],
