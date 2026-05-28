@@ -868,37 +868,6 @@ const SeriesTable: React.FC<{
   );
 };
 
-// Reverse a "most-recent-first" series into chronological order and cap it
-// to the most recent N periods (last N entries after the reverse). Used by
-// every yearly / quarterly chart in the detail panel.
-const seriesAsc = (pts: SeriesPoint[] | undefined, cap?: number): SeriesPoint[] => {
-  const arr = [...(pts || [])].reverse();
-  if (cap && arr.length > cap) return arr.slice(arr.length - cap);
-  return arr;
-};
-
-// Year-keys parsed out of a Screener period label like "Mar 2024" or
-// "Dec 2023". We match by 4-digit year.
-const _YEAR_RE_FE = /\b(19|20)\d{2}\b/;
-const yearOf = (period: string | undefined): number | null => {
-  if (!period) return null;
-  const m = _YEAR_RE_FE.exec(period);
-  return m ? parseInt(m[0], 10) : null;
-};
-
-// Pick the closing price closest to (but on or before) Dec 31 of `year` from
-// the price-history series. Returns null if no such observation exists -
-// rapid-IPO companies will have no price in their early reporting years.
-const yearEndClose = (series: PriceHistoryPoint[], year: number): number | null => {
-  let chosen: number | null = null;
-  const cutoff = `${year}-12-31`;
-  for (const p of series) {
-    if (p.ts <= cutoff) chosen = p.close;
-    else break;
-  }
-  return chosen;
-};
-
 const TIMEFRAMES: Timeframe[] = ["1M", "6M", "1Y", "3Y", "5Y", "10Y", "Max"];
 
 interface PriceChartPoint {
@@ -932,6 +901,204 @@ const MORE_CHARTS: { key: ChartType; label: string }[] = [
   { key: "cashflow",  label: "Cash Flow" },
 ];
 
+// ---------------------------------------------------------------------------
+// TTM / step-function derivations for the daily/weekly Fundamentals charts.
+// ---------------------------------------------------------------------------
+// Screener.in publishes P&L and balance-sheet rows yearly, and a handful of
+// quarterly rows. To match the Price chart's daily/weekly granularity for
+// every other chart we:
+//   * convert each Screener period label ("Mar 2024" / "Sep 2024") to its
+//     month-end Unix timestamp,
+//   * roll quarterly inputs into a Trailing-Twelve-Months sum at each price
+//     tick (so Revenue, Net Profit, Operating Profit, EPS all move forward
+//     when a new quarter posts), and
+//   * forward-fill yearly inputs (Book Value, Borrowings, Depreciation, ROE,
+//     ROCE, Cash Flow) using a step function tied to the latest annual
+//     report on or before that date.
+// The result is one row per price tick with every metric defined, which the
+// chart switch consumes directly.
+
+type DatedValue = { date: number; value: number | null };
+
+const MONTH_END: Record<string, [number, number]> = {
+  jan: [0, 31], feb: [1, 28], mar: [2, 31], apr: [3, 30],
+  may: [4, 31], jun: [5, 30], jul: [6, 31], aug: [7, 31],
+  sep: [8, 30], oct: [9, 31], nov: [10, 30], dec: [11, 31],
+};
+
+const periodToTs = (period: string | undefined): number | null => {
+  if (!period) return null;
+  const m = period.trim().toLowerCase().match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{4})/);
+  if (!m) return null;
+  const [, monKey, yearStr] = m;
+  const [mi, dd] = MONTH_END[monKey];
+  return Date.UTC(parseInt(yearStr, 10), mi, dd);
+};
+
+const datedFromSeries = (s?: SeriesPoint[]): DatedValue[] => {
+  const out: DatedValue[] = [];
+  for (const p of (s || [])) {
+    const d = periodToTs(p.period);
+    if (d != null) out.push({ date: d, value: p.value });
+  }
+  out.sort((a, b) => a.date - b.date);
+  return out;
+};
+
+const tsFromIso = (iso: string): number => {
+  return Date.UTC(
+    parseInt(iso.slice(0, 4), 10),
+    parseInt(iso.slice(5, 7), 10) - 1,
+    parseInt(iso.slice(8, 10), 10),
+  );
+};
+
+// Rolling Trailing-Twelve-Months sum at or before time t. Requires four
+// consecutive non-null quarters before returning a value, so very recent
+// listings (where the IPO is fresher than 4 quarters) come back as null
+// rather than misleadingly small numbers.
+const ttmAt = (quarters: DatedValue[], t: number): number | null => {
+  let lastIdx = -1;
+  for (let i = quarters.length - 1; i >= 0; i--) {
+    if (quarters[i].date <= t) { lastIdx = i; break; }
+  }
+  if (lastIdx < 3) return null;
+  let sum = 0;
+  for (let i = lastIdx - 3; i <= lastIdx; i++) {
+    if (quarters[i].value == null) return null;
+    sum += quarters[i].value as number;
+  }
+  return sum;
+};
+
+// Forward-filled annual value (latest non-null entry at or before t).
+const stepAt = (annuals: DatedValue[], t: number): number | null => {
+  for (let i = annuals.length - 1; i >= 0; i--) {
+    if (annuals[i].date <= t && annuals[i].value != null) return annuals[i].value;
+  }
+  return null;
+};
+
+type DerivedPoint = {
+  ts: string;
+  price: number;
+  // Valuation
+  pe: number | null;          ttmEps: number | null;
+  pbv: number | null;         bookValue: number | null;
+  evEbitda: number | null;    ebitda: number | null;
+  mcapSales: number | null;   ttmSales: number | null;
+  // P&L TTM
+  ttmRevenue: number | null;  ttmOp: number | null;  ttmNet: number | null;
+  // Margins
+  opm: number | null;         npm: number | null;
+  // Returns (yearly step)
+  roe: number | null;         roce: number | null;
+  // Cash flow (yearly step)
+  cfo: number | null;         cfi: number | null;    cff: number | null;
+};
+
+const buildDerivedSeries = (
+  priceSeries: PriceChartPoint[],
+  detail: FundamentalsDetail,
+  topRatios: FundamentalsDetail["top_ratios"],
+): DerivedPoint[] => {
+  if (!priceSeries.length) return [];
+
+  // Quarterly inputs feed the TTM rolling sums.
+  const qEps = datedFromSeries(detail.quarterly_results?.eps);
+  const qRev = datedFromSeries(detail.quarterly_results?.revenue);
+  const qNet = datedFromSeries(detail.quarterly_results?.net_profit);
+  const qOp  = datedFromSeries(detail.quarterly_results?.operating_profit);
+
+  // Yearly inputs are step-filled.
+  const yBorrow   = datedFromSeries(detail.balance_sheet?.borrowings);
+  const yEquity   = datedFromSeries(detail.balance_sheet?.equity_capital);
+  const yReserves = datedFromSeries(detail.balance_sheet?.reserves);
+  const yDep      = datedFromSeries(detail.profit_loss?.depreciation || []);
+  const yRoe      = datedFromSeries(detail.ratios?.roe);
+  const yRoce     = datedFromSeries(detail.ratios?.roce);
+  const yCfo      = datedFromSeries(detail.cash_flow?.cfo);
+  const yCfi      = datedFromSeries(detail.cash_flow?.cfi);
+  const yCff      = datedFromSeries(detail.cash_flow?.cff);
+
+  const nowPrice = priceSeries[priceSeries.length - 1].close;
+  const mcapNowCr = topRatios.market_cap_cr || 0;
+  // Estimate shares outstanding from the current market cap & price snapshot.
+  // mcap_cr * 1e7 = total INR market cap; divided by price gives share count.
+  // Assumes no major dilution/buyback across the displayed window — fine for
+  // the 1M–10Y horizons we render.
+  const sharesEst = (mcapNowCr > 0 && nowPrice > 0)
+    ? (mcapNowCr * 1e7) / nowPrice
+    : 0;
+
+  return priceSeries.map((p) => {
+    const t = tsFromIso(p.ts);
+    const price = p.close;
+
+    const ttmEps = ttmAt(qEps, t);
+    const ttmRev = ttmAt(qRev, t);
+    const ttmNet = ttmAt(qNet, t);
+    const ttmOp  = ttmAt(qOp, t);
+
+    const eqV = stepAt(yEquity, t);
+    const resV = stepAt(yReserves, t);
+    // BV per share = (equity + reserves in ₹ Cr × 1e7) / estimated shares.
+    const bvAtT = (eqV != null && resV != null && sharesEst > 0)
+      ? ((eqV + resV) * 1e7) / sharesEst
+      : null;
+
+    const depV    = stepAt(yDep, t);
+    const borrowV = stepAt(yBorrow, t);
+
+    // Market cap at t scaled from today's snapshot by the price ratio.
+    const mcapAtT = (mcapNowCr > 0 && nowPrice > 0)
+      ? mcapNowCr * (price / nowPrice)
+      : null;
+
+    // EBITDA ≈ TTM Operating Profit + latest yearly Depreciation. Depreciation
+    // isn't reported quarterly so we use the last annual value as a proxy.
+    const ebitda = (ttmOp != null) ? (ttmOp + (depV || 0)) : null;
+
+    const pe = (ttmEps != null && ttmEps !== 0) ? price / ttmEps : null;
+    const pbv = (bvAtT != null && bvAtT !== 0) ? price / bvAtT : null;
+    const evEbitda = (mcapAtT != null && ebitda != null && ebitda !== 0)
+      ? (mcapAtT + (borrowV || 0)) / ebitda
+      : null;
+    const mcapSales = (mcapAtT != null && ttmRev != null && ttmRev !== 0)
+      ? mcapAtT / ttmRev
+      : null;
+
+    const opm = (ttmOp != null && ttmRev != null && ttmRev !== 0)
+      ? (ttmOp / ttmRev) * 100 : null;
+    const npm = (ttmNet != null && ttmRev != null && ttmRev !== 0)
+      ? (ttmNet / ttmRev) * 100 : null;
+
+    return {
+      ts: p.ts,
+      price,
+      pe: pe != null ? +pe.toFixed(2) : null,
+      ttmEps: ttmEps != null ? +ttmEps.toFixed(2) : null,
+      pbv: pbv != null ? +pbv.toFixed(2) : null,
+      bookValue: bvAtT != null ? +bvAtT.toFixed(2) : null,
+      evEbitda: evEbitda != null ? +evEbitda.toFixed(2) : null,
+      ebitda: ebitda != null ? +ebitda.toFixed(0) : null,
+      mcapSales: mcapSales != null ? +mcapSales.toFixed(2) : null,
+      ttmSales: ttmRev != null ? +ttmRev.toFixed(0) : null,
+      ttmRevenue: ttmRev != null ? +ttmRev.toFixed(0) : null,
+      ttmOp: ttmOp != null ? +ttmOp.toFixed(0) : null,
+      ttmNet: ttmNet != null ? +ttmNet.toFixed(0) : null,
+      opm: opm != null ? +opm.toFixed(2) : null,
+      npm: npm != null ? +npm.toFixed(2) : null,
+      roe:  stepAt(yRoe, t),
+      roce: stepAt(yRoce, t),
+      cfo:  stepAt(yCfo, t),
+      cfi:  stepAt(yCfi, t),
+      cff:  stepAt(yCff, t),
+    };
+  });
+};
+
+
 const FundamentalsChartGrid: React.FC<{
   detail: FundamentalsDetail;
   priceSeries: PriceChartPoint[];
@@ -960,103 +1127,11 @@ const FundamentalsChartGrid: React.FC<{
     return () => document.removeEventListener("mousedown", onDoc);
   }, [moreOpen]);
 
-  // ---------- Yearly P&L (Revenue / OP / Net Profit + EPS) ----------
-  const pl = detail.profit_loss;
-  const plRows = (() => {
-    const rev = seriesAsc(pl.revenue);
-    const op  = seriesAsc(pl.operating_profit);
-    const np  = seriesAsc(pl.net_profit);
-    const eps = seriesAsc(pl.eps);
-    const byPeriod = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
-    const opP = byPeriod(op), npP = byPeriod(np), epsP = byPeriod(eps);
-    const periods = rev.length ? rev.map((r) => r.period) : op.map((r) => r.period);
-    return rev.map((r) => ({
-      period: r.period, revenue: r.value, op: opP[r.period] ?? null,
-      net: npP[r.period] ?? null, eps: epsP[r.period] ?? null,
-    })).concat(
-      periods.filter((p) => !rev.find((rr) => rr.period === p)).map((p) => ({
-        period: p, revenue: null, op: opP[p] ?? null, net: npP[p] ?? null, eps: epsP[p] ?? null,
-      }))
-    );
-  })();
-
-  // ---------- Yearly Margins / Returns (ROE/ROCE/OPM) ----------
-  const ratiosRows = (() => {
-    const roe  = seriesAsc(detail.ratios.roe);
-    const roce = seriesAsc(detail.ratios.roce);
-    const opm  = seriesAsc(detail.ratios.opm);
-    const periods = roe.length ? roe.map((r) => r.period)
-                   : (roce.length ? roce.map((r) => r.period) : opm.map((r) => r.period));
-    const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
-    const roeM = m(roe), roceM = m(roce), opmM = m(opm);
-    return periods.map((p) => ({ period: p, roe: roeM[p] ?? null, roce: roceM[p] ?? null, opm: opmM[p] ?? null }));
-  })();
-
-  // ---------- Quarterly Sales + OPM% + NPM% ----------
-  const quarterlyRows = (() => {
-    const rev = seriesAsc(detail.quarterly_results.revenue);
-    const np  = seriesAsc(detail.quarterly_results.net_profit);
-    const opm = seriesAsc(detail.quarterly_results.opm);
-    const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
-    const npM = m(np), opmM = m(opm);
-    return rev.map((r) => {
-      const npv = npM[r.period];
-      const npm = (r.value && npv != null && r.value !== 0) ? (npv / r.value) * 100 : null;
-      return { period: r.period, revenue: r.value, opm: opmM[r.period] ?? null, npm: npm != null ? +npm.toFixed(2) : null };
-    });
-  })();
-
-  // ---------- Cash Flow (Yearly) ----------
-  const cashFlowRows = (() => {
-    const cfo = seriesAsc(detail.cash_flow.cfo);
-    const cfi = seriesAsc(detail.cash_flow.cfi);
-    const cff = seriesAsc(detail.cash_flow.cff);
-    const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
-    const periods = cfo.length ? cfo.map((r) => r.period)
-                   : (cfi.length ? cfi.map((r) => r.period) : cff.map((r) => r.period));
-    const cfoM = m(cfo), cfiM = m(cfi), cffM = m(cff);
-    return periods.map((p) => ({ period: p, cfo: cfoM[p] ?? null, cfi: cfiM[p] ?? null, cff: cffM[p] ?? null }));
-  })();
-
-  // ---------- Yearly Valuation proxies ----------
-  // Same approximations as before — see the panel hints for caveats.
-  const valuationRows = (() => {
-    const epsArr   = seriesAsc(pl.eps);
-    const revArr   = seriesAsc(pl.revenue);
-    const opArr    = seriesAsc(pl.operating_profit);
-    const depArr   = seriesAsc(pl.depreciation || []);
-    const borrowArr= seriesAsc(detail.balance_sheet.borrowings);
-    const bookValue = topRatios.book_value || null;
-    const mcapNowCr = topRatios.market_cap_cr || null;
-    const nowPrice = priceSeries.length ? priceSeries[priceSeries.length - 1].close : null;
-
-    const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [yearOf(r.period), r.value]));
-    const epsByY = m(epsArr), revByY = m(revArr), opByY = m(opArr), depByY = m(depArr), borrowByY = m(borrowArr);
-
-    const periods = revArr.length ? revArr : epsArr;
-    return periods.map((r) => {
-      const y = yearOf(r.period);
-      if (!y) return null;
-      const closeY = yearEndClose(priceSeries, y);
-      const eps = epsByY[y];
-      const op  = opByY[y]; const dep = depByY[y];
-      const ebitda = (op != null && dep != null) ? op + dep : (op ?? null);
-      const borrow = borrowByY[y];
-      const sales = revByY[y];
-      const mcapY = (closeY && nowPrice && mcapNowCr) ? mcapNowCr * (closeY / nowPrice) : null;
-      const pe = (closeY != null && eps != null && eps !== 0) ? +(closeY / eps).toFixed(2) : null;
-      const pbv = (closeY != null && bookValue != null && bookValue !== 0) ? +(closeY / bookValue).toFixed(2) : null;
-      const evEbitda = (mcapY != null && ebitda != null && ebitda !== 0)
-        ? +(((mcapY + (borrow || 0)) / ebitda)).toFixed(2) : null;
-      const mcapSales = (mcapY != null && sales != null && sales !== 0)
-        ? +((mcapY / sales)).toFixed(2) : null;
-      return { period: r.period, pe, pbv, evEbitda, mcapSales, eps, ebitda, sales, bookValue };
-    }).filter((x) => x !== null) as Array<{
-      period: string; pe: number | null; pbv: number | null;
-      evEbitda: number | null; mcapSales: number | null;
-      eps: number | null; ebitda: number | null; sales: number | null; bookValue: number | null;
-    }>;
-  })();
+  // ---------- Daily/weekly derived series ----------
+  // Every non-Price chart pulls from this single series so the X-axis is
+  // identical to the Price chart's. TTM rolling for quarterly-sourced
+  // metrics, yearly step for the rest.
+  const derivedSeries = buildDerivedSeries(priceSeries, detail, topRatios);
 
   const currentLabel = (() => {
     const all = [...PRIMARY_CHARTS, ...MORE_CHARTS];
@@ -1096,126 +1171,126 @@ const FundamentalsChartGrid: React.FC<{
         );
       }
       case "pe": {
-        if (!valuationRows.length) return "Not enough EPS / price data to derive P/E.";
+        if (!derivedSeries.length) return "Not enough EPS / price data to derive P/E.";
         return (
-          <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={derivedSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis yAxisId="L" tick={tickAxisStyle} />
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Bar  yAxisId="R" dataKey="eps" fill="#f59e0b" name="EPS (₹)" />
-            <Line yAxisId="L" type="monotone" dataKey="pe"  stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} name="P/E" />
+            <Bar  yAxisId="R" dataKey="ttmEps" fill="#f59e0b" name="TTM EPS (₹)" />
+            <Line yAxisId="L" type="monotone" dataKey="pe" stroke="#6366f1" strokeWidth={1.5} dot={false} name="P/E" />
           </ComposedChart>
         );
       }
       case "salesmargin": {
-        if (!quarterlyRows.length) return "No quarterly results available.";
+        if (!derivedSeries.length) return "No quarterly results available.";
         return (
-          <ComposedChart data={quarterlyRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={derivedSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis yAxisId="L" tick={tickAxisStyle} />
             <YAxis yAxisId="R" tick={tickAxisStyle} unit="%" orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Bar  yAxisId="L" dataKey="revenue" fill="#6366f1" name="Quarter Sales (₹ Cr)" />
-            <Line yAxisId="R" type="monotone" dataKey="opm" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="OPM %" />
-            <Line yAxisId="R" type="monotone" dataKey="npm" stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="NPM %" />
+            <Bar  yAxisId="L" dataKey="ttmRevenue" fill="#6366f1" name="TTM Sales (₹ Cr)" />
+            <Line yAxisId="R" type="monotone" dataKey="opm" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="OPM %" />
+            <Line yAxisId="R" type="monotone" dataKey="npm" stroke="#10b981" strokeWidth={1.5} dot={false} name="NPM %" />
           </ComposedChart>
         );
       }
       case "pbv": {
-        if (!valuationRows.length) return "Book value / price history missing.";
+        if (!derivedSeries.length) return "Book value / price history missing.";
         return (
-          <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={derivedSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis yAxisId="L" tick={tickAxisStyle} />
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
             <Bar  yAxisId="R" dataKey="bookValue" fill="#f59e0b" name="Book Value (₹)" />
-            <Line yAxisId="L" type="monotone" dataKey="pbv"       stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="P/BV" />
+            <Line yAxisId="L" type="monotone" dataKey="pbv" stroke="#10b981" strokeWidth={1.5} dot={false} name="P/BV" />
           </ComposedChart>
         );
       }
       case "evebitda": {
-        if (!valuationRows.length) return "Insufficient data to compute EV/EBITDA.";
+        if (!derivedSeries.length) return "Insufficient data to compute EV/EBITDA.";
         return (
-          <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={derivedSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis yAxisId="L" tick={tickAxisStyle} />
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Bar  yAxisId="R" dataKey="ebitda"   fill="#0ea5e9" name="EBITDA (₹ Cr)" />
-            <Line yAxisId="L" type="monotone" dataKey="evEbitda" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} name="EV/EBITDA" />
+            <Bar  yAxisId="R" dataKey="ebitda"   fill="#0ea5e9" name="TTM EBITDA (₹ Cr)" />
+            <Line yAxisId="L" type="monotone" dataKey="evEbitda" stroke="#a78bfa" strokeWidth={1.5} dot={false} name="EV/EBITDA" />
           </ComposedChart>
         );
       }
       case "mcapsales": {
-        if (!valuationRows.length) return "Sales / market cap history missing.";
+        if (!derivedSeries.length) return "Sales / market cap history missing.";
         return (
-          <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={derivedSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis yAxisId="L" tick={tickAxisStyle} />
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Bar  yAxisId="R" dataKey="sales"     fill="#f59e0b" name="Sales (₹ Cr)" />
-            <Line yAxisId="L" type="monotone" dataKey="mcapSales" stroke="#0ea5e9" strokeWidth={2} dot={{ r: 2 }} name="MCap / Sales" />
+            <Bar  yAxisId="R" dataKey="ttmSales"  fill="#f59e0b" name="TTM Sales (₹ Cr)" />
+            <Line yAxisId="L" type="monotone" dataKey="mcapSales" stroke="#0ea5e9" strokeWidth={1.5} dot={false} name="MCap / Sales" />
           </ComposedChart>
         );
       }
       case "yearly_pl": {
-        if (!plRows.length) return "No yearly P&L data.";
+        if (!derivedSeries.length) return "No yearly P&L data.";
         return (
-          <ComposedChart data={plRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={derivedSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis yAxisId="L" tick={tickAxisStyle} />
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Bar  yAxisId="L" dataKey="revenue" fill="#6366f1" name="Revenue (₹ Cr)" />
-            <Bar  yAxisId="L" dataKey="op"      fill="#10b981" name="Operating Profit" />
-            <Bar  yAxisId="L" dataKey="net"     fill="#0ea5e9" name="Net Profit" />
-            <Line yAxisId="R" type="monotone" dataKey="eps" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="EPS (₹)" />
+            <Line yAxisId="L" type="monotone" dataKey="ttmRevenue" stroke="#6366f1" strokeWidth={1.5} dot={false} name="TTM Revenue (₹ Cr)" />
+            <Line yAxisId="L" type="monotone" dataKey="ttmOp"      stroke="#10b981" strokeWidth={1.5} dot={false} name="TTM Operating Profit" />
+            <Line yAxisId="L" type="monotone" dataKey="ttmNet"     stroke="#0ea5e9" strokeWidth={1.5} dot={false} name="TTM Net Profit" />
+            <Line yAxisId="R" type="monotone" dataKey="ttmEps"     stroke="#f59e0b" strokeWidth={1.5} dot={false} name="TTM EPS (₹)" />
           </ComposedChart>
         );
       }
       case "returns": {
-        if (!ratiosRows.length) return "No ROE / ROCE / OPM history available.";
+        if (!derivedSeries.length) return "No ROE / ROCE / OPM history available.";
         return (
-          <ComposedChart data={ratiosRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={derivedSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis tick={tickAxisStyle} unit="%" />
-            <Tooltip contentStyle={tooltipContentStyle} formatter={(v: any) => v != null ? `${v}%` : "—"} />
+            <Tooltip contentStyle={tooltipContentStyle} formatter={(v: any) => v != null ? `${(+v).toFixed(2)}%` : "—"} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Line type="monotone" dataKey="roe"  stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="ROE %" />
-            <Line type="monotone" dataKey="roce" stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} name="ROCE %" />
-            <Line type="monotone" dataKey="opm"  stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="OPM %" />
+            <Line type="monotone" dataKey="roe"  stroke="#10b981" strokeWidth={1.5} dot={false} name="ROE %" />
+            <Line type="monotone" dataKey="roce" stroke="#6366f1" strokeWidth={1.5} dot={false} name="ROCE %" />
+            <Line type="monotone" dataKey="opm"  stroke="#f59e0b" strokeWidth={1.5} dot={false} name="OPM %" />
           </ComposedChart>
         );
       }
       case "cashflow": {
-        if (!cashFlowRows.length) return "No cash flow rows available.";
+        if (!derivedSeries.length) return "No cash flow rows available.";
         return (
-          <BarChart data={cashFlowRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={derivedSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis tick={tickAxisStyle} />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Bar dataKey="cfo" fill="#10b981" name="CFO" />
-            <Bar dataKey="cfi" fill="#0ea5e9" name="CFI" />
-            <Bar dataKey="cff" fill="#a78bfa" name="CFF" />
-          </BarChart>
+            <Line type="monotone" dataKey="cfo" stroke="#10b981" strokeWidth={1.5} dot={false} name="CFO (₹ Cr)" />
+            <Line type="monotone" dataKey="cfi" stroke="#0ea5e9" strokeWidth={1.5} dot={false} name="CFI" />
+            <Line type="monotone" dataKey="cff" stroke="#a78bfa" strokeWidth={1.5} dot={false} name="CFF" />
+          </ComposedChart>
         );
       }
     }
@@ -1223,14 +1298,14 @@ const FundamentalsChartGrid: React.FC<{
 
   const chartHints: Record<ChartType, string> = {
     price:       "1M / 6M / 1Y at daily resolution; 3Y / 5Y / 10Y / Max at weekly resolution. 50/200 DMA are computed on the full price history so they have correct warmup at any window.",
-    pe:          "Year-end Price / Yearly EPS. Daily P/E would need TTM-EPS at every date; this is a yearly proxy.",
-    salesmargin: "Quarterly Sales (₹ Cr) with OPM% from Screener and NPM% computed as Net Profit / Revenue. GPM% not derivable from current scrape.",
-    pbv:         "Year-end Price / latest Book Value per share. Historical per-share BV isn't published by Screener so older years use the latest BV as divisor.",
-    evebitda:    "EV ≈ Market Cap (scaled by year-end price ratio) + Borrowings (cash unavailable in our scrape). EBITDA ≈ Operating Profit + Depreciation.",
-    mcapsales:   "Year-end Market Cap (scaled from today's MCap by year-end price ratio) / Yearly Revenue.",
-    yearly_pl:   "Revenue / Operating Profit / Net Profit in ₹ Cr with EPS on the right axis.",
-    returns:     "ROE / ROCE / OPM as reported by Screener.in. All percentages.",
-    cashflow:    "Operating / Investing / Financing cash flows in ₹ Cr.",
+    pe:          "P/E = Price / TTM EPS at every tick. TTM EPS rolls forward each quarter, so the bar steps up/down when new quarterly results post.",
+    salesmargin: "TTM Sales (₹ Cr) bars with TTM OPM% and NPM% lines. All metrics roll over the trailing 4 quarters from Screener's quarterly results.",
+    pbv:         "P/BV = Price / Book Value per share. Book Value per share is derived from (Equity + Reserves) / estimated shares outstanding (forward-filled yearly).",
+    evebitda:    "EV/EBITDA = (Market Cap + Borrowings) / TTM EBITDA. EBITDA ≈ TTM Operating Profit + last yearly Depreciation (cash isn't published in our Screener scrape).",
+    mcapsales:   "Market Cap (scaled at each tick by price) / TTM Sales. Sales rolls quarterly.",
+    yearly_pl:   "Trailing-12-Month Revenue / Operating Profit / Net Profit / EPS, recomputed at each price tick from quarterly results.",
+    returns:     "ROE / ROCE are yearly step-functions from Screener; OPM is computed as TTM rolling Operating Profit / Revenue so it updates each quarter.",
+    cashflow:    "Operating / Investing / Financing cash flows. Screener publishes these only yearly so each line is a step function until next annual report.",
   };
 
   return (
