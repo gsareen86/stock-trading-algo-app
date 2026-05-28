@@ -928,27 +928,42 @@ interface PriceChartPoint { ts: string; close: number; volume: number; }
 const tickAxisStyle = { stroke: "#475569", fontSize: 10 };
 const tooltipContentStyle = { backgroundColor: "#090d1a", borderColor: "#1e293b", color: "#e2e8f0", fontSize: 11 };
 
-const ChartCard: React.FC<{
-  title: string;
-  hint?: string;
-  rightLabel?: string;
-  children: React.ReactNode;
-}> = ({ title, hint, rightLabel, children }) => (
-  <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-850">
-    <div className="flex items-center justify-between mb-2">
-      <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300" title={hint || ""}>
-        {title}
-        {hint && <span className="text-slate-500 ml-1">ⓘ</span>}
-      </h4>
-      {rightLabel && <span className="text-[10px] text-slate-500 font-mono">{rightLabel}</span>}
-    </div>
-    <div className="h-56 font-mono text-[10px]">
-      <ResponsiveContainer width="100%" height="100%">
-        {children as any}
-      </ResponsiveContainer>
-    </div>
-  </div>
-);
+
+type ChartType = "price" | "pe" | "salesmargin" | "pbv" | "evebitda" | "mcapsales" | "yearly_pl" | "returns" | "cashflow";
+
+const PRIMARY_CHARTS: { key: ChartType; label: string }[] = [
+  { key: "price",       label: "Price" },
+  { key: "pe",          label: "PE Ratio" },
+  { key: "salesmargin", label: "Sales & Margin" },
+  { key: "pbv",         label: "Price to Book" },
+];
+const MORE_CHARTS: { key: ChartType; label: string }[] = [
+  { key: "evebitda",  label: "EV / EBITDA" },
+  { key: "mcapsales", label: "Market Cap / Sales" },
+  { key: "yearly_pl", label: "Yearly P&L" },
+  { key: "returns",   label: "Returns & Margins" },
+  { key: "cashflow",  label: "Cash Flow" },
+];
+
+// Simple-moving-average overlay computed in the browser from the price
+// series. Returns null for the first window-1 points - Recharts skips
+// nulls cleanly so the line just starts later in the chart.
+const withSma = (series: PriceChartPoint[], windows: number[]): (PriceChartPoint & { [k: string]: number | null })[] => {
+  if (!series.length) return [];
+  return series.map((p, i) => {
+    const enriched: any = { ...p };
+    for (const w of windows) {
+      if (i + 1 < w) {
+        enriched[`sma${w}`] = null;
+      } else {
+        let sum = 0;
+        for (let j = i - w + 1; j <= i; j++) sum += series[j].close;
+        enriched[`sma${w}`] = +(sum / w).toFixed(2);
+      }
+    }
+    return enriched;
+  });
+};
 
 const FundamentalsChartGrid: React.FC<{
   detail: FundamentalsDetail;
@@ -959,22 +974,38 @@ const FundamentalsChartGrid: React.FC<{
   const yearsCap = yearsCapFor(timeframe);
   const quartersCap = quartersCapFor(timeframe);
 
+  const [chartType, setChartType] = useState<ChartType>("price");
+  const [moreOpen, setMoreOpen] = useState(false);
+  // Price-view-only toggles
+  const [showVolume, setShowVolume] = useState(true);
+  const [showSma50, setShowSma50]   = useState(false);
+  const [showSma200, setShowSma200] = useState(false);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the More dropdown on click outside.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [moreOpen]);
+
   // ---------- Yearly P&L (Revenue / OP / Net Profit + EPS) ----------
   const pl = detail.profit_loss;
   const plRows = (() => {
-    const rev   = seriesAsc(pl.revenue, yearsCap);
-    const op    = seriesAsc(pl.operating_profit, yearsCap);
-    const np    = seriesAsc(pl.net_profit, yearsCap);
-    const eps   = seriesAsc(pl.eps, yearsCap);
-    const periods = rev.length ? rev.map((r) => r.period) : op.map((r) => r.period);
+    const rev = seriesAsc(pl.revenue, yearsCap);
+    const op  = seriesAsc(pl.operating_profit, yearsCap);
+    const np  = seriesAsc(pl.net_profit, yearsCap);
+    const eps = seriesAsc(pl.eps, yearsCap);
     const byPeriod = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
     const opP = byPeriod(op), npP = byPeriod(np), epsP = byPeriod(eps);
+    const periods = rev.length ? rev.map((r) => r.period) : op.map((r) => r.period);
     return rev.map((r) => ({
-      period: r.period,
-      revenue: r.value, op: opP[r.period] ?? null,
+      period: r.period, revenue: r.value, op: opP[r.period] ?? null,
       net: npP[r.period] ?? null, eps: epsP[r.period] ?? null,
     })).concat(
-      // Append year buckets only present in OP/NP if revenue is missing
       periods.filter((p) => !rev.find((rr) => rr.period === p)).map((p) => ({
         period: p, revenue: null, op: opP[p] ?? null, net: npP[p] ?? null, eps: epsP[p] ?? null,
       }))
@@ -1019,35 +1050,14 @@ const FundamentalsChartGrid: React.FC<{
     return periods.map((p) => ({ period: p, cfo: cfoM[p] ?? null, cfi: cfiM[p] ?? null, cff: cffM[p] ?? null }));
   })();
 
-  // ---------- Shareholding (Quarterly stacked) ----------
-  const shRows = (() => {
-    const sh = [...(detail.shareholding || [])].reverse();   // chronological
-    if (quartersCap < sh.length) return sh.slice(sh.length - quartersCap);
-    return sh;
-  })().map((r) => ({
-    period: r.period,
-    promoter: r.promoter_pct ?? 0,
-    fii: r.fii_pct ?? 0,
-    dii: r.dii_pct ?? 0,
-    public: r.public_pct ?? 0,
-    govt: r.govt_pct ?? 0,
-  }));
-
   // ---------- Yearly Valuation proxies ----------
-  // P/E proxy: year-end price / yearly EPS
-  // P/BV proxy: year-end price / (Equity Capital + Reserves) per share
-  //   (since per-share BV history isn't reported by Screener; we use
-  //    the latest book-value snapshot as the divisor for older years too,
-  //    so this is a rough trajectory rather than an exact ratio)
-  // EV/EBITDA proxy: (market_cap_now + borrowings_yearly) / (OP + Depreciation)
-  //   where market_cap_now is rolled back using the price ratio
-  // MarketCap/Sales proxy: (market_cap_now * price_ratio) / revenue_yearly
+  // Same approximations as before — see the panel hints for caveats.
   const valuationRows = (() => {
-    const epsArr = seriesAsc(pl.eps, yearsCap);
-    const revArr = seriesAsc(pl.revenue, yearsCap);
-    const opArr  = seriesAsc(pl.operating_profit, yearsCap);
-    const depArr = seriesAsc(pl.depreciation || [], yearsCap);
-    const borrowArr = seriesAsc(detail.balance_sheet.borrowings, yearsCap);
+    const epsArr   = seriesAsc(pl.eps, yearsCap);
+    const revArr   = seriesAsc(pl.revenue, yearsCap);
+    const opArr    = seriesAsc(pl.operating_profit, yearsCap);
+    const depArr   = seriesAsc(pl.depreciation || [], yearsCap);
+    const borrowArr= seriesAsc(detail.balance_sheet.borrowings, yearsCap);
     const bookValue = topRatios.book_value || null;
     const mcapNowCr = topRatios.market_cap_cr || null;
     const nowPrice = priceSeries.length ? priceSeries[priceSeries.length - 1].close : null;
@@ -1060,24 +1070,18 @@ const FundamentalsChartGrid: React.FC<{
       const y = yearOf(r.period);
       if (!y) return null;
       const closeY = yearEndClose(priceSeries, y);
-      const eps   = epsByY[y];
-      const op    = opByY[y]; const dep = depByY[y];
+      const eps = epsByY[y];
+      const op  = opByY[y]; const dep = depByY[y];
       const ebitda = (op != null && dep != null) ? op + dep : (op ?? null);
       const borrow = borrowByY[y];
       const sales = revByY[y];
-
-      // Approximate market cap for the year using the price ratio against
-      // today's market cap (assumes shares haven't changed materially -
-      // OK over a few years for most non-IPO names).
       const mcapY = (closeY && nowPrice && mcapNowCr) ? mcapNowCr * (closeY / nowPrice) : null;
-
       const pe = (closeY != null && eps != null && eps !== 0) ? +(closeY / eps).toFixed(2) : null;
       const pbv = (closeY != null && bookValue != null && bookValue !== 0) ? +(closeY / bookValue).toFixed(2) : null;
       const evEbitda = (mcapY != null && ebitda != null && ebitda !== 0)
         ? +(((mcapY + (borrow || 0)) / ebitda)).toFixed(2) : null;
       const mcapSales = (mcapY != null && sales != null && sales !== 0)
         ? +((mcapY / sales)).toFixed(2) : null;
-
       return { period: r.period, pe, pbv, evEbitda, mcapSales, eps, ebitda, sales, bookValue };
     }).filter((x) => x !== null) as Array<{
       period: string; pe: number | null; pbv: number | null;
@@ -1086,16 +1090,25 @@ const FundamentalsChartGrid: React.FC<{
     }>;
   })();
 
-  return (
-    <div className="space-y-3">
-      {/* PRICE + VOLUME */}
-      {priceSeries.length > 0 ? (
-        <ChartCard
-          title={`Price & Volume — ${timeframe}`}
-          rightLabel={`${priceSeries.length} bars`}
-          hint="Daily Close from yfinance with Volume on the secondary axis. Timestamps are real trading days."
-        >
-          <ComposedChart data={priceSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+  const priceSeriesEnriched = (chartType === "price" && (showSma50 || showSma200))
+    ? withSma(priceSeries, [50, 200])
+    : priceSeries;
+
+  const currentLabel = (() => {
+    const all = [...PRIMARY_CHARTS, ...MORE_CHARTS];
+    return all.find((c) => c.key === chartType)?.label || "Chart";
+  })();
+
+  // ---------- Chart pane render switch ----------
+  // Returns the chart element when data is available, or a string empty
+  // message when not. ResponsiveContainer can't wrap a plain div so we
+  // handle the empty case at the parent level.
+  const renderChart = (): React.ReactElement | string => {
+    switch (chartType) {
+      case "price": {
+        if (!priceSeries.length) return "No price data available.";
+        return (
+          <ComposedChart data={priceSeriesEnriched} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <defs>
               <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#818cf8" stopOpacity={0.4} />
@@ -1105,22 +1118,98 @@ const FundamentalsChartGrid: React.FC<{
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
             <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
             <YAxis yAxisId="price" tick={tickAxisStyle} domain={["auto", "auto"]} orientation="left" />
-            <YAxis yAxisId="vol" tick={tickAxisStyle} orientation="right" tickFormatter={(v) => v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : v >= 1e3 ? `${(v/1e3).toFixed(0)}K` : `${v}`} />
+            {showVolume && (
+              <YAxis yAxisId="vol" tick={tickAxisStyle} orientation="right" tickFormatter={(v) => v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : v >= 1e3 ? `${(v/1e3).toFixed(0)}K` : `${v}`} />
+            )}
             <Tooltip contentStyle={tooltipContentStyle}
-              formatter={(value: any, name: any) => name === "volume" ? [value.toLocaleString(), "Volume"] : [`₹${value}`, "Close"]} />
+              formatter={(value: any, name: any) => name === "Volume" ? [Number(value).toLocaleString(), "Volume"] : [`₹${value}`, name]} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Bar yAxisId="vol" dataKey="volume" fill="#334155" opacity={0.55} name="Volume" />
+            {showVolume && <Bar yAxisId="vol" dataKey="volume" fill="#334155" opacity={0.55} name="Volume" />}
             <Area yAxisId="price" type="monotone" dataKey="close" stroke="#818cf8" fill="url(#priceGrad)" strokeWidth={1.5} name="Close" />
+            {showSma50  && <Line yAxisId="price" type="monotone" dataKey="sma50"  stroke="#f59e0b" strokeWidth={1.5} dot={false} name="50 DMA" />}
+            {showSma200 && <Line yAxisId="price" type="monotone" dataKey="sma200" stroke="#10b981" strokeWidth={1.5} dot={false} name="200 DMA" />}
           </ComposedChart>
-        </ChartCard>
-      ) : null}
-
-      {/* YEARLY P&L + EPS */}
-      {plRows.length > 0 && (
-        <ChartCard
-          title={`Yearly P&L — last ${plRows.length} yrs`}
-          hint="Revenue / Operating Profit / Net Profit in ₹ Cr (left axis). EPS in ₹ on the right axis."
-        >
+        );
+      }
+      case "pe": {
+        if (!valuationRows.length) return "Not enough EPS / price data to derive P/E.";
+        return (
+          <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis yAxisId="L" tick={tickAxisStyle} />
+            <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+            <Tooltip contentStyle={tooltipContentStyle} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Line yAxisId="L" type="monotone" dataKey="pe"  stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} name="P/E" />
+            <Line yAxisId="R" type="monotone" dataKey="eps" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="EPS (₹)" />
+          </ComposedChart>
+        );
+      }
+      case "salesmargin": {
+        if (!quarterlyRows.length) return "No quarterly results available.";
+        return (
+          <ComposedChart data={quarterlyRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis yAxisId="L" tick={tickAxisStyle} />
+            <YAxis yAxisId="R" tick={tickAxisStyle} unit="%" orientation="right" />
+            <Tooltip contentStyle={tooltipContentStyle} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar  yAxisId="L" dataKey="revenue" fill="#6366f1" name="Quarter Sales (₹ Cr)" />
+            <Line yAxisId="R" type="monotone" dataKey="opm" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="OPM %" />
+            <Line yAxisId="R" type="monotone" dataKey="npm" stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="NPM %" />
+          </ComposedChart>
+        );
+      }
+      case "pbv": {
+        if (!valuationRows.length) return "Book value / price history missing.";
+        return (
+          <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis yAxisId="L" tick={tickAxisStyle} />
+            <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+            <Tooltip contentStyle={tooltipContentStyle} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Line yAxisId="L" type="monotone" dataKey="pbv"       stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="P/BV" />
+            <Line yAxisId="R" type="monotone" dataKey="bookValue" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="Book Value (₹)" />
+          </ComposedChart>
+        );
+      }
+      case "evebitda": {
+        if (!valuationRows.length) return "Insufficient data to compute EV/EBITDA.";
+        return (
+          <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis yAxisId="L" tick={tickAxisStyle} />
+            <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+            <Tooltip contentStyle={tooltipContentStyle} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Line yAxisId="L" type="monotone" dataKey="evEbitda" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} name="EV/EBITDA" />
+            <Line yAxisId="R" type="monotone" dataKey="ebitda"   stroke="#0ea5e9" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="EBITDA (₹ Cr)" />
+          </ComposedChart>
+        );
+      }
+      case "mcapsales": {
+        if (!valuationRows.length) return "Sales / market cap history missing.";
+        return (
+          <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis yAxisId="L" tick={tickAxisStyle} />
+            <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+            <Tooltip contentStyle={tooltipContentStyle} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Line yAxisId="L" type="monotone" dataKey="mcapSales" stroke="#0ea5e9" strokeWidth={2} dot={{ r: 2 }} name="MCap / Sales" />
+            <Line yAxisId="R" type="monotone" dataKey="sales"     stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="Sales (₹ Cr)" />
+          </ComposedChart>
+        );
+      }
+      case "yearly_pl": {
+        if (!plRows.length) return "No yearly P&L data.";
+        return (
           <ComposedChart data={plRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
             <XAxis dataKey="period" tick={tickAxisStyle} />
@@ -1133,15 +1222,11 @@ const FundamentalsChartGrid: React.FC<{
             <Bar  yAxisId="L" dataKey="net"     fill="#0ea5e9" name="Net Profit" />
             <Line yAxisId="R" type="monotone" dataKey="eps" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="EPS (₹)" />
           </ComposedChart>
-        </ChartCard>
-      )}
-
-      {/* YEARLY MARGINS / RETURNS */}
-      {ratiosRows.length > 0 && (
-        <ChartCard
-          title={`Returns & Margins — last ${ratiosRows.length} yrs`}
-          hint="ROE / ROCE / OPM as reported by Screener.in. All percentages."
-        >
+        );
+      }
+      case "returns": {
+        if (!ratiosRows.length) return "No ROE / ROCE / OPM history available.";
+        return (
           <ComposedChart data={ratiosRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
             <XAxis dataKey="period" tick={tickAxisStyle} />
@@ -1152,35 +1237,11 @@ const FundamentalsChartGrid: React.FC<{
             <Line type="monotone" dataKey="roce" stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} name="ROCE %" />
             <Line type="monotone" dataKey="opm"  stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="OPM %" />
           </ComposedChart>
-        </ChartCard>
-      )}
-
-      {/* QUARTERLY SALES + OPM% + NPM% */}
-      {quarterlyRows.length > 0 && (
-        <ChartCard
-          title={`Quarterly Sales + Margins — last ${quarterlyRows.length} quarters`}
-          hint="Revenue bars on the left axis (₹ Cr). OPM% from Screener and NPM% computed as Net Profit / Revenue on the right axis."
-        >
-          <ComposedChart data={quarterlyRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
-            <YAxis yAxisId="L" tick={tickAxisStyle} />
-            <YAxis yAxisId="R" tick={tickAxisStyle} unit="%" orientation="right" />
-            <Tooltip contentStyle={tooltipContentStyle} />
-            <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Bar  yAxisId="L" dataKey="revenue" fill="#6366f1" name="Revenue (₹ Cr)" />
-            <Line yAxisId="R" type="monotone" dataKey="opm" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="OPM %" />
-            <Line yAxisId="R" type="monotone" dataKey="npm" stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="NPM %" />
-          </ComposedChart>
-        </ChartCard>
-      )}
-
-      {/* CASH FLOW (Yearly) */}
-      {cashFlowRows.length > 0 && (
-        <ChartCard
-          title={`Cash Flow — last ${cashFlowRows.length} yrs`}
-          hint="Operating / Investing / Financing cash flows in ₹ Cr. Negatives are red."
-        >
+        );
+      }
+      case "cashflow": {
+        if (!cashFlowRows.length) return "No cash flow rows available.";
+        return (
           <BarChart data={cashFlowRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
             <XAxis dataKey="period" tick={tickAxisStyle} />
@@ -1191,101 +1252,123 @@ const FundamentalsChartGrid: React.FC<{
             <Bar dataKey="cfi" fill="#0ea5e9" name="CFI" />
             <Bar dataKey="cff" fill="#a78bfa" name="CFF" />
           </BarChart>
-        </ChartCard>
-      )}
+        );
+      }
+    }
+  };
 
-      {/* SHAREHOLDING PATTERN (Quarterly) */}
-      {shRows.length > 0 && (
-        <ChartCard
-          title={`Shareholding Pattern — last ${shRows.length} quarters`}
-          hint="Promoter / FII / DII / Public shareholding stacked at each quarter."
-        >
-          <AreaChart data={shRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }} stackOffset="expand">
-            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-            <XAxis dataKey="period" tick={tickAxisStyle} />
-            <YAxis tick={tickAxisStyle} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-            <Tooltip contentStyle={tooltipContentStyle} formatter={(v: any) => `${(+v).toFixed(2)}%`} />
-            <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Area type="monotone" dataKey="promoter" stackId="1" stroke="#6366f1" fill="#6366f1" name="Promoter %" />
-            <Area type="monotone" dataKey="fii"      stackId="1" stroke="#10b981" fill="#10b981" name="FII %" />
-            <Area type="monotone" dataKey="dii"      stackId="1" stroke="#f59e0b" fill="#f59e0b" name="DII %" />
-            <Area type="monotone" dataKey="govt"     stackId="1" stroke="#94a3b8" fill="#94a3b8" name="Govt %" />
-            <Area type="monotone" dataKey="public"   stackId="1" stroke="#a78bfa" fill="#a78bfa" name="Public %" />
-          </AreaChart>
-        </ChartCard>
-      )}
+  const chartHints: Record<ChartType, string> = {
+    price:       "Daily Close from yfinance with optional 50/200 DMA overlays and Volume bars on the secondary axis.",
+    pe:          "Year-end Price / Yearly EPS. Daily P/E would need TTM-EPS at every date; this is a yearly proxy.",
+    salesmargin: "Quarterly Sales (₹ Cr) with OPM% from Screener and NPM% computed as Net Profit / Revenue. GPM% not derivable from current scrape.",
+    pbv:         "Year-end Price / latest Book Value per share. Historical per-share BV isn't published by Screener so older years use the latest BV as divisor.",
+    evebitda:    "EV ≈ Market Cap (scaled by year-end price ratio) + Borrowings (cash unavailable in our scrape). EBITDA ≈ Operating Profit + Depreciation.",
+    mcapsales:   "Year-end Market Cap (scaled from today's MCap by year-end price ratio) / Yearly Revenue.",
+    yearly_pl:   "Revenue / Operating Profit / Net Profit in ₹ Cr with EPS on the right axis.",
+    returns:     "ROE / ROCE / OPM as reported by Screener.in. All percentages.",
+    cashflow:    "Operating / Investing / Financing cash flows in ₹ Cr.",
+  };
 
-      {/* VALUATION PROXIES (yearly, derived) */}
-      {valuationRows.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <ChartCard
-            title="P/E (yearly proxy)"
-            hint="Year-end price / yearly EPS. EPS line on the right axis. Daily-resolution P/E would need historical shares & TTM-EPS — currently approximated."
-          >
-            <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-              <XAxis dataKey="period" tick={tickAxisStyle} />
-              <YAxis yAxisId="L" tick={tickAxisStyle} />
-              <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
-              <Tooltip contentStyle={tooltipContentStyle} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Line yAxisId="L" type="monotone" dataKey="pe"  stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} name="P/E" />
-              <Line yAxisId="R" type="monotone" dataKey="eps" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="EPS (₹)" />
-            </ComposedChart>
-          </ChartCard>
+  return (
+    <div className="rounded-lg bg-slate-950/40 border border-slate-850">
+      {/* HEADER: chart-type selector */}
+      <div className="flex items-center justify-between flex-wrap gap-3 px-4 py-2 border-b border-slate-850">
+        <div className="flex items-center gap-1.5 font-mono text-[11px] flex-wrap">
+          {PRIMARY_CHARTS.map((c) => (
+            <button
+              key={c.key}
+              onClick={() => { setChartType(c.key); setMoreOpen(false); }}
+              className={`px-2.5 py-1 rounded cursor-pointer transition-colors ${
+                chartType === c.key
+                  ? "bg-indigo-500/20 text-indigo-200 font-bold"
+                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+              }`}
+            >
+              {c.label}
+            </button>
+          ))}
+          <div className="relative" ref={moreRef}>
+            <button
+              onClick={() => setMoreOpen((v) => !v)}
+              className={`px-2.5 py-1 rounded cursor-pointer flex items-center gap-1 transition-colors ${
+                MORE_CHARTS.find((m) => m.key === chartType)
+                  ? "bg-indigo-500/20 text-indigo-200 font-bold"
+                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+              }`}
+            >
+              More <span className="text-[8px]">▾</span>
+            </button>
+            {moreOpen && (
+              <div className="absolute right-0 mt-1 z-20 bg-slate-900 border border-slate-700 rounded-lg shadow-lg py-1 min-w-[160px]">
+                {MORE_CHARTS.map((c) => (
+                  <button
+                    key={c.key}
+                    onClick={() => { setChartType(c.key); setMoreOpen(false); }}
+                    className={`w-full text-left px-3 py-1.5 text-[11px] cursor-pointer ${
+                      chartType === c.key
+                        ? "text-indigo-200 bg-indigo-500/10"
+                        : "text-slate-300 hover:bg-slate-800"
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="text-[10px] text-slate-500 font-mono">
+          {currentLabel} · {timeframe}
+        </div>
+      </div>
 
-          <ChartCard
-            title="P/BV (yearly proxy)"
-            hint="Year-end price / current Book Value per share. Historical BV per share isn't published by Screener so older years use the latest BV as divisor — read as a trajectory, not an exact ratio."
-          >
-            <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-              <XAxis dataKey="period" tick={tickAxisStyle} />
-              <YAxis yAxisId="L" tick={tickAxisStyle} />
-              <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
-              <Tooltip contentStyle={tooltipContentStyle} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Line yAxisId="L" type="monotone" dataKey="pbv"       stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="P/BV" />
-              <Line yAxisId="R" type="monotone" dataKey="bookValue" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="Book Value (₹)" />
-            </ComposedChart>
-          </ChartCard>
+      {/* CHART HINT */}
+      <div className="px-4 pt-2 text-[10px] text-slate-500 font-mono">
+        {chartHints[chartType]}
+      </div>
 
-          <ChartCard
-            title="EV / EBITDA (yearly proxy)"
-            hint="EV ≈ Market Cap (scaled by year-end price) + Borrowings (cash not subtracted - Screener doesn't publish cash). EBITDA ≈ Operating Profit + Depreciation."
-          >
-            <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-              <XAxis dataKey="period" tick={tickAxisStyle} />
-              <YAxis yAxisId="L" tick={tickAxisStyle} />
-              <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
-              <Tooltip contentStyle={tooltipContentStyle} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Line yAxisId="L" type="monotone" dataKey="evEbitda" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} name="EV/EBITDA" />
-              <Line yAxisId="R" type="monotone" dataKey="ebitda"   stroke="#0ea5e9" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="EBITDA (₹ Cr)" />
-            </ComposedChart>
-          </ChartCard>
+      {/* THE CHART */}
+      <div className="px-2 pt-1 pb-2">
+        <div className="h-72 font-mono text-[10px]">
+          {(() => {
+            const result = renderChart();
+            if (typeof result === "string") {
+              return (
+                <div className="h-full w-full flex items-center justify-center text-[11px] text-slate-500 font-mono">
+                  {result}
+                </div>
+              );
+            }
+            return (
+              <ResponsiveContainer width="100%" height="100%">
+                {result}
+              </ResponsiveContainer>
+            );
+          })()}
+        </div>
+      </div>
 
-          <ChartCard
-            title="Market Cap / Sales (yearly proxy)"
-            hint="Year-end market cap (scaled from today's MCap by year-end price ratio) divided by yearly revenue."
-          >
-            <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-              <XAxis dataKey="period" tick={tickAxisStyle} />
-              <YAxis yAxisId="L" tick={tickAxisStyle} />
-              <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
-              <Tooltip contentStyle={tooltipContentStyle} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Line yAxisId="L" type="monotone" dataKey="mcapSales" stroke="#0ea5e9" strokeWidth={2} dot={{ r: 2 }} name="MCap / Sales" />
-              <Line yAxisId="R" type="monotone" dataKey="sales"     stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="Sales (₹ Cr)" />
-            </ComposedChart>
-          </ChartCard>
+      {/* SERIES TOGGLES (Price view only) */}
+      {chartType === "price" && (
+        <div className="flex items-center justify-center gap-4 pb-3 text-[10px] font-mono text-slate-400">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={showVolume} onChange={(e) => setShowVolume(e.target.checked)} className="accent-indigo-500" />
+            Volume
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={showSma50} onChange={(e) => setShowSma50(e.target.checked)} className="accent-amber-500" />
+            50 DMA
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={showSma200} onChange={(e) => setShowSma200(e.target.checked)} className="accent-emerald-500" />
+            200 DMA
+          </label>
         </div>
       )}
     </div>
   );
 };
+
 
 const FundamentalsDetailPanel: React.FC<{
   stock: FundamentalStock;
