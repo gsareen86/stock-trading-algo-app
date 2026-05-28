@@ -167,6 +167,21 @@ def send_management_review(review: dict) -> None:
     )
 
 
+def send_news_impact_alert(alert: dict) -> bool:
+    """Critical news-impact alert for a held stock. Returns True on success."""
+    ticker = alert.get("ticker", "?")
+    severity = (alert.get("severity") or "info").upper()
+    action = alert.get("recommended_action", "")
+    summary = (alert.get("impact_summary") or "")[:400]
+    linkage_label = alert.get("linkage_label") or ""
+    return _send(
+        f"🚨 <b>[{severity}] NEWS IMPACT: {ticker}</b>\n"
+        f"Recommended action: <b>{action}</b>\n"
+        f"Linkage: {linkage_label}\n\n"
+        f"{summary}"
+    )
+
+
 def send_reentry_alert(ticker: str, price: float, ema21: float,
                        vol_ratio: float) -> None:
     """Send RE-ENTRY alert."""

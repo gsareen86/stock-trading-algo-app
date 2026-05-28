@@ -1103,6 +1103,107 @@ def _migrate_pos_research_columns(conn) -> None:
         cur.execute(f"ALTER TABLE pos_research ADD COLUMN IF NOT EXISTS {name} {pg_type}")
 
 
+def _migrate_news_impact_columns(conn) -> None:
+    """Idempotently create the two ``news_impact_*`` tables + matching indexes
+    for legacy databases that pre-date the Alerts & Insights feature.
+
+    Also adds the ``last_news_impact_at`` throttle column to ``bot_control``
+    so the news-impact pipeline can keep cross-process visibility of when it
+    last ran (in-process sentinel handles same-process throttling).
+    """
+    if BACKEND == "sqlite":
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS news_impact_alerts (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at          TEXT NOT NULL,
+                ticker              TEXT NOT NULL,
+                scope               TEXT NOT NULL,
+                sector              TEXT,
+                severity            TEXT NOT NULL,
+                recommended_action  TEXT NOT NULL,
+                linkage             TEXT NOT NULL,
+                linkage_sector      TEXT,
+                impact_summary      TEXT NOT NULL,
+                content_hash        TEXT NOT NULL,
+                superseded_by       INTEGER REFERENCES news_impact_alerts(id),
+                delivered_telegram  INTEGER DEFAULT 0,
+                model               TEXT,
+                meta                TEXT
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS news_sector_tags (
+                news_id            INTEGER PRIMARY KEY REFERENCES news(id),
+                tagged_at          TEXT NOT NULL,
+                primary_sector     TEXT,
+                ancillary_sectors  TEXT,
+                why_note           TEXT,
+                model              TEXT,
+                confidence         REAL
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_created  ON news_impact_alerts(created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_ticker   ON news_impact_alerts(ticker)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_severity ON news_impact_alerts(severity)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_sector_tags_primary    ON news_sector_tags(primary_sector)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_sector_tags_tagged_at  ON news_sector_tags(tagged_at)"
+        )
+        bot_ctrl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(bot_control)").fetchall()}
+        if "last_news_impact_at" not in bot_ctrl_cols:
+            conn.execute("ALTER TABLE bot_control ADD COLUMN last_news_impact_at TEXT")
+        return
+
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS news_impact_alerts (
+            id                  BIGSERIAL PRIMARY KEY,
+            created_at          TEXT NOT NULL,
+            ticker              TEXT NOT NULL,
+            scope               TEXT NOT NULL,
+            sector              TEXT,
+            severity            TEXT NOT NULL,
+            recommended_action  TEXT NOT NULL,
+            linkage             TEXT NOT NULL,
+            linkage_sector      TEXT,
+            impact_summary      TEXT NOT NULL,
+            content_hash        TEXT NOT NULL,
+            superseded_by       BIGINT REFERENCES news_impact_alerts(id),
+            delivered_telegram  INTEGER DEFAULT 0,
+            model               TEXT,
+            meta                JSONB
+        )"""
+    )
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS news_sector_tags (
+            news_id            BIGINT PRIMARY KEY REFERENCES news(id),
+            tagged_at          TEXT NOT NULL,
+            primary_sector     TEXT,
+            ancillary_sectors  JSONB,
+            why_note           TEXT,
+            model              TEXT,
+            confidence         DOUBLE PRECISION
+        )"""
+    )
+    for sql in (
+        "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_created  ON news_impact_alerts(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_ticker   ON news_impact_alerts(ticker)",
+        "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_severity ON news_impact_alerts(severity)",
+        "CREATE INDEX IF NOT EXISTS idx_news_sector_tags_primary    ON news_sector_tags(primary_sector)",
+        "CREATE INDEX IF NOT EXISTS idx_news_sector_tags_tagged_at  ON news_sector_tags(tagged_at)",
+        "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS last_news_impact_at TEXT",
+    ):
+        cur.execute(sql)
+
+
 def init_db() -> None:
     """Create tables + seed bot_control row if absent."""
     if BACKEND == "sqlite":
@@ -1113,6 +1214,7 @@ def init_db() -> None:
             _migrate_positional_columns(conn)
             _migrate_pos_scans_scorecard_columns(conn)
             _migrate_pos_research_columns(conn)
+            _migrate_news_impact_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
                    VALUES (1, 'STOPPED', 'auto', ?)
@@ -1133,6 +1235,7 @@ def init_db() -> None:
                 _migrate_positional_columns(cur)
                 _migrate_pos_scans_scorecard_columns(cur)
                 _migrate_pos_research_columns(cur)
+                _migrate_news_impact_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
                        VALUES (1, 'STOPPED', 'auto', %s)

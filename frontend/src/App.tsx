@@ -22,7 +22,8 @@ import {
   Download,
   AlertCircle,
   Upload,
-  Cpu
+  Cpu,
+  Bell
 } from "lucide-react";
 import {
   AreaChart,
@@ -338,6 +339,29 @@ interface FundamentalsPriceHistory {
 type Timeframe = "1M" | "6M" | "1Y" | "3Y" | "5Y" | "10Y" | "Max";
 
 interface FundamentalsPin { ticker: string; added_at: string; notes: string; }
+
+interface NewsImpactAlert {
+  id: number;
+  created_at_ist: string;
+  ticker: string;
+  scope: "HOLDING" | "LT_WATCH";
+  sector: string | null;
+  severity: "info" | "watch" | "critical";
+  recommended_action: "HOLD" | "WATCH" | "REVIEW_EXIT";
+  linkage: "DIRECT" | "SECTOR" | "ANCILLARY";
+  linkage_sector: string | null;
+  linkage_label: string;
+  impact_summary: string;
+  reasons: string[];
+  citations: { news_id: number; title: string; url: string; source: string; ts: string; ts_ist?: string }[];
+  cluster_topic: string | null;
+  confidence: number | null;
+  model: string | null;
+  window_hours: number | null;
+  delivered_telegram: boolean;
+}
+
+type AlertBadgeMap = Record<string, number>;
 
 interface AnalyticsSummary {
   total_trades: number;
@@ -673,9 +697,11 @@ interface PositionalScanTableProps {
   rows: PositionalScanResult[];
   research: Record<string, PositionalResearch>;
   variant: "swing" | "longterm";
+  alertBadges?: Record<string, number>;
+  onOpenAlerts?: (bareTicker: string) => void;
 }
 
-const PositionalScanTable: React.FC<PositionalScanTableProps> = ({ rows, research, variant }) => {
+const PositionalScanTable: React.FC<PositionalScanTableProps> = ({ rows, research, variant, alertBadges, onOpenAlerts }) => {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const isLong = variant === "longterm";
   const inr = (v: number | null) => (v != null ? `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : "—");
@@ -736,7 +762,23 @@ const PositionalScanTable: React.FC<PositionalScanTableProps> = ({ rows, researc
                   <React.Fragment key={scan.id}>
                     <tr className="hover:bg-slate-900/20 cursor-pointer" onClick={() => toggle(scan.id)}>
                       <td className="py-3 px-4 text-slate-500 text-center w-6">{open ? "▾" : "▸"}</td>
-                      <td className="py-3 px-4 text-slate-200 font-bold">{scan.ticker}</td>
+                      <td className="py-3 px-4 text-slate-200 font-bold">
+                        {scan.ticker}
+                        {(() => {
+                          const bare = scan.ticker.replace(/\.(NS|BO)$/, "");
+                          const n = alertBadges?.[bare] || 0;
+                          if (n <= 0) return null;
+                          return (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onOpenAlerts?.(bare); }}
+                              className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 cursor-pointer"
+                              title={`${n} alert${n > 1 ? "s" : ""} for ${bare}`}
+                            >
+                              ⚠ {n}
+                            </button>
+                          );
+                        })()}
+                      </td>
                       <td className="py-3 px-4 text-center">{renderHorizonBadge(scan.horizon)}</td>
                       {isLong ? (
                         <>
@@ -1767,6 +1809,16 @@ export default function App() {
   // Per-ticker active timeframe for the price + ratio charts.
   const [fundamentalsTimeframe, setFundamentalsTimeframe] = useState<Record<string, Timeframe>>({});
 
+  // Alerts & Insights state
+  const [alerts, setAlerts] = useState<NewsImpactAlert[]>([]);
+  const [alertSeverityFilter, setAlertSeverityFilter] = useState<string>("all");
+  const [alertScopeFilter, setAlertScopeFilter] = useState<string>("BOTH");
+  const [alertTickerFilter, setAlertTickerFilter] = useState<string>("");
+  const [alertExpanded, setAlertExpanded] = useState<Set<number>>(new Set());
+  const [alertBadges, setAlertBadges] = useState<AlertBadgeMap>({});
+  const [alertSubmitting, setAlertSubmitting] = useState<boolean>(false);
+  const [alertReloadKey, setAlertReloadKey] = useState<number>(0);
+
   // Analytics states
   const [analyticsSummary, setAnalyticsSummary] = useState<AnalyticsSummary | null>(null);
   const [strategyPerformance, setStrategyPerformance] = useState<StrategyPerformance[]>([]);
@@ -2012,6 +2064,33 @@ export default function App() {
       fetchAnalytics();
     }
 
+    if (activeTab === "alerts" || activeTab === "positional" || activeTab === "longterm") {
+      // Always reload badge counts when entering any tab that displays them.
+      (async () => {
+        try {
+          const r = await fetch(`${API_BASE}/api/alerts/badges`);
+          if (r.ok) setAlertBadges(await r.json());
+        } catch (e) { console.error("Failed to load alert badges:", e); }
+      })();
+    }
+
+    if (activeTab === "alerts") {
+      const load = async () => {
+        try {
+          const u = new URL(`${API_BASE}/api/alerts/feed`);
+          if (alertSeverityFilter !== "all") u.searchParams.set("severity", alertSeverityFilter);
+          u.searchParams.set("scope", alertScopeFilter);
+          if (alertTickerFilter) u.searchParams.set("ticker", alertTickerFilter);
+          const res = await fetch(u.toString());
+          const data = await res.json();
+          setAlerts(data);
+        } catch (e) {
+          console.error("Failed to load alerts:", e);
+        }
+      };
+      load();
+    }
+
     if (activeTab === "research") {
       const fetchResearch = async () => {
         try {
@@ -2057,7 +2136,7 @@ export default function App() {
     if (activeTab === "logs") {
       fetchLogs();
     }
-  }, [activeTab]);
+  }, [activeTab, alertSeverityFilter, alertScopeFilter, alertTickerFilter, alertReloadKey]);
 
   // Log updater timer when the logs tab or visibility is on
   useEffect(() => {
@@ -2688,6 +2767,18 @@ export default function App() {
             </button>
 
             <button
+              onClick={() => setActiveTab("alerts")}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 relative ${
+                activeTab === "alerts"
+                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
+                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
+              }`}
+            >
+              <Bell size={16} />
+              Alerts & Insights
+            </button>
+
+            <button
               onClick={() => setActiveTab("news")}
               className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
                 activeTab === "news"
@@ -2794,7 +2885,7 @@ export default function App() {
         <header className="h-16 border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-md flex items-center justify-between px-8 flex-shrink-0 z-10">
           <div>
             <h2 className="text-lg font-bold text-slate-200 capitalize m-0">
-              {activeTab === "news" ? "NLP News Sentiment Hub" : activeTab === "positional" ? "Minervini VCP Positional Model" : activeTab + " view"}
+              {activeTab === "news" ? "NLP News Sentiment Hub" : activeTab === "positional" ? "Minervini VCP Positional Model" : activeTab === "alerts" ? "Alerts & Insights — LLM News Impact" : activeTab + " view"}
             </h2>
           </div>
 
@@ -3981,6 +4072,8 @@ export default function App() {
                 rows={positionalScanResults.filter((s) => s.horizon === "POSITIONAL" || s.horizon === "BOTH" || !s.horizon)}
                 research={positionalResearch}
                 variant="swing"
+                alertBadges={alertBadges}
+                onOpenAlerts={(t) => { setAlertTickerFilter(t); setActiveTab("alerts"); }}
               />
               <p className="text-[11px] text-slate-500 mt-3">
                 Click any row to expand the analyst thesis (positives, risks, guidance, sources). Long-term-only candidates
@@ -4030,7 +4123,206 @@ export default function App() {
                 rows={positionalScanResults.filter((s) => s.horizon === "LONG_TERM" || s.horizon === "BOTH")}
                 research={positionalResearch}
                 variant="longterm"
+                alertBadges={alertBadges}
+                onOpenAlerts={(t) => { setAlertTickerFilter(t); setActiveTab("alerts"); }}
               />
+            </div>
+          )}
+
+          {/* ==================== 4.5 ALERTS & INSIGHTS ==================== */}
+          {activeTab === "alerts" && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* TOOLBAR */}
+              <div className="glass-panel p-4 rounded-2xl flex flex-wrap items-center gap-3">
+                {/* Severity chips */}
+                <div className="flex items-center gap-1 font-mono text-[10px] bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+                  {(["all","critical","watch","info"] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setAlertSeverityFilter(s)}
+                      className={`px-2.5 py-1 rounded cursor-pointer uppercase ${
+                        alertSeverityFilter === s
+                          ? (s === "critical" ? "bg-rose-500/20 text-rose-300 font-bold"
+                            : s === "watch" ? "bg-amber-500/20 text-amber-300 font-bold"
+                            : s === "info" ? "bg-slate-700 text-slate-200 font-bold"
+                            : "bg-indigo-500/20 text-indigo-200 font-bold")
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Scope selector */}
+                <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-1.5 font-mono text-[10px]">
+                  <span className="text-slate-500 mr-2 uppercase">Scope:</span>
+                  <select
+                    value={alertScopeFilter}
+                    onChange={(e) => setAlertScopeFilter(e.target.value)}
+                    className="bg-transparent border-none text-slate-300 focus:outline-none focus:ring-0 cursor-pointer"
+                  >
+                    <option value="BOTH" className="bg-[#0b1021]">All</option>
+                    <option value="HOLDING" className="bg-[#0b1021]">My Holdings</option>
+                    <option value="LT_WATCH" className="bg-[#0b1021]">Long-Term Watch</option>
+                  </select>
+                </div>
+
+                {/* Ticker filter */}
+                <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-1 font-mono text-[10px]">
+                  <span className="text-slate-500 mx-2 uppercase">Ticker:</span>
+                  <input
+                    type="text"
+                    placeholder="any"
+                    value={alertTickerFilter}
+                    onChange={(e) => setAlertTickerFilter(e.target.value.toUpperCase())}
+                    className="bg-transparent border-none text-slate-300 focus:outline-none focus:ring-0 w-28 px-1"
+                  />
+                  {alertTickerFilter && (
+                    <button
+                      onClick={() => setAlertTickerFilter("")}
+                      className="text-slate-500 hover:text-slate-200 px-1 cursor-pointer"
+                      title="Clear ticker filter"
+                    >×</button>
+                  )}
+                </div>
+
+                <div className="flex-1" />
+
+                <button
+                  onClick={async () => {
+                    setAlertSubmitting(true);
+                    try {
+                      await fetch(`${API_BASE}/api/alerts/run`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ force: true, scope: alertScopeFilter }),
+                      });
+                      setSuccessMsg("News-impact analysis triggered. New alerts will appear within a minute.");
+                      setTimeout(() => setAlertReloadKey((k) => k + 1), 4000);
+                    } catch (e) {
+                      setErrorMsg("Failed to trigger analysis.");
+                    } finally {
+                      setAlertSubmitting(false);
+                    }
+                  }}
+                  disabled={alertSubmitting}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-semibold cursor-pointer flex items-center gap-1.5 bg-indigo-500/10 text-indigo-200 border border-indigo-500/40 hover:bg-indigo-500/20 disabled:opacity-50"
+                >
+                  <RefreshCw size={11} className={alertSubmitting ? "animate-spin" : ""} />
+                  {alertSubmitting ? "Triggering…" : "Run analysis now"}
+                </button>
+              </div>
+
+              {/* FEED */}
+              {alerts.length === 0 ? (
+                <div className="glass-panel p-10 rounded-2xl text-center text-slate-500 text-sm">
+                  No alerts in this view yet. Run an analysis or wait for the scheduler.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {alerts.map((a) => {
+                    const open = alertExpanded.has(a.id);
+                    const sevStyles =
+                      a.severity === "critical"
+                        ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
+                        : a.severity === "watch"
+                        ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                        : "bg-slate-800 text-slate-300 border-slate-700";
+                    const actStyles =
+                      a.recommended_action === "REVIEW_EXIT"
+                        ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
+                        : a.recommended_action === "WATCH"
+                        ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                        : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30";
+                    const linkStyles =
+                      a.linkage === "DIRECT"
+                        ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
+                        : a.linkage === "SECTOR"
+                        ? "bg-sky-500/10 text-sky-300 border-sky-500/30"
+                        : "bg-purple-500/10 text-purple-300 border-purple-500/30";
+                    return (
+                      <div
+                        key={a.id}
+                        className="glass-panel p-4 rounded-2xl cursor-pointer hover:bg-slate-900/30 transition-colors"
+                        onClick={() => {
+                          setAlertExpanded((prev) => {
+                            const n = new Set(prev);
+                            n.has(a.id) ? n.delete(a.id) : n.add(a.id);
+                            return n;
+                          });
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-bold text-slate-100 font-mono">{a.ticker}</span>
+                            {a.sector && (
+                              <span className="text-[10px] text-slate-500 font-mono">· {a.sector}</span>
+                            )}
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${sevStyles}`}>
+                              {a.severity}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${actStyles}`}>
+                              {a.recommended_action}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-mono border ${linkStyles}`}>
+                              {a.linkage_label}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              {a.scope === "HOLDING" ? "· Holding" : "· LT Watch"}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono">{a.created_at_ist} · {open ? "▾" : "▸"}</div>
+                        </div>
+                        <p className="text-xs text-slate-300 mt-2 leading-relaxed">{a.impact_summary}</p>
+                        {open && (
+                          <div className="mt-3 pt-3 border-t border-slate-800 space-y-3" onClick={(e) => e.stopPropagation()}>
+                            {a.cluster_topic && (
+                              <div className="text-[10px] text-slate-500 font-mono">
+                                Topic: <span className="text-slate-300">{a.cluster_topic}</span>
+                              </div>
+                            )}
+                            {a.reasons && a.reasons.length > 0 && (
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wider text-indigo-300 mb-1 font-bold">Reasons</div>
+                                <ul className="text-[11px] text-slate-300 space-y-1 list-disc pl-4">
+                                  {a.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                                </ul>
+                              </div>
+                            )}
+                            {a.citations && a.citations.length > 0 && (
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wider text-indigo-300 mb-1 font-bold">Citations</div>
+                                <ul className="text-[11px] space-y-1.5">
+                                  {a.citations.map((c) => (
+                                    <li key={c.news_id}>
+                                      <a
+                                        href={c.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-indigo-300 hover:underline"
+                                      >{c.title}</a>
+                                      <span className="text-[10px] text-slate-500 font-mono ml-2">
+                                        {c.source} · {c.ts_ist || c.ts}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+                              {a.confidence !== null && <span>Confidence: {(a.confidence * 100).toFixed(0)}%</span>}
+                              {a.model && <span>· Model: {a.model}</span>}
+                              {a.window_hours && <span>· Window: {a.window_hours}h</span>}
+                              {a.delivered_telegram && <span>· 📤 Telegram sent</span>}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

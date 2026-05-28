@@ -1952,6 +1952,95 @@ def test_telegram_connection():
         raise HTTPException(status_code=500, detail=str(e))
 
 # -------------------------------------------------------------
+# ALERTS & INSIGHTS ENDPOINTS — LLM news-impact + sector linkage
+# -------------------------------------------------------------
+def _run_news_impact_task(force: bool, scope: str):
+    """BackgroundTask wrapper for /api/alerts/run. Mirrors run_research_refresh_task."""
+    try:
+        from news_impact.pipeline import run_for_all
+        result = run_for_all(force=bool(force), triggered_by="manual_api")
+        log.info("[api] /api/alerts/run completed: %s", result)
+    except Exception as e:
+        log.error("[api] /api/alerts/run failed: %s", e)
+
+
+@app.get("/api/alerts/feed")
+def alerts_feed(
+    severity: Optional[str] = Query(None),  # CSV: critical,watch,info
+    scope: str = Query("BOTH"),             # HOLDING | LT_WATCH | BOTH
+    ticker: Optional[str] = Query(None),
+    hours: int = Query(72),
+    limit: int = Query(100),
+):
+    """Filtered feed of news-impact alerts."""
+    try:
+        from news_impact.store import feed_query
+        sev_list = None
+        if severity:
+            sev_list = [s.strip().lower() for s in severity.split(",") if s.strip()]
+        alerts = feed_query(severity=sev_list, scope=scope, ticker=ticker,
+                            hours=int(hours), limit=int(limit))
+        # IST-format the created_at + citation timestamps for the UI.
+        for a in alerts:
+            a["created_at_ist"] = to_ist_str(a.get("created_at"))
+            for c in (a.get("citations") or []):
+                c["ts_ist"] = to_ist_str(c.get("ts"))
+        return alerts
+    except Exception as e:
+        log.error("Error in alerts_feed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alerts/badges")
+def alerts_badges(hours: int = Query(72)):
+    """Map of ticker -> open alert count, for sidebar + table badges."""
+    try:
+        from news_impact.store import badges_query
+        return badges_query(hours=int(hours))
+    except Exception as e:
+        log.error("Error in alerts_badges: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alerts/{alert_id}")
+def alert_detail(alert_id: int):
+    """Full single alert by id."""
+    try:
+        from news_impact.store import fetch_alert
+        a = fetch_alert(alert_id)
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
+        a["created_at_ist"] = to_ist_str(a.get("created_at"))
+        for c in (a.get("citations") or []):
+            c["ts_ist"] = to_ist_str(c.get("ts"))
+        return a
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Error in alert_detail: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AlertsRunInput(BaseModel):
+    force: Optional[bool] = True
+    scope: Optional[str] = "BOTH"
+
+
+@app.post("/api/alerts/run")
+def alerts_run(background_tasks: BackgroundTasks, body: Optional[AlertsRunInput] = None):
+    """Manually trigger the news-impact LLM pass. Returns immediately; the
+    heavy work runs in a background task."""
+    try:
+        force = True if (body is None or body.force is None) else bool(body.force)
+        scope = "BOTH" if body is None or not body.scope else body.scope
+        background_tasks.add_task(_run_news_impact_task, force, scope)
+        return {"success": True, "message": "Analysis triggered in background"}
+    except Exception as e:
+        log.error("Error in alerts_run: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------
 # FRONTEND STATIC ASSETS MOUNT
 # -------------------------------------------------------------
 FRONTEND_DIST = ROOT / "frontend" / "dist"
