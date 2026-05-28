@@ -1033,62 +1033,145 @@ def get_fundamentals_detail(ticker: str, refresh: bool = Query(False)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-_PRICE_HISTORY_PERIODS = {
-    # period code -> (days_to_fetch, target_point_cap)
-    "1M":  (35,      0),
-    "6M":  (190,     0),
-    "1Y":  (380,     0),
-    "3Y":  (3 * 380, 400),
-    "5Y":  (5 * 380, 500),
-    "10Y": (10 * 380, 600),
-    "Max": (12 * 380, 800),
+# Dedicated cache for the Fundamentals price chart. The trading-engine
+# parquet cache in data.fetcher holds only a year-ish at a time (whatever
+# the most recent strategy fetch needed), so reusing it silently capped
+# this endpoint's window - that's why "5Y" only showed ~17 months. This
+# cache holds the FULL daily history we get from yfinance period="max"
+# and is refreshed every 6 hours.
+_PH_CACHE_DIR = Path(ROOT) / "cache" / "price_history_fundamentals"
+_PH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_PH_CACHE_TTL_HOURS = 6
+
+
+def _ph_full_history(ticker: str) -> "pd.DataFrame":
+    """Fetch (or read from cache) the maximum available daily OHLCV for one
+    ticker. Returns an empty DataFrame on any failure."""
+    import time as _time
+    from data.universe import to_yf_ticker
+    yf_t = to_yf_ticker(ticker) if not ticker.endswith((".NS", ".BO")) else ticker
+    cache_path = _PH_CACHE_DIR / f"{yf_t.replace('/', '_')}.parquet"
+
+    if cache_path.exists():
+        age_h = (_time.time() - cache_path.stat().st_mtime) / 3600.0
+        if age_h < _PH_CACHE_TTL_HOURS:
+            try:
+                return pd.read_parquet(cache_path)
+            except Exception as e:
+                log.debug("price-history cache read failed for %s: %s", yf_t, e)
+
+    import yfinance as yf
+    try:
+        df = yf.download(
+            yf_t, period="max", interval="1d",
+            progress=False, auto_adjust=False, threads=False,
+        )
+    except Exception as e:
+        log.warning("price-history fetch failed for %s: %s", yf_t, e)
+        return pd.DataFrame()
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # yfinance returns a MultiIndex when called with a single ticker - flatten.
+    if hasattr(df.columns, "levels"):
+        try:
+            if any(yf_t in str(col) for col in df.columns.get_level_values(0)):
+                df = df[yf_t]
+            else:
+                df.columns = df.columns.get_level_values(0)
+        except Exception:
+            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+
+    keep = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+    df = df[keep].copy()
+    df.dropna(inplace=True)
+
+    try:
+        df.to_parquet(cache_path)
+    except Exception as e:
+        log.debug("price-history cache write failed for %s: %s", yf_t, e)
+
+    return df
+
+
+# Display window per period. ``None`` means "show everything in cache".
+_PH_PERIOD_DAYS = {
+    "1M":  30,
+    "6M":  183,
+    "1Y":  365,
+    "3Y":  3 * 365,
+    "5Y":  5 * 365,
+    "10Y": 10 * 365,
+    "Max": None,
 }
+# Periods that should be displayed at weekly granularity.
+_PH_WEEKLY_PERIODS = {"3Y", "5Y", "10Y", "Max"}
 
 
 @app.get("/api/fundamentals/price-history/{ticker}")
 def get_fundamentals_price_history(
     ticker: str,
     period: str = Query("5Y"),
-    years: int = Query(0),  # back-compat
+    years: int = Query(0),  # legacy back-compat
 ):
-    """Daily price + volume series for the Fundamentals detail chart.
+    """Daily/weekly Close + Volume + 50/200 DMA for the Fundamentals chart.
 
-    ``period`` accepts ``1M | 6M | 1Y | 3Y | 5Y | 10Y | Max``. For long
-    windows we stride-thin the series while keeping the **real** trading-day
-    timestamps - we used to ``resample("W").last()`` which silently relabeled
-    each row to the upcoming Sunday and made today's chart look like next
-    week's data. Reuses the cached candle fetcher so repeated views are free.
+    Behaviour:
+      * Always reads the *maximum* available daily history (cached per
+        ticker), so changing timeframe in the UI actually shows the
+        requested window instead of being capped by whatever the trading
+        engine had previously cached.
+      * 50/200 DMA are computed on the FULL history before slicing, so the
+        moving-average lines have proper warmup even when the displayed
+        window is shorter than 200 trading days.
+      * 1M / 6M / 1Y render at daily resolution. 3Y / 5Y / 10Y / Max
+        render at weekly resolution. Weekly rows keep the **real** last
+        trading day timestamp in each week (we groupby ISO week and pick
+        the tail row); we avoid resample("W").last() because that snaps
+        each row's label to week-ending-Sunday and produced future-dated
+        ticks (the bug from the previous iteration).
     """
     try:
-        from data.fetcher import fetch_candles
         tk = _bare(ticker)
-
-        # Resolve window. The legacy ``years`` query param still works so
-        # existing callers don't break; explicit ``period`` overrides it.
         period = (period or "5Y").upper()
-        if period not in _PRICE_HISTORY_PERIODS:
+        if period not in _PH_PERIOD_DAYS:
             period = "5Y"
         if years > 0 and period == "5Y":
-            # Honour legacy years= param if a non-default value was sent.
-            days_to_fetch = max(30, int(years) * 380)
-            target_cap = 500 if years > 2 else 0
-        else:
-            days_to_fetch, target_cap = _PRICE_HISTORY_PERIODS[period]
+            # Honour the legacy ?years=N query for any pre-existing callers.
+            period = "Max" if years >= 10 else f"{int(years)}Y"
+            if period not in _PH_PERIOD_DAYS:
+                period = "5Y"
 
-        df = fetch_candles(tk, interval="1d", days=days_to_fetch)
-        if df.empty:
-            return {"ticker": tk, "period": period, "years": years, "series": []}
+        full = _ph_full_history(tk)
+        if full.empty or "Close" not in full.columns:
+            return {"ticker": tk, "period": period, "series": []}
 
-        # Stride-thin instead of resampling - preserves real trading-day
-        # timestamps. Without this, ``resample("W").last()`` snapped every
-        # row's label to the following Sunday, which on a Wed view rendered
-        # as "Sun 2026-05-31" even though the close was Wed's value.
-        if target_cap and len(df) > target_cap:
-            stride = max(1, len(df) // target_cap)
-            df = df.iloc[::stride]
+        # Compute the moving averages on the entire history so the displayed
+        # window always carries valid SMA values from its first day.
+        full = full.copy()
+        full["sma50"]  = full["Close"].rolling(50,  min_periods=50).mean()
+        full["sma200"] = full["Close"].rolling(200, min_periods=200).mean()
+
+        # Slice to the requested display window.
+        days_back = _PH_PERIOD_DAYS[period]
+        if days_back is not None and len(full) > 0:
+            cutoff = full.index.max() - pd.Timedelta(days=days_back)
+            full = full[full.index >= cutoff]
+
+        # Down-sample to weekly for long windows. Group by ISO week ending
+        # Friday and take the last row - that keeps the actual trading-day
+        # timestamp (Wed/Thu/Fri depending on holidays) rather than relabeling
+        # to Sunday.
+        if period in _PH_WEEKLY_PERIODS and len(full) > 0:
+            try:
+                week_id = full.index.to_period("W-FRI")
+                full = full.assign(_w=week_id).groupby("_w").tail(1).drop(columns="_w")
+            except Exception as e:
+                log.debug("weekly resample failed for %s: %s", tk, e)
 
         series = []
-        for ts, row in df.iterrows():
+        for ts, row in full.iterrows():
             try:
                 close = float(row["Close"])
             except Exception:
@@ -1096,16 +1179,24 @@ def get_fundamentals_price_history(
             if np.isnan(close) or np.isinf(close):
                 continue
             try:
-                vol = float(row["Volume"])
-                volume = 0 if np.isnan(vol) or np.isinf(vol) else int(vol)
+                vol = float(row.get("Volume", 0))
+                volume = 0 if (np.isnan(vol) or np.isinf(vol)) else int(vol)
             except Exception:
                 volume = 0
-            series.append({
+            entry: Dict[str, Any] = {
                 "ts": ts.date().isoformat() if hasattr(ts, "date") else str(ts)[:10],
                 "close": round(close, 2),
                 "volume": volume,
-            })
-        return {"ticker": tk, "period": period, "years": years, "series": series}
+            }
+            sma50 = row.get("sma50")
+            sma200 = row.get("sma200")
+            if sma50 is not None and not (isinstance(sma50, float) and (np.isnan(sma50) or np.isinf(sma50))):
+                entry["sma50"] = round(float(sma50), 2)
+            if sma200 is not None and not (isinstance(sma200, float) and (np.isnan(sma200) or np.isinf(sma200))):
+                entry["sma200"] = round(float(sma200), 2)
+            series.append(entry)
+
+        return {"ticker": tk, "period": period, "series": series}
     except Exception as e:
         log.error("Error in get_fundamentals_price_history(%s): %s", ticker, e)
         raise HTTPException(status_code=500, detail=str(e))

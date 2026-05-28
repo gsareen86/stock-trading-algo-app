@@ -327,7 +327,7 @@ interface FundamentalsDetail {
   announcements: string[];
 }
 
-interface PriceHistoryPoint { ts: string; close: number; volume?: number; }
+interface PriceHistoryPoint { ts: string; close: number; volume?: number; sma50?: number; sma200?: number; }
 interface FundamentalsPriceHistory {
   ticker: string;
   period?: string;
@@ -901,29 +901,16 @@ const yearEndClose = (series: PriceHistoryPoint[], year: number): number | null 
 
 const TIMEFRAMES: Timeframe[] = ["1M", "6M", "1Y", "3Y", "5Y", "10Y", "Max"];
 
-// Translate the user-visible timeframe into a "max years of fundamentals
-// data to show". For yearly / quarterly panels we just trim the trailing
-// rows so the user is comparing the same horizon across all chart families.
-const yearsCapFor = (tf: Timeframe): number => {
-  switch (tf) {
-    case "1M": case "6M": case "1Y": return 2;   // last 2 yrs of fundamentals
-    case "3Y":  return 3;
-    case "5Y":  return 5;
-    case "10Y": return 10;
-    case "Max": return 99;
-  }
-};
-const quartersCapFor = (tf: Timeframe): number => {
-  switch (tf) {
-    case "1M": case "6M": case "1Y": return 4;
-    case "3Y":  return 12;
-    case "5Y":  return 20;
-    case "10Y": return 40;
-    case "Max": return 99;
-  }
-};
-
-interface PriceChartPoint { ts: string; close: number; volume: number; }
+interface PriceChartPoint {
+  ts: string;
+  close: number;
+  volume: number;
+  // SMAs are computed server-side over the full history so the lines have
+  // proper warmup even when the displayed window is shorter than the
+  // moving-average window.
+  sma50?: number;
+  sma200?: number;
+}
 
 const tickAxisStyle = { stroke: "#475569", fontSize: 10 };
 const tooltipContentStyle = { backgroundColor: "#090d1a", borderColor: "#1e293b", color: "#e2e8f0", fontSize: 11 };
@@ -945,35 +932,16 @@ const MORE_CHARTS: { key: ChartType; label: string }[] = [
   { key: "cashflow",  label: "Cash Flow" },
 ];
 
-// Simple-moving-average overlay computed in the browser from the price
-// series. Returns null for the first window-1 points - Recharts skips
-// nulls cleanly so the line just starts later in the chart.
-const withSma = (series: PriceChartPoint[], windows: number[]): (PriceChartPoint & { [k: string]: number | null })[] => {
-  if (!series.length) return [];
-  return series.map((p, i) => {
-    const enriched: any = { ...p };
-    for (const w of windows) {
-      if (i + 1 < w) {
-        enriched[`sma${w}`] = null;
-      } else {
-        let sum = 0;
-        for (let j = i - w + 1; j <= i; j++) sum += series[j].close;
-        enriched[`sma${w}`] = +(sum / w).toFixed(2);
-      }
-    }
-    return enriched;
-  });
-};
-
 const FundamentalsChartGrid: React.FC<{
   detail: FundamentalsDetail;
   priceSeries: PriceChartPoint[];
   timeframe: Timeframe;
   topRatios: FundamentalsDetail["top_ratios"];
 }> = ({ detail, priceSeries, timeframe, topRatios }) => {
-  const yearsCap = yearsCapFor(timeframe);
-  const quartersCap = quartersCapFor(timeframe);
-
+  // The timeframe selector controls the Price chart's window + resolution
+  // (handled server-side). The yearly/quarterly fundamentals charts always
+  // render the maximum data Screener.in returned - matches Screener's own
+  // behaviour where the time selector only repaints the price-driven chart.
   const [chartType, setChartType] = useState<ChartType>("price");
   const [moreOpen, setMoreOpen] = useState(false);
   // Price-view-only toggles
@@ -995,10 +963,10 @@ const FundamentalsChartGrid: React.FC<{
   // ---------- Yearly P&L (Revenue / OP / Net Profit + EPS) ----------
   const pl = detail.profit_loss;
   const plRows = (() => {
-    const rev = seriesAsc(pl.revenue, yearsCap);
-    const op  = seriesAsc(pl.operating_profit, yearsCap);
-    const np  = seriesAsc(pl.net_profit, yearsCap);
-    const eps = seriesAsc(pl.eps, yearsCap);
+    const rev = seriesAsc(pl.revenue);
+    const op  = seriesAsc(pl.operating_profit);
+    const np  = seriesAsc(pl.net_profit);
+    const eps = seriesAsc(pl.eps);
     const byPeriod = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
     const opP = byPeriod(op), npP = byPeriod(np), epsP = byPeriod(eps);
     const periods = rev.length ? rev.map((r) => r.period) : op.map((r) => r.period);
@@ -1014,9 +982,9 @@ const FundamentalsChartGrid: React.FC<{
 
   // ---------- Yearly Margins / Returns (ROE/ROCE/OPM) ----------
   const ratiosRows = (() => {
-    const roe  = seriesAsc(detail.ratios.roe,  yearsCap);
-    const roce = seriesAsc(detail.ratios.roce, yearsCap);
-    const opm  = seriesAsc(detail.ratios.opm,  yearsCap);
+    const roe  = seriesAsc(detail.ratios.roe);
+    const roce = seriesAsc(detail.ratios.roce);
+    const opm  = seriesAsc(detail.ratios.opm);
     const periods = roe.length ? roe.map((r) => r.period)
                    : (roce.length ? roce.map((r) => r.period) : opm.map((r) => r.period));
     const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
@@ -1026,9 +994,9 @@ const FundamentalsChartGrid: React.FC<{
 
   // ---------- Quarterly Sales + OPM% + NPM% ----------
   const quarterlyRows = (() => {
-    const rev = seriesAsc(detail.quarterly_results.revenue, quartersCap);
-    const np  = seriesAsc(detail.quarterly_results.net_profit, quartersCap);
-    const opm = seriesAsc(detail.quarterly_results.opm, quartersCap);
+    const rev = seriesAsc(detail.quarterly_results.revenue);
+    const np  = seriesAsc(detail.quarterly_results.net_profit);
+    const opm = seriesAsc(detail.quarterly_results.opm);
     const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
     const npM = m(np), opmM = m(opm);
     return rev.map((r) => {
@@ -1040,9 +1008,9 @@ const FundamentalsChartGrid: React.FC<{
 
   // ---------- Cash Flow (Yearly) ----------
   const cashFlowRows = (() => {
-    const cfo = seriesAsc(detail.cash_flow.cfo, yearsCap);
-    const cfi = seriesAsc(detail.cash_flow.cfi, yearsCap);
-    const cff = seriesAsc(detail.cash_flow.cff, yearsCap);
+    const cfo = seriesAsc(detail.cash_flow.cfo);
+    const cfi = seriesAsc(detail.cash_flow.cfi);
+    const cff = seriesAsc(detail.cash_flow.cff);
     const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
     const periods = cfo.length ? cfo.map((r) => r.period)
                    : (cfi.length ? cfi.map((r) => r.period) : cff.map((r) => r.period));
@@ -1053,11 +1021,11 @@ const FundamentalsChartGrid: React.FC<{
   // ---------- Yearly Valuation proxies ----------
   // Same approximations as before — see the panel hints for caveats.
   const valuationRows = (() => {
-    const epsArr   = seriesAsc(pl.eps, yearsCap);
-    const revArr   = seriesAsc(pl.revenue, yearsCap);
-    const opArr    = seriesAsc(pl.operating_profit, yearsCap);
-    const depArr   = seriesAsc(pl.depreciation || [], yearsCap);
-    const borrowArr= seriesAsc(detail.balance_sheet.borrowings, yearsCap);
+    const epsArr   = seriesAsc(pl.eps);
+    const revArr   = seriesAsc(pl.revenue);
+    const opArr    = seriesAsc(pl.operating_profit);
+    const depArr   = seriesAsc(pl.depreciation || []);
+    const borrowArr= seriesAsc(detail.balance_sheet.borrowings);
     const bookValue = topRatios.book_value || null;
     const mcapNowCr = topRatios.market_cap_cr || null;
     const nowPrice = priceSeries.length ? priceSeries[priceSeries.length - 1].close : null;
@@ -1090,10 +1058,6 @@ const FundamentalsChartGrid: React.FC<{
     }>;
   })();
 
-  const priceSeriesEnriched = (chartType === "price" && (showSma50 || showSma200))
-    ? withSma(priceSeries, [50, 200])
-    : priceSeries;
-
   const currentLabel = (() => {
     const all = [...PRIMARY_CHARTS, ...MORE_CHARTS];
     return all.find((c) => c.key === chartType)?.label || "Chart";
@@ -1108,7 +1072,7 @@ const FundamentalsChartGrid: React.FC<{
       case "price": {
         if (!priceSeries.length) return "No price data available.";
         return (
-          <ComposedChart data={priceSeriesEnriched} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+          <ComposedChart data={priceSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <defs>
               <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#818cf8" stopOpacity={0.4} />
@@ -1141,8 +1105,8 @@ const FundamentalsChartGrid: React.FC<{
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar  yAxisId="R" dataKey="eps" fill="#f59e0b" name="EPS (₹)" />
             <Line yAxisId="L" type="monotone" dataKey="pe"  stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} name="P/E" />
-            <Line yAxisId="R" type="monotone" dataKey="eps" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="EPS (₹)" />
           </ComposedChart>
         );
       }
@@ -1172,8 +1136,8 @@ const FundamentalsChartGrid: React.FC<{
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar  yAxisId="R" dataKey="bookValue" fill="#f59e0b" name="Book Value (₹)" />
             <Line yAxisId="L" type="monotone" dataKey="pbv"       stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="P/BV" />
-            <Line yAxisId="R" type="monotone" dataKey="bookValue" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="Book Value (₹)" />
           </ComposedChart>
         );
       }
@@ -1187,8 +1151,8 @@ const FundamentalsChartGrid: React.FC<{
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar  yAxisId="R" dataKey="ebitda"   fill="#0ea5e9" name="EBITDA (₹ Cr)" />
             <Line yAxisId="L" type="monotone" dataKey="evEbitda" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} name="EV/EBITDA" />
-            <Line yAxisId="R" type="monotone" dataKey="ebitda"   stroke="#0ea5e9" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="EBITDA (₹ Cr)" />
           </ComposedChart>
         );
       }
@@ -1202,8 +1166,8 @@ const FundamentalsChartGrid: React.FC<{
             <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
             <Tooltip contentStyle={tooltipContentStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar  yAxisId="R" dataKey="sales"     fill="#f59e0b" name="Sales (₹ Cr)" />
             <Line yAxisId="L" type="monotone" dataKey="mcapSales" stroke="#0ea5e9" strokeWidth={2} dot={{ r: 2 }} name="MCap / Sales" />
-            <Line yAxisId="R" type="monotone" dataKey="sales"     stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="Sales (₹ Cr)" />
           </ComposedChart>
         );
       }
@@ -1258,7 +1222,7 @@ const FundamentalsChartGrid: React.FC<{
   };
 
   const chartHints: Record<ChartType, string> = {
-    price:       "Daily Close from yfinance with optional 50/200 DMA overlays and Volume bars on the secondary axis.",
+    price:       "1M / 6M / 1Y at daily resolution; 3Y / 5Y / 10Y / Max at weekly resolution. 50/200 DMA are computed on the full price history so they have correct warmup at any window.",
     pe:          "Year-end Price / Yearly EPS. Daily P/E would need TTM-EPS at every date; this is a yearly proxy.",
     salesmargin: "Quarterly Sales (₹ Cr) with OPM% from Screener and NPM% computed as Net Profit / Revenue. GPM% not derivable from current scrape.",
     pbv:         "Year-end Price / latest Book Value per share. Historical per-share BV isn't published by Screener so older years use the latest BV as divisor.",
@@ -1413,10 +1377,12 @@ const FundamentalsDetailPanel: React.FC<{
     { label: "Face Value",     value: tr.face_value !== null ? `₹${tr.face_value}` : "—" },
   ];
 
-  const priceSeries = (priceHistory?.series || []).map((p) => ({
+  const priceSeries: PriceChartPoint[] = (priceHistory?.series || []).map((p) => ({
     ts: p.ts.slice(0, 10),
     close: p.close,
     volume: p.volume ?? 0,
+    sma50:  p.sma50,
+    sma200: p.sma200,
   }));
 
   return (
