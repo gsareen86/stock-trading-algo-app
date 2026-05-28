@@ -413,6 +413,42 @@ CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_tick     ON pos_scans(ticker);
 CREATE INDEX IF NOT EXISTS idx_pos_positions_stat ON pos_positions(status);
 CREATE INDEX IF NOT EXISTS idx_pos_trades_ts      ON pos_trades(ts);
+
+-- ── Alerts & Insights (LLM news-impact + sector linkage) ─────────────────────
+
+CREATE TABLE IF NOT EXISTS news_impact_alerts (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at          TEXT NOT NULL,
+    ticker              TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    sector              TEXT,
+    severity            TEXT NOT NULL,
+    recommended_action  TEXT NOT NULL,
+    linkage             TEXT NOT NULL,
+    linkage_sector      TEXT,
+    impact_summary      TEXT NOT NULL,
+    content_hash        TEXT NOT NULL,
+    superseded_by       INTEGER REFERENCES news_impact_alerts(id),
+    delivered_telegram  INTEGER DEFAULT 0,
+    model               TEXT,
+    meta                TEXT
+);
+
+CREATE TABLE IF NOT EXISTS news_sector_tags (
+    news_id            INTEGER PRIMARY KEY REFERENCES news(id),
+    tagged_at          TEXT NOT NULL,
+    primary_sector     TEXT,
+    ancillary_sectors  TEXT,
+    why_note           TEXT,
+    model              TEXT,
+    confidence         REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_created  ON news_impact_alerts(created_at);
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_ticker   ON news_impact_alerts(ticker);
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_severity ON news_impact_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_news_sector_tags_primary    ON news_sector_tags(primary_sector);
+CREATE INDEX IF NOT EXISTS idx_news_sector_tags_tagged_at  ON news_sector_tags(tagged_at);
 """
 
 # Postgres schema. We keep ts columns as TEXT (ISO strings) to match the
@@ -766,6 +802,42 @@ CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_tick     ON pos_scans(ticker);
 CREATE INDEX IF NOT EXISTS idx_pos_positions_stat ON pos_positions(status);
 CREATE INDEX IF NOT EXISTS idx_pos_trades_ts      ON pos_trades(ts);
+
+-- ── Alerts & Insights (LLM news-impact + sector linkage) ─────────────────────
+
+CREATE TABLE IF NOT EXISTS news_impact_alerts (
+    id                  BIGSERIAL PRIMARY KEY,
+    created_at          TEXT NOT NULL,
+    ticker              TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    sector              TEXT,
+    severity            TEXT NOT NULL,
+    recommended_action  TEXT NOT NULL,
+    linkage             TEXT NOT NULL,
+    linkage_sector      TEXT,
+    impact_summary      TEXT NOT NULL,
+    content_hash        TEXT NOT NULL,
+    superseded_by       BIGINT REFERENCES news_impact_alerts(id),
+    delivered_telegram  INTEGER DEFAULT 0,
+    model               TEXT,
+    meta                JSONB
+);
+
+CREATE TABLE IF NOT EXISTS news_sector_tags (
+    news_id            BIGINT PRIMARY KEY REFERENCES news(id),
+    tagged_at          TEXT NOT NULL,
+    primary_sector     TEXT,
+    ancillary_sectors  JSONB,
+    why_note           TEXT,
+    model              TEXT,
+    confidence         DOUBLE PRECISION
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_created  ON news_impact_alerts(created_at);
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_ticker   ON news_impact_alerts(ticker);
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_severity ON news_impact_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_news_sector_tags_primary    ON news_sector_tags(primary_sector);
+CREATE INDEX IF NOT EXISTS idx_news_sector_tags_tagged_at  ON news_sector_tags(tagged_at);
 """
 
 
