@@ -1067,11 +1067,26 @@ def get_positional_status():
         # Get active positions cash value and bot control params
         with get_conn() as conn:
             open_pos = conn.execute("SELECT * FROM pos_positions WHERE status = 'OPEN'").fetchall()
-            cash_row = conn.execute("SELECT sum(pnl) as net_realized FROM pos_positions WHERE status = 'CLOSED'").fetchone()
+            closed_pnl_rows = conn.execute(
+                "SELECT pnl FROM pos_positions WHERE status = 'CLOSED' AND pnl IS NOT NULL"
+            ).fetchall()
             control_row = conn.execute("SELECT * FROM bot_control WHERE id = 1").fetchone()
-        
-        net_realized = float(cash_row["net_realized"] or 0.0) if cash_row else 0.0
-        active_holdings_cost = sum(float(p["quantity"]) * float(p["entry_price"]) for p in open_pos)
+
+        # Filter out NaN pnl rows defensively — a single corrupted close (e.g.
+        # a failed swap that stored NaN exit_price/pnl) would otherwise poison
+        # SUM(pnl) and propagate NaN through every downstream field, breaking
+        # the response with "Out of range float values are not JSON compliant".
+        import math
+        net_realized = sum(
+            float(r["pnl"]) for r in closed_pnl_rows
+            if r["pnl"] is not None and math.isfinite(float(r["pnl"]))
+        )
+        active_holdings_cost = 0.0
+        for p in open_pos:
+            q = float(p["quantity"]) if p["quantity"] is not None else 0.0
+            ep = float(p["entry_price"]) if p["entry_price"] is not None else 0.0
+            if math.isfinite(q) and math.isfinite(ep):
+                active_holdings_cost += q * ep
         
         # Current active cash pool
         current_cash = POSITIONAL_CAPITAL + net_realized - active_holdings_cost
