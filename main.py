@@ -82,15 +82,21 @@ def main():
 
     init_db()
     initialize_if_empty()
-    # Auto-start: if market is currently open, set RUNNING immediately so the
-    # bot doesn't sit idle requiring a manual click. If market is closed, keep
-    # STOPPED — the run_forever loop will pick up automatically once open.
-    from data.fetcher import market_is_open as _market_is_open
+    # Auto-arm at startup: on any trading day (Mon-Fri, not an NSE holiday) set
+    # the bot RUNNING so it actually trades when the market opens. run_cycle()
+    # short-circuits on market_is_open(), so RUNNING outside market hours is
+    # harmless — it just idles. Previously this only armed if market was open
+    # AT BOOT, which left the bot STOPPED for the whole day after a pre-market
+    # restart (run_forever doesn't auto-flip status). On weekends/holidays,
+    # keep STOPPED. The user can still HALT manually via the UI any time.
+    from data.fetcher import is_nse_holiday
     from datetime import datetime as _dt
     from config import IST as _IST
-    _auto_status = "RUNNING" if _market_is_open(_dt.now(_IST)) else "STOPPED"
+    _now = _dt.now(_IST)
+    _is_trading_day = _now.weekday() < 5 and not is_nse_holiday(_now)
+    _auto_status = "RUNNING" if _is_trading_day else "STOPPED"
     set_bot_state(status=_auto_status, mode=DEFAULT_MODE)
-    print(f"[startup] Market {'OPEN' if _auto_status == 'RUNNING' else 'CLOSED'}"
+    print(f"[startup] {'Trading day' if _is_trading_day else 'Non-trading day'}"
           f" — bot status set to {_auto_status}, mode={DEFAULT_MODE}", flush=True)
 
     # Pre-warm FinBERT in a background thread so the first news-scrape cycle

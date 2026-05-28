@@ -480,7 +480,17 @@ def run_opportunity_swaps(open_positions: list[dict], buy_candidates: list[dict]
         if df is None or df.empty:
             log.warning("[pos_runner] Swap check: could not fetch daily df for %s", ticker)
             continue
-        current_price = float(df["Close"].iloc[-1])
+        last_close = float(df["Close"].iloc[-1])
+        # Guard against NaN closes (yfinance can return an incomplete/empty
+        # latest bar). Without this, NaN cascades through pnl_pct → fill price
+        # → close_position and ultimately blows up the swap with
+        # "cannot convert float NaN to integer".
+        if last_close != last_close or entry_price <= 0:
+            log.warning("[pos_runner] Swap check: invalid last close for %s "
+                        "(close=%r entry=%r) — skipping",
+                        ticker, last_close, entry_price)
+            continue
+        current_price = last_close
         pnl_pct = ((current_price - entry_price) / entry_price) * 100
 
         if days_held < POSITIONAL_SWAP_MIN_HOLD_DAYS:
