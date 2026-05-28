@@ -985,6 +985,8 @@ def get_fundamentals_detail(ticker: str, refresh: bool = Query(False)):
                 "operating_profit": _scrub_series(parsed.get("operating_profit_yearly")),
                 "net_profit":       _scrub_series(parsed.get("net_profit_yearly")),
                 "eps":              _scrub_series(parsed.get("eps_yearly")),
+                "interest":         _scrub_series(parsed.get("interest_yearly")),
+                "depreciation":     _scrub_series(parsed.get("depreciation_yearly")),
             },
             "balance_sheet": {
                 "equity_capital":   _scrub_series(parsed.get("equity_capital_yearly")),
@@ -1031,25 +1033,59 @@ def get_fundamentals_detail(ticker: str, refresh: bool = Query(False)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/fundamentals/price-history/{ticker}")
-def get_fundamentals_price_history(ticker: str, years: int = Query(5)):
-    """Multi-year daily price series for the Fundamentals detail chart.
+_PRICE_HISTORY_PERIODS = {
+    # period code -> (days_to_fetch, target_point_cap)
+    "1M":  (35,      0),
+    "6M":  (190,     0),
+    "1Y":  (380,     0),
+    "3Y":  (3 * 380, 400),
+    "5Y":  (5 * 380, 500),
+    "10Y": (10 * 380, 600),
+    "Max": (12 * 380, 800),
+}
 
-    Reuses the cached candle fetcher (parquet on disk) so repeated views
-    are free. Returns a thinned list of date/close pairs - we down-sample
-    to weekly closes when the requested span exceeds 2 years to keep the
-    payload small for the SVG chart.
+
+@app.get("/api/fundamentals/price-history/{ticker}")
+def get_fundamentals_price_history(
+    ticker: str,
+    period: str = Query("5Y"),
+    years: int = Query(0),  # back-compat
+):
+    """Daily price + volume series for the Fundamentals detail chart.
+
+    ``period`` accepts ``1M | 6M | 1Y | 3Y | 5Y | 10Y | Max``. For long
+    windows we stride-thin the series while keeping the **real** trading-day
+    timestamps - we used to ``resample("W").last()`` which silently relabeled
+    each row to the upcoming Sunday and made today's chart look like next
+    week's data. Reuses the cached candle fetcher so repeated views are free.
     """
     try:
         from data.fetcher import fetch_candles
         tk = _bare(ticker)
-        years = max(1, min(int(years), 10))
-        df = fetch_candles(tk, interval="1d", days=365 * years)
-        if df.empty:
-            return {"ticker": tk, "years": years, "series": []}
 
-        if years > 2:
-            df = df.resample("W").last().dropna()
+        # Resolve window. The legacy ``years`` query param still works so
+        # existing callers don't break; explicit ``period`` overrides it.
+        period = (period or "5Y").upper()
+        if period not in _PRICE_HISTORY_PERIODS:
+            period = "5Y"
+        if years > 0 and period == "5Y":
+            # Honour legacy years= param if a non-default value was sent.
+            days_to_fetch = max(30, int(years) * 380)
+            target_cap = 500 if years > 2 else 0
+        else:
+            days_to_fetch, target_cap = _PRICE_HISTORY_PERIODS[period]
+
+        df = fetch_candles(tk, interval="1d", days=days_to_fetch)
+        if df.empty:
+            return {"ticker": tk, "period": period, "years": years, "series": []}
+
+        # Stride-thin instead of resampling - preserves real trading-day
+        # timestamps. Without this, ``resample("W").last()`` snapped every
+        # row's label to the following Sunday, which on a Wed view rendered
+        # as "Sun 2026-05-31" even though the close was Wed's value.
+        if target_cap and len(df) > target_cap:
+            stride = max(1, len(df) // target_cap)
+            df = df.iloc[::stride]
 
         series = []
         for ts, row in df.iterrows():
@@ -1059,11 +1095,17 @@ def get_fundamentals_price_history(ticker: str, years: int = Query(5)):
                 continue
             if np.isnan(close) or np.isinf(close):
                 continue
+            try:
+                vol = float(row["Volume"])
+                volume = 0 if np.isnan(vol) or np.isinf(vol) else int(vol)
+            except Exception:
+                volume = 0
             series.append({
-                "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                "ts": ts.date().isoformat() if hasattr(ts, "date") else str(ts)[:10],
                 "close": round(close, 2),
+                "volume": volume,
             })
-        return {"ticker": tk, "years": years, "series": series}
+        return {"ticker": tk, "period": period, "years": years, "series": series}
     except Exception as e:
         log.error("Error in get_fundamentals_price_history(%s): %s", ticker, e)
         raise HTTPException(status_code=500, detail=str(e))

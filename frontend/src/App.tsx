@@ -34,7 +34,10 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
-  Cell
+  Cell,
+  ComposedChart,
+  Line,
+  Legend,
 } from "recharts";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -296,6 +299,8 @@ interface FundamentalsDetail {
     operating_profit: SeriesPoint[];
     net_profit: SeriesPoint[];
     eps: SeriesPoint[];
+    interest?: SeriesPoint[];
+    depreciation?: SeriesPoint[];
   };
   balance_sheet: {
     equity_capital: SeriesPoint[]; reserves: SeriesPoint[];
@@ -322,12 +327,15 @@ interface FundamentalsDetail {
   announcements: string[];
 }
 
-interface PriceHistoryPoint { ts: string; close: number; }
+interface PriceHistoryPoint { ts: string; close: number; volume?: number; }
 interface FundamentalsPriceHistory {
   ticker: string;
-  years: number;
+  period?: string;
+  years?: number;
   series: PriceHistoryPoint[];
 }
+
+type Timeframe = "1M" | "6M" | "1Y" | "3Y" | "5Y" | "10Y" | "Max";
 
 interface FundamentalsPin { ticker: string; added_at: string; notes: string; }
 
@@ -860,13 +868,434 @@ const SeriesTable: React.FC<{
   );
 };
 
+// Reverse a "most-recent-first" series into chronological order and cap it
+// to the most recent N periods (last N entries after the reverse). Used by
+// every yearly / quarterly chart in the detail panel.
+const seriesAsc = (pts: SeriesPoint[] | undefined, cap?: number): SeriesPoint[] => {
+  const arr = [...(pts || [])].reverse();
+  if (cap && arr.length > cap) return arr.slice(arr.length - cap);
+  return arr;
+};
+
+// Year-keys parsed out of a Screener period label like "Mar 2024" or
+// "Dec 2023". We match by 4-digit year.
+const _YEAR_RE_FE = /\b(19|20)\d{2}\b/;
+const yearOf = (period: string | undefined): number | null => {
+  if (!period) return null;
+  const m = _YEAR_RE_FE.exec(period);
+  return m ? parseInt(m[0], 10) : null;
+};
+
+// Pick the closing price closest to (but on or before) Dec 31 of `year` from
+// the price-history series. Returns null if no such observation exists -
+// rapid-IPO companies will have no price in their early reporting years.
+const yearEndClose = (series: PriceHistoryPoint[], year: number): number | null => {
+  let chosen: number | null = null;
+  const cutoff = `${year}-12-31`;
+  for (const p of series) {
+    if (p.ts <= cutoff) chosen = p.close;
+    else break;
+  }
+  return chosen;
+};
+
+const TIMEFRAMES: Timeframe[] = ["1M", "6M", "1Y", "3Y", "5Y", "10Y", "Max"];
+
+// Translate the user-visible timeframe into a "max years of fundamentals
+// data to show". For yearly / quarterly panels we just trim the trailing
+// rows so the user is comparing the same horizon across all chart families.
+const yearsCapFor = (tf: Timeframe): number => {
+  switch (tf) {
+    case "1M": case "6M": case "1Y": return 2;   // last 2 yrs of fundamentals
+    case "3Y":  return 3;
+    case "5Y":  return 5;
+    case "10Y": return 10;
+    case "Max": return 99;
+  }
+};
+const quartersCapFor = (tf: Timeframe): number => {
+  switch (tf) {
+    case "1M": case "6M": case "1Y": return 4;
+    case "3Y":  return 12;
+    case "5Y":  return 20;
+    case "10Y": return 40;
+    case "Max": return 99;
+  }
+};
+
+interface PriceChartPoint { ts: string; close: number; volume: number; }
+
+const tickAxisStyle = { stroke: "#475569", fontSize: 10 };
+const tooltipContentStyle = { backgroundColor: "#090d1a", borderColor: "#1e293b", color: "#e2e8f0", fontSize: 11 };
+
+const ChartCard: React.FC<{
+  title: string;
+  hint?: string;
+  rightLabel?: string;
+  children: React.ReactNode;
+}> = ({ title, hint, rightLabel, children }) => (
+  <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-850">
+    <div className="flex items-center justify-between mb-2">
+      <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300" title={hint || ""}>
+        {title}
+        {hint && <span className="text-slate-500 ml-1">ⓘ</span>}
+      </h4>
+      {rightLabel && <span className="text-[10px] text-slate-500 font-mono">{rightLabel}</span>}
+    </div>
+    <div className="h-56 font-mono text-[10px]">
+      <ResponsiveContainer width="100%" height="100%">
+        {children as any}
+      </ResponsiveContainer>
+    </div>
+  </div>
+);
+
+const FundamentalsChartGrid: React.FC<{
+  detail: FundamentalsDetail;
+  priceSeries: PriceChartPoint[];
+  timeframe: Timeframe;
+  topRatios: FundamentalsDetail["top_ratios"];
+}> = ({ detail, priceSeries, timeframe, topRatios }) => {
+  const yearsCap = yearsCapFor(timeframe);
+  const quartersCap = quartersCapFor(timeframe);
+
+  // ---------- Yearly P&L (Revenue / OP / Net Profit + EPS) ----------
+  const pl = detail.profit_loss;
+  const plRows = (() => {
+    const rev   = seriesAsc(pl.revenue, yearsCap);
+    const op    = seriesAsc(pl.operating_profit, yearsCap);
+    const np    = seriesAsc(pl.net_profit, yearsCap);
+    const eps   = seriesAsc(pl.eps, yearsCap);
+    const periods = rev.length ? rev.map((r) => r.period) : op.map((r) => r.period);
+    const byPeriod = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
+    const opP = byPeriod(op), npP = byPeriod(np), epsP = byPeriod(eps);
+    return rev.map((r) => ({
+      period: r.period,
+      revenue: r.value, op: opP[r.period] ?? null,
+      net: npP[r.period] ?? null, eps: epsP[r.period] ?? null,
+    })).concat(
+      // Append year buckets only present in OP/NP if revenue is missing
+      periods.filter((p) => !rev.find((rr) => rr.period === p)).map((p) => ({
+        period: p, revenue: null, op: opP[p] ?? null, net: npP[p] ?? null, eps: epsP[p] ?? null,
+      }))
+    );
+  })();
+
+  // ---------- Yearly Margins / Returns (ROE/ROCE/OPM) ----------
+  const ratiosRows = (() => {
+    const roe  = seriesAsc(detail.ratios.roe,  yearsCap);
+    const roce = seriesAsc(detail.ratios.roce, yearsCap);
+    const opm  = seriesAsc(detail.ratios.opm,  yearsCap);
+    const periods = roe.length ? roe.map((r) => r.period)
+                   : (roce.length ? roce.map((r) => r.period) : opm.map((r) => r.period));
+    const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
+    const roeM = m(roe), roceM = m(roce), opmM = m(opm);
+    return periods.map((p) => ({ period: p, roe: roeM[p] ?? null, roce: roceM[p] ?? null, opm: opmM[p] ?? null }));
+  })();
+
+  // ---------- Quarterly Sales + OPM% + NPM% ----------
+  const quarterlyRows = (() => {
+    const rev = seriesAsc(detail.quarterly_results.revenue, quartersCap);
+    const np  = seriesAsc(detail.quarterly_results.net_profit, quartersCap);
+    const opm = seriesAsc(detail.quarterly_results.opm, quartersCap);
+    const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
+    const npM = m(np), opmM = m(opm);
+    return rev.map((r) => {
+      const npv = npM[r.period];
+      const npm = (r.value && npv != null && r.value !== 0) ? (npv / r.value) * 100 : null;
+      return { period: r.period, revenue: r.value, opm: opmM[r.period] ?? null, npm: npm != null ? +npm.toFixed(2) : null };
+    });
+  })();
+
+  // ---------- Cash Flow (Yearly) ----------
+  const cashFlowRows = (() => {
+    const cfo = seriesAsc(detail.cash_flow.cfo, yearsCap);
+    const cfi = seriesAsc(detail.cash_flow.cfi, yearsCap);
+    const cff = seriesAsc(detail.cash_flow.cff, yearsCap);
+    const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [r.period, r.value]));
+    const periods = cfo.length ? cfo.map((r) => r.period)
+                   : (cfi.length ? cfi.map((r) => r.period) : cff.map((r) => r.period));
+    const cfoM = m(cfo), cfiM = m(cfi), cffM = m(cff);
+    return periods.map((p) => ({ period: p, cfo: cfoM[p] ?? null, cfi: cfiM[p] ?? null, cff: cffM[p] ?? null }));
+  })();
+
+  // ---------- Shareholding (Quarterly stacked) ----------
+  const shRows = (() => {
+    const sh = [...(detail.shareholding || [])].reverse();   // chronological
+    if (quartersCap < sh.length) return sh.slice(sh.length - quartersCap);
+    return sh;
+  })().map((r) => ({
+    period: r.period,
+    promoter: r.promoter_pct ?? 0,
+    fii: r.fii_pct ?? 0,
+    dii: r.dii_pct ?? 0,
+    public: r.public_pct ?? 0,
+    govt: r.govt_pct ?? 0,
+  }));
+
+  // ---------- Yearly Valuation proxies ----------
+  // P/E proxy: year-end price / yearly EPS
+  // P/BV proxy: year-end price / (Equity Capital + Reserves) per share
+  //   (since per-share BV history isn't reported by Screener; we use
+  //    the latest book-value snapshot as the divisor for older years too,
+  //    so this is a rough trajectory rather than an exact ratio)
+  // EV/EBITDA proxy: (market_cap_now + borrowings_yearly) / (OP + Depreciation)
+  //   where market_cap_now is rolled back using the price ratio
+  // MarketCap/Sales proxy: (market_cap_now * price_ratio) / revenue_yearly
+  const valuationRows = (() => {
+    const epsArr = seriesAsc(pl.eps, yearsCap);
+    const revArr = seriesAsc(pl.revenue, yearsCap);
+    const opArr  = seriesAsc(pl.operating_profit, yearsCap);
+    const depArr = seriesAsc(pl.depreciation || [], yearsCap);
+    const borrowArr = seriesAsc(detail.balance_sheet.borrowings, yearsCap);
+    const bookValue = topRatios.book_value || null;
+    const mcapNowCr = topRatios.market_cap_cr || null;
+    const nowPrice = priceSeries.length ? priceSeries[priceSeries.length - 1].close : null;
+
+    const m = (arr: SeriesPoint[]) => Object.fromEntries(arr.map((r) => [yearOf(r.period), r.value]));
+    const epsByY = m(epsArr), revByY = m(revArr), opByY = m(opArr), depByY = m(depArr), borrowByY = m(borrowArr);
+
+    const periods = revArr.length ? revArr : epsArr;
+    return periods.map((r) => {
+      const y = yearOf(r.period);
+      if (!y) return null;
+      const closeY = yearEndClose(priceSeries, y);
+      const eps   = epsByY[y];
+      const op    = opByY[y]; const dep = depByY[y];
+      const ebitda = (op != null && dep != null) ? op + dep : (op ?? null);
+      const borrow = borrowByY[y];
+      const sales = revByY[y];
+
+      // Approximate market cap for the year using the price ratio against
+      // today's market cap (assumes shares haven't changed materially -
+      // OK over a few years for most non-IPO names).
+      const mcapY = (closeY && nowPrice && mcapNowCr) ? mcapNowCr * (closeY / nowPrice) : null;
+
+      const pe = (closeY != null && eps != null && eps !== 0) ? +(closeY / eps).toFixed(2) : null;
+      const pbv = (closeY != null && bookValue != null && bookValue !== 0) ? +(closeY / bookValue).toFixed(2) : null;
+      const evEbitda = (mcapY != null && ebitda != null && ebitda !== 0)
+        ? +(((mcapY + (borrow || 0)) / ebitda)).toFixed(2) : null;
+      const mcapSales = (mcapY != null && sales != null && sales !== 0)
+        ? +((mcapY / sales)).toFixed(2) : null;
+
+      return { period: r.period, pe, pbv, evEbitda, mcapSales, eps, ebitda, sales, bookValue };
+    }).filter((x) => x !== null) as Array<{
+      period: string; pe: number | null; pbv: number | null;
+      evEbitda: number | null; mcapSales: number | null;
+      eps: number | null; ebitda: number | null; sales: number | null; bookValue: number | null;
+    }>;
+  })();
+
+  return (
+    <div className="space-y-3">
+      {/* PRICE + VOLUME */}
+      {priceSeries.length > 0 ? (
+        <ChartCard
+          title={`Price & Volume — ${timeframe}`}
+          rightLabel={`${priceSeries.length} bars`}
+          hint="Daily Close from yfinance with Volume on the secondary axis. Timestamps are real trading days."
+        >
+          <ComposedChart data={priceSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <defs>
+              <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#818cf8" stopOpacity={0.4} />
+                <stop offset="100%" stopColor="#818cf8" stopOpacity={0.0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="ts" tick={tickAxisStyle} minTickGap={40} />
+            <YAxis yAxisId="price" tick={tickAxisStyle} domain={["auto", "auto"]} orientation="left" />
+            <YAxis yAxisId="vol" tick={tickAxisStyle} orientation="right" tickFormatter={(v) => v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : v >= 1e3 ? `${(v/1e3).toFixed(0)}K` : `${v}`} />
+            <Tooltip contentStyle={tooltipContentStyle}
+              formatter={(value: any, name: any) => name === "volume" ? [value.toLocaleString(), "Volume"] : [`₹${value}`, "Close"]} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar yAxisId="vol" dataKey="volume" fill="#334155" opacity={0.55} name="Volume" />
+            <Area yAxisId="price" type="monotone" dataKey="close" stroke="#818cf8" fill="url(#priceGrad)" strokeWidth={1.5} name="Close" />
+          </ComposedChart>
+        </ChartCard>
+      ) : null}
+
+      {/* YEARLY P&L + EPS */}
+      {plRows.length > 0 && (
+        <ChartCard
+          title={`Yearly P&L — last ${plRows.length} yrs`}
+          hint="Revenue / Operating Profit / Net Profit in ₹ Cr (left axis). EPS in ₹ on the right axis."
+        >
+          <ComposedChart data={plRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis yAxisId="L" tick={tickAxisStyle} />
+            <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+            <Tooltip contentStyle={tooltipContentStyle} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar  yAxisId="L" dataKey="revenue" fill="#6366f1" name="Revenue (₹ Cr)" />
+            <Bar  yAxisId="L" dataKey="op"      fill="#10b981" name="Operating Profit" />
+            <Bar  yAxisId="L" dataKey="net"     fill="#0ea5e9" name="Net Profit" />
+            <Line yAxisId="R" type="monotone" dataKey="eps" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="EPS (₹)" />
+          </ComposedChart>
+        </ChartCard>
+      )}
+
+      {/* YEARLY MARGINS / RETURNS */}
+      {ratiosRows.length > 0 && (
+        <ChartCard
+          title={`Returns & Margins — last ${ratiosRows.length} yrs`}
+          hint="ROE / ROCE / OPM as reported by Screener.in. All percentages."
+        >
+          <ComposedChart data={ratiosRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis tick={tickAxisStyle} unit="%" />
+            <Tooltip contentStyle={tooltipContentStyle} formatter={(v: any) => v != null ? `${v}%` : "—"} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Line type="monotone" dataKey="roe"  stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="ROE %" />
+            <Line type="monotone" dataKey="roce" stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} name="ROCE %" />
+            <Line type="monotone" dataKey="opm"  stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="OPM %" />
+          </ComposedChart>
+        </ChartCard>
+      )}
+
+      {/* QUARTERLY SALES + OPM% + NPM% */}
+      {quarterlyRows.length > 0 && (
+        <ChartCard
+          title={`Quarterly Sales + Margins — last ${quarterlyRows.length} quarters`}
+          hint="Revenue bars on the left axis (₹ Cr). OPM% from Screener and NPM% computed as Net Profit / Revenue on the right axis."
+        >
+          <ComposedChart data={quarterlyRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis yAxisId="L" tick={tickAxisStyle} />
+            <YAxis yAxisId="R" tick={tickAxisStyle} unit="%" orientation="right" />
+            <Tooltip contentStyle={tooltipContentStyle} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar  yAxisId="L" dataKey="revenue" fill="#6366f1" name="Revenue (₹ Cr)" />
+            <Line yAxisId="R" type="monotone" dataKey="opm" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} name="OPM %" />
+            <Line yAxisId="R" type="monotone" dataKey="npm" stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="NPM %" />
+          </ComposedChart>
+        </ChartCard>
+      )}
+
+      {/* CASH FLOW (Yearly) */}
+      {cashFlowRows.length > 0 && (
+        <ChartCard
+          title={`Cash Flow — last ${cashFlowRows.length} yrs`}
+          hint="Operating / Investing / Financing cash flows in ₹ Cr. Negatives are red."
+        >
+          <BarChart data={cashFlowRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis tick={tickAxisStyle} />
+            <Tooltip contentStyle={tooltipContentStyle} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar dataKey="cfo" fill="#10b981" name="CFO" />
+            <Bar dataKey="cfi" fill="#0ea5e9" name="CFI" />
+            <Bar dataKey="cff" fill="#a78bfa" name="CFF" />
+          </BarChart>
+        </ChartCard>
+      )}
+
+      {/* SHAREHOLDING PATTERN (Quarterly) */}
+      {shRows.length > 0 && (
+        <ChartCard
+          title={`Shareholding Pattern — last ${shRows.length} quarters`}
+          hint="Promoter / FII / DII / Public shareholding stacked at each quarter."
+        >
+          <AreaChart data={shRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }} stackOffset="expand">
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+            <XAxis dataKey="period" tick={tickAxisStyle} />
+            <YAxis tick={tickAxisStyle} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+            <Tooltip contentStyle={tooltipContentStyle} formatter={(v: any) => `${(+v).toFixed(2)}%`} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Area type="monotone" dataKey="promoter" stackId="1" stroke="#6366f1" fill="#6366f1" name="Promoter %" />
+            <Area type="monotone" dataKey="fii"      stackId="1" stroke="#10b981" fill="#10b981" name="FII %" />
+            <Area type="monotone" dataKey="dii"      stackId="1" stroke="#f59e0b" fill="#f59e0b" name="DII %" />
+            <Area type="monotone" dataKey="govt"     stackId="1" stroke="#94a3b8" fill="#94a3b8" name="Govt %" />
+            <Area type="monotone" dataKey="public"   stackId="1" stroke="#a78bfa" fill="#a78bfa" name="Public %" />
+          </AreaChart>
+        </ChartCard>
+      )}
+
+      {/* VALUATION PROXIES (yearly, derived) */}
+      {valuationRows.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <ChartCard
+            title="P/E (yearly proxy)"
+            hint="Year-end price / yearly EPS. EPS line on the right axis. Daily-resolution P/E would need historical shares & TTM-EPS — currently approximated."
+          >
+            <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+              <XAxis dataKey="period" tick={tickAxisStyle} />
+              <YAxis yAxisId="L" tick={tickAxisStyle} />
+              <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+              <Tooltip contentStyle={tooltipContentStyle} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Line yAxisId="L" type="monotone" dataKey="pe"  stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} name="P/E" />
+              <Line yAxisId="R" type="monotone" dataKey="eps" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="EPS (₹)" />
+            </ComposedChart>
+          </ChartCard>
+
+          <ChartCard
+            title="P/BV (yearly proxy)"
+            hint="Year-end price / current Book Value per share. Historical BV per share isn't published by Screener so older years use the latest BV as divisor — read as a trajectory, not an exact ratio."
+          >
+            <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+              <XAxis dataKey="period" tick={tickAxisStyle} />
+              <YAxis yAxisId="L" tick={tickAxisStyle} />
+              <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+              <Tooltip contentStyle={tooltipContentStyle} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Line yAxisId="L" type="monotone" dataKey="pbv"       stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} name="P/BV" />
+              <Line yAxisId="R" type="monotone" dataKey="bookValue" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="Book Value (₹)" />
+            </ComposedChart>
+          </ChartCard>
+
+          <ChartCard
+            title="EV / EBITDA (yearly proxy)"
+            hint="EV ≈ Market Cap (scaled by year-end price) + Borrowings (cash not subtracted - Screener doesn't publish cash). EBITDA ≈ Operating Profit + Depreciation."
+          >
+            <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+              <XAxis dataKey="period" tick={tickAxisStyle} />
+              <YAxis yAxisId="L" tick={tickAxisStyle} />
+              <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+              <Tooltip contentStyle={tooltipContentStyle} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Line yAxisId="L" type="monotone" dataKey="evEbitda" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} name="EV/EBITDA" />
+              <Line yAxisId="R" type="monotone" dataKey="ebitda"   stroke="#0ea5e9" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="EBITDA (₹ Cr)" />
+            </ComposedChart>
+          </ChartCard>
+
+          <ChartCard
+            title="Market Cap / Sales (yearly proxy)"
+            hint="Year-end market cap (scaled from today's MCap by year-end price ratio) divided by yearly revenue."
+          >
+            <ComposedChart data={valuationRows} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+              <XAxis dataKey="period" tick={tickAxisStyle} />
+              <YAxis yAxisId="L" tick={tickAxisStyle} />
+              <YAxis yAxisId="R" tick={tickAxisStyle} orientation="right" />
+              <Tooltip contentStyle={tooltipContentStyle} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Line yAxisId="L" type="monotone" dataKey="mcapSales" stroke="#0ea5e9" strokeWidth={2} dot={{ r: 2 }} name="MCap / Sales" />
+              <Line yAxisId="R" type="monotone" dataKey="sales"     stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={{ r: 2 }} name="Sales (₹ Cr)" />
+            </ComposedChart>
+          </ChartCard>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const FundamentalsDetailPanel: React.FC<{
   stock: FundamentalStock;
   detail?: FundamentalsDetail;
   priceHistory?: FundamentalsPriceHistory;
   loading: boolean;
+  timeframe: Timeframe;
+  onChangeTimeframe: (tf: Timeframe) => void;
   onRefresh: () => void;
-}> = ({ stock, detail, priceHistory, loading, onRefresh }) => {
+}> = ({ stock, detail, priceHistory, loading, timeframe, onChangeTimeframe, onRefresh }) => {
   if (loading && !detail) {
     return (
       <div className="py-10 text-center text-slate-500 text-xs">
@@ -904,6 +1333,7 @@ const FundamentalsDetailPanel: React.FC<{
   const priceSeries = (priceHistory?.series || []).map((p) => ({
     ts: p.ts.slice(0, 10),
     close: p.close,
+    volume: p.volume ?? 0,
   }));
 
   return (
@@ -927,14 +1357,32 @@ const FundamentalsDetailPanel: React.FC<{
             View on Screener.in →
           </a>
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onRefresh(); }}
-          className="px-3 py-1.5 border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold cursor-pointer flex items-center gap-1.5"
-          disabled={loading}
-        >
-          <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
-          {loading ? "Refreshing…" : "Refresh from Screener.in"}
-        </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* TIMEFRAME SELECTOR — applies to price chart and trims yearly / quarterly panels */}
+          <div className="inline-flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 font-mono">
+            {TIMEFRAMES.map((tf) => (
+              <button
+                key={tf}
+                onClick={(e) => { e.stopPropagation(); onChangeTimeframe(tf); }}
+                className={`px-2 py-1 text-[10px] rounded cursor-pointer transition-colors ${
+                  timeframe === tf
+                    ? "bg-indigo-500/20 text-indigo-200 font-bold"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+            className="px-3 py-1.5 border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold cursor-pointer flex items-center gap-1.5"
+            disabled={loading}
+          >
+            <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+            {loading ? "Refreshing…" : "Refresh from Screener.in"}
+          </button>
+        </div>
       </div>
 
       {detail.warnings && detail.warnings.length > 0 && (
@@ -953,37 +1401,13 @@ const FundamentalsDetailPanel: React.FC<{
         ))}
       </div>
 
-      {/* PRICE CHART */}
-      {priceSeries.length > 0 && (
-        <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-850">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
-              Price History — {priceHistory?.years || 5} years
-            </h4>
-            <span className="text-[10px] text-slate-500 font-mono">{priceSeries.length} points</span>
-          </div>
-          <div className="h-44 font-mono text-[10px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={priceSeries} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                <defs>
-                  <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#818cf8" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="#818cf8" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-                <XAxis dataKey="ts" stroke="#475569" minTickGap={40} />
-                <YAxis stroke="#475569" domain={["auto", "auto"]} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: "#090d1a", borderColor: "#1e293b", color: "#e2e8f0" }}
-                  formatter={(value: any) => [`₹${value}`, "Close"]}
-                />
-                <Area type="monotone" dataKey="close" stroke="#818cf8" fill="url(#priceGrad)" strokeWidth={1.5} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
+      {/* CHART FAMILIES — Screener.in-style multi-dimensional view */}
+      <FundamentalsChartGrid
+        detail={detail}
+        priceSeries={priceSeries}
+        timeframe={timeframe}
+        topRatios={tr}
+      />
 
       {/* PROS & CONS */}
       {((detail.pros && detail.pros.length > 0) || (detail.cons && detail.cons.length > 0)) && (
@@ -1216,6 +1640,8 @@ export default function App() {
   const [fundamentalsDetailLoading, setFundamentalsDetailLoading] = useState<Set<string>>(new Set());
   const [fundamentalsPinInput, setFundamentalsPinInput] = useState<string>("");
   const [fundamentalsPins, setFundamentalsPins] = useState<FundamentalsPin[]>([]);
+  // Per-ticker active timeframe for the price + ratio charts.
+  const [fundamentalsTimeframe, setFundamentalsTimeframe] = useState<Record<string, Timeframe>>({});
 
   // Analytics states
   const [analyticsSummary, setAnalyticsSummary] = useState<AnalyticsSummary | null>(null);
@@ -1616,8 +2042,9 @@ export default function App() {
       setFundamentalsDetailByTicker((prev) => ({ ...prev, [upper]: detail }));
       // Pull price history alongside the detail. Don't block the panel
       // render if it fails - the chart panel renders a "no data" message.
+      const period = fundamentalsTimeframe[upper] || "5Y";
       try {
-        const phRes = await fetch(`${API_BASE}/api/fundamentals/price-history/${upper}?years=5`);
+        const phRes = await fetch(`${API_BASE}/api/fundamentals/price-history/${upper}?period=${period}`);
         if (phRes.ok) {
           const ph: FundamentalsPriceHistory = await phRes.json();
           setFundamentalsPriceByTicker((prev) => ({ ...prev, [upper]: ph }));
@@ -1658,6 +2085,22 @@ export default function App() {
       await Promise.all([loadFundamentalsTable(), loadFundamentalsPins()]);
     } catch (e) {
       console.error(`Failed to unpin ${ticker}:`, e);
+    }
+  };
+
+  const setFundamentalsTimeframeForTicker = async (ticker: string, tf: Timeframe) => {
+    const upper = ticker.toUpperCase();
+    setFundamentalsTimeframe((prev) => ({ ...prev, [upper]: tf }));
+    // Re-fetch the price series at the new window. Yearly / quarterly
+    // panels just re-slice in the renderer from cached detail data.
+    try {
+      const phRes = await fetch(`${API_BASE}/api/fundamentals/price-history/${upper}?period=${tf}`);
+      if (phRes.ok) {
+        const ph: FundamentalsPriceHistory = await phRes.json();
+        setFundamentalsPriceByTicker((prev) => ({ ...prev, [upper]: ph }));
+      }
+    } catch (e) {
+      console.warn(`Timeframe switch fetch failed for ${upper}:`, e);
     }
   };
 
@@ -4067,6 +4510,8 @@ export default function App() {
                                       detail={detail}
                                       priceHistory={priceHist}
                                       loading={detailLoading}
+                                      timeframe={fundamentalsTimeframe[stock.ticker] || "5Y"}
+                                      onChangeTimeframe={(tf) => setFundamentalsTimeframeForTicker(stock.ticker, tf)}
                                       onRefresh={() => toggleFundamentalsRow(stock.ticker, { refresh: true })}
                                     />
                                   </td>
