@@ -446,6 +446,77 @@ def _parse_cashflow_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
     return out
 
 
+def _parse_balance_sheet_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
+    """Parse ``<section id="balance-sheet">``.
+
+    Screener exposes the consolidated balance sheet as a single ``data-table``
+    with rows like "Equity Capital", "Reserves", "Borrowings", "Other
+    Liabilities", "Total Liabilities", "Fixed Assets", "CWIP", "Investments",
+    "Other Assets", "Total Assets". We pick the rows our UI displays;
+    anything missing returns an empty list, callers must tolerate.
+    """
+    sec = _extract_section_table(soup, "balance-sheet")
+    headers, rows = _parse_data_table(sec)
+    out: Dict[str, List[Dict]] = {
+        "equity_capital_yearly": [], "reserves_yearly": [],
+        "borrowings_yearly": [], "other_liab_yearly": [], "total_liab_yearly": [],
+        "fixed_assets_yearly": [], "cwip_yearly": [], "investments_yearly": [],
+        "other_assets_yearly": [], "total_assets_yearly": [],
+    }
+    if not rows:
+        return out
+
+    def find_row(*keys: str) -> Optional[List[Optional[float]]]:
+        for label, vals in rows.items():
+            low = label.lower()
+            if all(k in low for k in keys):
+                return vals
+        return None
+
+    out["equity_capital_yearly"] = _row_to_records(headers, find_row("equity", "capital") or [])
+    out["reserves_yearly"]       = _row_to_records(headers, find_row("reserves") or [])
+    out["borrowings_yearly"]     = _row_to_records(headers, find_row("borrowings") or [])
+    out["other_liab_yearly"]     = _row_to_records(headers, find_row("other", "liabilities") or [])
+    out["total_liab_yearly"]     = _row_to_records(headers, find_row("total", "liabilities") or [])
+    out["fixed_assets_yearly"]   = _row_to_records(headers, find_row("fixed", "assets") or [])
+    out["cwip_yearly"]           = _row_to_records(headers, find_row("cwip") or [])
+    out["investments_yearly"]    = _row_to_records(headers, find_row("investments") or [])
+    out["other_assets_yearly"]   = _row_to_records(headers, find_row("other", "assets") or [])
+    out["total_assets_yearly"]   = _row_to_records(headers, find_row("total", "assets") or [])
+    return out
+
+
+def _parse_quarterly_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
+    """Parse ``<section id="quarters">`` for the last ~5 quarters of P&L.
+
+    The Screener page shows columns like "Sep 2024", "Dec 2024", etc. Rows
+    include Sales, Operating Profit, Net Profit, EPS, OPM%. We return them
+    in the same most-recent-first record-list shape as the yearly P&L.
+    """
+    sec = _extract_section_table(soup, "quarters")
+    headers, rows = _parse_data_table(sec)
+    out: Dict[str, List[Dict]] = {
+        "quarterly_revenue": [], "quarterly_operating_profit": [],
+        "quarterly_net_profit": [], "quarterly_eps": [], "quarterly_opm": [],
+    }
+    if not rows:
+        return out
+
+    def find_row(*keys: str) -> Optional[List[Optional[float]]]:
+        for label, vals in rows.items():
+            low = label.lower()
+            if all(k in low for k in keys):
+                return vals
+        return None
+
+    out["quarterly_revenue"]          = _row_to_records(headers, find_row("sales") or find_row("revenue") or [])
+    out["quarterly_operating_profit"] = _row_to_records(headers, find_row("operating", "profit") or [])
+    out["quarterly_net_profit"]       = _row_to_records(headers, find_row("net", "profit") or [])
+    out["quarterly_eps"]              = _row_to_records(headers, find_row("eps") or [])
+    out["quarterly_opm"]              = _row_to_records(headers, find_row("opm") or [])
+    return out
+
+
 def _parse_ratios_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
     sec = _extract_section_table(soup, "ratios")
     headers, rows = _parse_data_table(sec)
@@ -537,6 +608,118 @@ def _parse_shareholding_section(soup: BeautifulSoup) -> List[Dict]:
     return records
 
 
+# ---------- Qualitative blocks: Pros/Cons + Documents (concalls) ----------
+
+from urllib.parse import urljoin
+
+_MONTH_YEAR_RE = re.compile(
+    r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b", re.I
+)
+
+
+def _parse_pros_cons(soup: BeautifulSoup) -> Dict[str, List[str]]:
+    """Screener's auto-generated Pros / Cons bullet lists.
+
+    Markup: ``<div class="company-info"> ... <div class="pros"><ul><li>...</ul>
+    <div class="cons"><ul><li>...</ul>``. We select defensively by class so a
+    layout tweak that moves the wrapper still works.
+    """
+    out: Dict[str, List[str]] = {"pros": [], "cons": []}
+    for key in ("pros", "cons"):
+        el = soup.select_one(f"div.{key}") or soup.find(class_=key)
+        if el:
+            out[key] = [li.get_text(" ", strip=True)
+                        for li in el.select("li") if li.get_text(strip=True)]
+    return out
+
+
+def _nearest_period(node) -> Optional[str]:
+    """Find a 'Mon YYYY' label on or near a concall row node."""
+    txt = node.get_text(" ", strip=True) if node else ""
+    m = _MONTH_YEAR_RE.search(txt)
+    if m:
+        return m.group(0)
+    # look back through previous siblings for a date heading
+    prev = node
+    for _ in range(4):
+        prev = prev.find_previous(string=_MONTH_YEAR_RE) if prev else None
+        if prev:
+            m = _MONTH_YEAR_RE.search(str(prev))
+            if m:
+                return m.group(0)
+        else:
+            break
+    return None
+
+
+def _find_doc_block(sec, class_name: str, heading_kw: str):
+    """Locate one Documents column (Concalls / Announcements / Annual reports).
+
+    Screener wraps each column in ``<div class="documents <name> flex-column">``.
+    Prefer the class; fall back to the column whose heading matches the keyword.
+    """
+    block = sec.select_one(f"div.{class_name}")
+    if block is not None:
+        return block
+    for h in sec.find_all(["h2", "h3", "h4"]):
+        if heading_kw in h.get_text(" ", strip=True).lower():
+            return h.find_parent("div", class_="documents") or h.parent
+    return None
+
+
+def _parse_documents(soup: BeautifulSoup, base_url: str) -> Dict:
+    """Parse ``<section id="documents">`` for concall transcript/PPT links,
+    annual reports and recent announcements. All defensive: missing → empty.
+    """
+    out: Dict = {"concalls": [], "annual_reports": [], "announcements": []}
+    sec = soup.find(id="documents")
+    if sec is None:
+        return out
+
+    # ---- Concalls: rows of (date, Transcript, PPT, Notes, REC) ----
+    concall_box = _find_doc_block(sec, "concalls", "concall")
+    if concall_box is not None:
+        rows = concall_box.select("ul.list-links > li") or concall_box.find_all("li")
+        for li in rows:
+            row = {"date": _nearest_period(li), "transcript_url": None,
+                   "ppt_url": None, "notes_url": None, "rec_url": None}
+            for a in li.find_all("a", href=True):
+                label = a.get_text(" ", strip=True).lower()
+                full = urljoin(base_url, a["href"])
+                if "transcript" in label:
+                    row["transcript_url"] = full
+                elif "ppt" in label or "present" in label:
+                    row["ppt_url"] = full
+                elif "notes" in label:
+                    row["notes_url"] = full
+                elif label in ("rec", "recording"):
+                    row["rec_url"] = full
+            if row["transcript_url"] or row["ppt_url"] or row["notes_url"]:
+                out["concalls"].append(row)
+
+    # ---- Annual reports ----
+    ar_box = _find_doc_block(sec, "annual-reports", "annual report")
+    if ar_box is not None:
+        for a in ar_box.find_all("a", href=True):
+            label = a.get_text(" ", strip=True)
+            if label and "add" not in label.lower():
+                out["annual_reports"].append({"label": label,
+                                              "url": urljoin(base_url, a["href"])})
+
+    # ---- Recent announcements: one clean line per item ----
+    ann_box = _find_doc_block(sec, "announcements", "announce")
+    if ann_box is not None:
+        rows = ann_box.select("ul.list-links > li") or ann_box.find_all("li")
+        for li in rows:
+            # Screener packs the title + relative-time + summary into the row; take
+            # the whole row text once (collapsed) to avoid title/description dupes.
+            text = re.sub(r"\s+", " ", li.get_text(" ", strip=True)).strip()
+            if text and len(text) > 4:
+                out["announcements"].append(text[:240])
+        out["announcements"] = out["announcements"][:10]
+    return out
+
+
 # ---------- Public API ----------
 
 
@@ -562,20 +745,39 @@ def _parse_html(ticker: str, html: str, used_view: str) -> Dict:
     if not rt["roe_yearly"]:
         warnings.append("ratios section missing")
 
+    bs = _parse_balance_sheet_section(soup)
+    if not bs["total_assets_yearly"]:
+        warnings.append("balance-sheet section missing")
+
+    qt = _parse_quarterly_section(soup)
+    if not qt["quarterly_revenue"]:
+        warnings.append("quarterly results section missing")
+
     sh = _parse_shareholding_section(soup)
     if not sh:
         warnings.append("shareholding section missing")
 
+    base_url = _view_to_url(ticker, used_view)
+    pros_cons = _parse_pros_cons(soup)
+    documents = _parse_documents(soup, base_url)
+
     return {
         "ticker": ticker.upper(),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "url": _view_to_url(ticker, used_view),
+        "url": base_url,
         "view": used_view,
         **top,
         **pl,
         **cf,
         **rt,
+        **bs,
+        **qt,
         "shareholding_quarterly": sh,
+        "pros": pros_cons["pros"],
+        "cons": pros_cons["cons"],
+        "concalls": documents["concalls"],
+        "annual_reports": documents["annual_reports"],
+        "announcements": documents["announcements"],
         "warnings": warnings,
     }
 

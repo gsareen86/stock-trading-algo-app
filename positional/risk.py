@@ -155,33 +155,32 @@ def check_hard_stop(pos: dict, current_price: float) -> Optional[str]:
 
 def check_ema_trailing_stop(pos: dict, df: pd.DataFrame) -> Optional[str]:
     """
-    EMA trailing stop: 2 consecutive daily closes below 21 EMA → SELL ALERT.
-    Updates below_ema_consecutive count in the pos dict (caller persists to DB).
+    EMA trailing stop: POSITIONAL_EMA_TRAIL_CONSECUTIVE consecutive daily closes
+    below the POSITIONAL_EMA_TRAIL_PERIOD EMA → SELL ALERT. Sets the true
+    trailing below-EMA count on the pos dict (caller persists to DB).
     Returns exit reason or None.
     """
-    if df is None or len(df) < 22:
+    need = POSITIONAL_EMA_TRAIL_CONSECUTIVE
+    if df is None or len(df) < POSITIONAL_EMA_TRAIL_PERIOD + need:
         return None
 
     close = df["Close"].astype(float)
-    ema21 = close.ewm(span=21, adjust=False).mean()
+    ema = close.ewm(span=POSITIONAL_EMA_TRAIL_PERIOD, adjust=False).mean()
 
-    # Check the last 2 trading days
-    last2_close = close.tail(2).values
-    last2_ema   = ema21.tail(2).values
+    # Count trailing consecutive daily closes below the EMA.
+    below = (close < ema).tolist()
+    consecutive = 0
+    for flag in reversed(below):
+        if flag:
+            consecutive += 1
+        else:
+            break
+    pos["below_ema_consecutive"] = consecutive
 
-    below_today      = float(last2_close[-1]) < float(last2_ema[-1])
-    below_yesterday  = len(last2_close) > 1 and float(last2_close[-2]) < float(last2_ema[-2])
-
-    consecutive = int(pos.get("below_ema_consecutive", 0))
-
-    if below_today and below_yesterday:
-        # 2 consecutive closes below 21 EMA
-        ema_val = float(last2_ema[-1])
-        return (f"EMA_TRAIL: 2 consecutive closes below 21 EMA "
-                f"(price={last2_close[-1]:.2f} EMA21={ema_val:.2f})")
-
-    # Update consecutive counter (caller must persist this)
-    pos["below_ema_consecutive"] = 1 if below_today else 0
+    if consecutive >= need:
+        return (f"EMA_TRAIL: {consecutive} consecutive closes below "
+                f"{POSITIONAL_EMA_TRAIL_PERIOD} EMA "
+                f"(price={float(close.iloc[-1]):.2f} EMA={float(ema.iloc[-1]):.2f})")
     return None
 
 

@@ -17,7 +17,7 @@ Both modules share the same dashboard, approval queue, cost model, and DB.
 python main.py
     ├── Thread: scheduler/runner.py     — intraday bot (polls every 15 min)
     ├── Thread: positional/runner.py    — positional bot (daily scan + exit check)
-    └── Subprocess: dashboard/app.py   — Streamlit UI on :8501
+    └── Unified FastAPI Server          — Unified backend and React frontend served on :8000
 ```
 
 **One command starts everything.** No separate terminal for the scheduler.
@@ -97,7 +97,7 @@ Does: git init, initial commit, GitHub repo creation, psycopg install, SQLite �
 python main.py
 ```
 
-Opens the Streamlit dashboard at **http://localhost:8501** and starts both the
+Opens the React dashboard at **http://localhost:8000** and starts both the
 intraday and positional runners as background threads. Go to the **Control Panel**
 tab and click **▶ START** to begin trading.
 
@@ -106,14 +106,10 @@ tab and click **▶ START** to begin trading.
 ```bash
 python main.py --init             # initialise DB then exit
 python main.py --runner-only      # intraday + positional runners, no dashboard
-python main.py --dashboard-only   # dashboard UI only (no trading)
+python main.py --dashboard-only   # API server UI only (no trading)
 python main.py --positional-only  # positional runner only
 python main.py --reset            # wipe DB completely (destructive!)
 ```
-
-> **Do not run `streamlit run dashboard/app.py` directly** for normal use — that
-> starts only the UI with no bot runners attached. Use it only for dashboard
-> development work.
 
 ### Trading modes
 
@@ -192,8 +188,7 @@ stock-trading-algo-app/
 ├── scheduler/
 │   └── runner.py               # Intraday main loop (15-min poll)
 │
-├── dashboard/
-│   └── app.py                  # Streamlit multi-tab UI
+├── frontend/                   # React frontend (Vite dev / production build)
 │
 ├── db/
 │   └── models.py               # Schema + SQLite/Postgres dual-backend layer
@@ -515,7 +510,7 @@ the `.NS` suffix is wrong. Check `to_yf_ticker()` in `data/universe.py`.
 
 ### Windows Smart App Control (pyarrow DLL blocked)
 
-The dashboard avoids pyarrow by default (all tables rendered as HTML, not `st.dataframe`).
+The application utilizes pyarrow for Parquet caching.
 If you still see a DLL error:
 
 ```bash

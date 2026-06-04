@@ -119,6 +119,16 @@ def llm_veto(
 
     verdict = result.get("verdict", VERDICT_PROCEED)
     reason = result.get("reason", "")
+
+    # Normalize verdict for local models (e.g. Qwen) to prevent strict mismatches
+    norm_verdict = str(verdict).strip().upper()
+    if norm_verdict in (VERDICT_SKIP, "VETO", "HALT", "BLOCK"):
+        verdict = VERDICT_SKIP
+    elif norm_verdict in (VERDICT_REDUCE, "HALVE", "CUT", "PARTIAL"):
+        verdict = VERDICT_REDUCE
+    elif norm_verdict in (VERDICT_PROCEED, "GO", "BUY", "LONG", "OK"):
+        verdict = VERDICT_PROCEED
+
     if verdict not in (VERDICT_PROCEED, VERDICT_REDUCE, VERDICT_SKIP):
         return VERDICT_PROCEED, f"unrecognised verdict {verdict!r}; fail open"
     return verdict, reason

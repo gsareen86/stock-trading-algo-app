@@ -60,7 +60,13 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
     Compute all indicators needed for Trend Template + VCP.
     Returns dict of indicator values or None if data insufficient.
     """
-    if df is None or len(df) < 220:
+    if df is None:
+        return None
+
+    # Drop any row where any of Close, High, Low is NaN to avoid incomplete/empty rows
+    df = df.dropna(subset=["Close", "High", "Low"])
+
+    if len(df) < 220:
         return None
 
     close = df["Close"].astype(float)
@@ -79,7 +85,11 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
 
     # 52-week high (last 252 trading days)
     high_52w = float(high.tail(252).max())
-    proximity_52w_pct = (high_52w - price) / high_52w * 100  # how far below 52W high
+    
+    if pd.isna(price) or pd.isna(high_52w) or high_52w <= 0:
+        proximity_52w_pct = 0.0
+    else:
+        proximity_52w_pct = (high_52w - price) / high_52w * 100  # how far below 52W high
 
     # ATR (10-day) for VCP
     prev_close = close.shift(1)
@@ -90,7 +100,12 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
     ], axis=1).max(axis=1)
 
     atr10 = tr.ewm(span=POSITIONAL_VCP_ATR_PERIOD, adjust=False).mean()
-    atr_pct = float(atr10.iloc[-1]) / price * 100 if price > 0 else 0.0
+    
+    atr_val = float(atr10.iloc[-1])
+    if pd.isna(atr_val) or pd.isna(price) or price <= 0:
+        atr_pct = 0.0
+    else:
+        atr_pct = atr_val / price * 100
 
     # Weekly ATR% for VCP contraction check (last 3 weeks = 15 trading days)
     weekly_atr_pcts = []
@@ -103,10 +118,16 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
             continue
         slice_price = float(slice_close.mean())
         slice_atr_v = float(slice_atr.mean())
-        weekly_atr_pcts.append(slice_atr_v / slice_price * 100 if slice_price > 0 else 0.0)
+        
+        if pd.isna(slice_price) or pd.isna(slice_atr_v) or slice_price <= 0:
+            weekly_atr_pcts.append(0.0)
+        else:
+            weekly_atr_pcts.append(slice_atr_v / slice_price * 100)
 
     # 20-day average volume
     avg_vol_20d = float(vol.tail(20).mean())
+    if pd.isna(avg_vol_20d):
+        avg_vol_20d = 0.0
 
     # Down-day volume ratio for last 10 days
     ret = close.pct_change()
@@ -114,10 +135,12 @@ def _compute_indicators(df: pd.DataFrame) -> Optional[dict]:
     last10_vol   = vol.tail(10)
     last10_ret   = ret.tail(10)
     down_day_vols = last10_vol[last10_ret < 0]
-    down_day_vol_ratio = (
-        float(down_day_vols.mean()) / avg_vol_20d
-        if avg_vol_20d > 0 and len(down_day_vols) > 0 else 1.0
-    )
+    
+    mean_down_vol = float(down_day_vols.mean()) if len(down_day_vols) > 0 else 0.0
+    if pd.isna(mean_down_vol) or pd.isna(avg_vol_20d) or avg_vol_20d <= 0:
+        down_day_vol_ratio = 1.0
+    else:
+        down_day_vol_ratio = mean_down_vol / avg_vol_20d
 
     return {
         "price":             price,
@@ -268,14 +291,144 @@ def scan_ticker(ticker: str, df: pd.DataFrame) -> Optional[dict]:
     }
 
 
+def _minervini_to_signal(ticker: str, m: dict):
+    """Wrap a Minervini scan_ticker() dict as a PositionalSignal for the scorer."""
+    from positional.strategies.base import PositionalSignal
+    action = "BUY" if m["alert_type"] == "BUY" else "HOLD"
+    strong = bool(m["trend_template"]) and bool(m["vcp_detected"]) and m["score"] >= 80
+    return PositionalSignal(
+        ticker=ticker,
+        action=action,
+        strategy="minervini_vcp",
+        score=float(m["score"]),
+        price=float(m["price"]),
+        reason=m["reason"],
+        hold_days=18,
+        conviction="high" if strong else "medium",
+        meta={"trend_template": m["trend_template"], "vcp_detected": m["vcp_detected"]},
+    )
+
+
+def _basic_technicals(df: pd.DataFrame) -> dict:
+    """Fallback technical fields when the Minervini scan returns None."""
+    close = df["Close"].astype(float)
+    price = float(close.iloc[-1])
+    high_52w = float(df["High"].tail(252).max())
+    prox = (high_52w - price) / high_52w * 100 if high_52w > 0 else 0.0
+    ema21 = float(close.ewm(span=21, adjust=False).mean().iloc[-1])
+    ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+    ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1]) if len(df) >= 200 else ema50
+    atr_pct = (
+        float(close.diff().abs().ewm(span=14, adjust=False).mean().iloc[-1]) / price * 100
+        if len(df) > 15 and price else 0.0
+    )
+    return {
+        "price": round(price, 2), "proximity_52w_pct": round(prox, 2),
+        "ema21": round(ema21, 2), "ema50": round(ema50, 2),
+        "ema200": round(ema200, 2), "atr_pct": round(atr_pct, 3),
+        "trend_template": 0, "vcp_detected": 0, "vcp_strength": 0.0,
+    }
+
+
+def _scorecard_to_result(card, minervini: Optional[dict], df: pd.DataFrame) -> dict:
+    """Flatten a Scorecard + backward-compatible technical fields into a row dict."""
+    tech = minervini if minervini is not None else _basic_technicals(df)
+    return {
+        # backward-compatible technical fields (consumed by runner/research/API)
+        "ticker":           card.ticker,
+        "price":            card.price,
+        "trend_template":   tech["trend_template"],
+        "vcp_detected":     tech["vcp_detected"],
+        "vcp_strength":     tech["vcp_strength"],
+        "proximity_52w_pct":tech["proximity_52w_pct"],
+        "ema21":            tech["ema21"],
+        "ema50":            tech["ema50"],
+        "ema200":           tech["ema200"],
+        "atr_pct":          tech["atr_pct"],
+        "score":            card.composite_score,   # composite drives entry threshold
+        "alert_type":       card.action,
+        "reason":           card.reason[:400],
+        # confluence scorecard fields
+        "composite_score":  card.composite_score,
+        "confluence":       card.confluence,
+        "strategies_fired": ",".join(card.strategies_fired),
+        "horizon":          card.horizon,
+        "conviction":       card.conviction,
+        "timing_score":     card.timing_score,
+        "durability_score": card.durability_score,
+        "quality_pillar":   card.pillars.get("quality"),
+        "valuation_pillar": card.pillars.get("valuation"),
+        "momentum_pillar":  card.pillars.get("momentum"),
+        "sentiment_pillar": card.pillars.get("sentiment"),
+        "est_hold_days":    card.est_hold_days,
+    }
+
+
+def _get_ticker_quality_score(ticker: str) -> float:
+    # Strip suffix if present
+    tk = ticker.replace(".NS", "").replace(".BO", "").strip()
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT total_score FROM lt_quality WHERE ticker = ?", (tk,)
+            ).fetchone()
+            if row and row["total_score"] is not None:
+                return float(row["total_score"])
+    except Exception:
+        pass
+    return 50.0
+
+
+def _persist_scan_result(scanned_at: str, result: dict):
+    try:
+        from db.models import get_conn, insert_returning_id
+        with get_conn() as conn:
+            insert_returning_id(
+                conn,
+                """INSERT INTO pos_scans
+                   (scanned_at, ticker, price, trend_template, vcp_detected,
+                    vcp_strength, proximity_52w_pct, ema21, ema50, ema200,
+                    atr_pct, score, alert_type, reason,
+                    composite_score, confluence, strategies_fired, horizon,
+                    conviction, timing_score, durability_score, quality_pillar,
+                    valuation_pillar, momentum_pillar, sentiment_pillar, est_hold_days)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (scanned_at, result["ticker"],
+                 result["price"], result["trend_template"], result["vcp_detected"],
+                 result["vcp_strength"], result["proximity_52w_pct"],
+                 result["ema21"], result["ema50"], result["ema200"],
+                 result["atr_pct"], result["score"],
+                 result["alert_type"], result["reason"],
+                 result.get("composite_score"), result.get("confluence", 0),
+                 result.get("strategies_fired"), result.get("horizon"),
+                 result.get("conviction"), result.get("timing_score"),
+                 result.get("durability_score"), result.get("quality_pillar"),
+                 result.get("valuation_pillar"), result.get("momentum_pillar"),
+                 result.get("sentiment_pillar"), result.get("est_hold_days")),
+            )
+    except Exception as e:
+        log.debug("[scan] DB write failed for %s: %s", result["ticker"], e)
+
+
 def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
     """
     Run the full EOD scan on the fundamental universe (or a provided list).
-    Results are written to pos_scans and returned sorted by score desc.
+    For each ticker it runs all four strategies (Minervini VCP, Brahma-Vishnu-Mahesh,
+    Fundamental-Technical, Young Momentum) and folds their signals plus quality /
+    valuation / momentum / sentiment pillars into ONE confluence scorecard with a
+    horizon classification. Results are written to pos_scans, one row per ticker,
+    sorted by composite score desc.
 
     Returns list of scan result dicts (only BUY and WATCH alerts).
     """
     from positional.universe import get_fundamental_universe
+    from positional.scorer import build_scorecard
+    from positional.strategies import all_positional_strategies
+    from positional.pillars import (
+        quality_pillar, valuation_pillar, relative_momentum_pillar,
+        sentiment_pillar, nifty_returns,
+    )
 
     if tickers is None:
         tickers = get_fundamental_universe()
@@ -309,56 +462,66 @@ def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
         log.error("[scan] yfinance batch download failed: %s", e)
         return []
 
+    # Context shared across the whole scan run.
+    nifty_r3, nifty_r6 = nifty_returns()
+    strategies = all_positional_strategies()   # BVM, FTM, YM (Minervini run separately)
+
     for ticker in tickers_yf:
         try:
             # Extract ticker data from the multi-ticker download
-            if len(tickers_yf) == 1:
-                df = data
-            elif ticker in data.columns.get_level_values(0):
-                df = data[ticker].dropna(how="all")
+            if isinstance(data.columns, pd.MultiIndex) or hasattr(data.columns, "levels"):
+                if ticker in data.columns.get_level_values(0):
+                    df = data[ticker].dropna(how="all")
+                elif ticker in data.columns.get_level_values(1):
+                    df = data.xs(ticker, level=1, axis=1).dropna(how="all")
+                else:
+                    log.debug("[scan] %s: not in downloaded data", ticker)
+                    continue
             else:
-                log.debug("[scan] %s: not in downloaded data", ticker)
-                continue
+                df = data.dropna(how="all")
 
             if df is None or df.empty or len(df) < 220:
                 log.debug("[scan] %s: only %d rows — need 220+",
                           ticker, len(df) if df is not None else 0)
                 continue
 
-            result = scan_ticker(ticker, df)
-            if result is None:
+            # Run all four strategies, collect their signals, fold into ONE scorecard.
+            signals = []
+            minervini = scan_ticker(ticker, df)
+            if minervini is not None:
+                signals.append(_minervini_to_signal(ticker, minervini))
+
+            quality_score = _get_ticker_quality_score(ticker)
+            for strategy in strategies:
+                try:
+                    sig = strategy.generate(ticker, df, quality_score=quality_score)
+                    if sig is not None:
+                        signals.append(sig)
+                except Exception as strat_err:
+                    log.warning("[scan] Strategy %s failed for %s: %s",
+                                strategy.name, ticker, strat_err)
+
+            if not signals:
                 continue
 
-            # Skip HOLD — don't clutter the DB
-            if result["alert_type"] == "HOLD":
+            price = float(df["Close"].iloc[-1])
+            card = build_scorecard(
+                ticker, price, signals,
+                quality=quality_pillar(ticker),
+                valuation=valuation_pillar(ticker),
+                momentum=relative_momentum_pillar(df, nifty_r3, nifty_r6),
+                sentiment=sentiment_pillar(ticker),
+                min_composite=POSITIONAL_MIN_TREND_SCORE,
+            )
+            if card.action == "HOLD":
                 continue
 
+            result = _scorecard_to_result(card, minervini, df)
             results.append(result)
-
-            # Persist to DB
-            try:
-                from db.models import get_conn, insert_returning_id
-                with get_conn() as conn:
-                    insert_returning_id(
-                        conn,
-                        """INSERT INTO pos_scans
-                           (scanned_at, ticker, price, trend_template, vcp_detected,
-                            vcp_strength, proximity_52w_pct, ema21, ema50, ema200,
-                            atr_pct, score, alert_type, reason)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                        (scanned_at, ticker,
-                         result["price"], result["trend_template"], result["vcp_detected"],
-                         result["vcp_strength"], result["proximity_52w_pct"],
-                         result["ema21"], result["ema50"], result["ema200"],
-                         result["atr_pct"], result["score"],
-                         result["alert_type"], result["reason"]),
-                    )
-            except Exception as e:
-                log.debug("[scan] DB write failed for %s: %s", ticker, e)
-
-            log.info("[scan] %s score=%.0f alert=%s prox=%.1f%% VCP=%s",
-                     ticker, result["score"], result["alert_type"],
-                     result["proximity_52w_pct"], bool(result["vcp_detected"]))
+            _persist_scan_result(scanned_at, result)
+            log.info("[scan] %s composite=%.0f %s conf=%d fired=[%s] horizon=%s",
+                     ticker, card.composite_score, card.action, card.confluence,
+                     ",".join(card.strategies_fired), card.horizon)
 
         except Exception as e:
             log.warning("[scan] Error scanning %s: %s", ticker, e)
@@ -388,7 +551,11 @@ def get_latest_scan_results(limit: int = 50) -> list[dict]:
             scan_date = dict(latest_date)["d"]
             rows = conn.execute(
                 """SELECT * FROM pos_scans
-                   WHERE substr(scanned_at,1,10) = ?
+                   WHERE id IN (
+                       SELECT MAX(id) FROM pos_scans
+                       WHERE substr(scanned_at,1,10) = ?
+                       GROUP BY ticker
+                   )
                    ORDER BY score DESC LIMIT ?""",
                 (scan_date, limit),
             ).fetchall()

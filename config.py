@@ -320,15 +320,68 @@ POSITIONAL_MIN_HOLD_DAYS = 3
 POSITIONAL_MAX_HOLD_DAYS = 30
 POSITIONAL_EVENT_GUARD_DAYS = 2
 
+# Weights for the four active positional strategies. Used by the confluence
+# scorer to blend per-strategy BUY scores into one technical pillar. Must cover
+# every strategy.name plus the Minervini key. Need not sum to 1.0 (renormalised).
 POSITIONAL_STRATEGY_WEIGHTS = {
-    "trend_following":   0.20,
-    "breakout_retest":   0.20,
-    "quality_momentum":  0.25,
-    "vcp_breakout":      0.15,
-    "sector_rotation":   0.10,
-    "mean_reversion":    0.05,
-    "earnings_momentum": 0.05,
+    "minervini_vcp":         0.30,   # positional/scanner.py
+    "brahma_vishnu_mahesh":  0.25,
+    "fun_tech_momentum":     0.25,
+    "young_momentum":        0.20,
 }
+
+# ── Scorecard: multi-pillar composite + two-axis horizon ────────────────────
+# Every shortlisted stock is scored on independent pillars that are blended into
+# one composite. Management-outlook is added by the Phase-3 research engine; until
+# then the composite renormalises over the pillars that are present.
+POSITIONAL_PILLAR_WEIGHTS = {
+    "technical":  0.35,   # confluence of the 4 strategies (Axis A — timing)
+    "quality":    0.18,   # lt_quality.total_score        (Axis B — durability)
+    "valuation":  0.10,   # PEG-style from pos_universe    (Axis B — durability)
+    "momentum":   0.13,   # relative strength vs NIFTY
+    "sentiment":  0.12,   # rolling news sentiment
+    "management": 0.12,   # Phase-3 concall/outlook read   (Axis B — durability)
+}
+
+# Horizon classification (two-axis). Axis A = technical timing pillar; Axis B =
+# durability = weighted blend of quality + valuation + management outlook.
+POSITIONAL_DURABILITY_WEIGHTS = {"quality": 0.45, "valuation": 0.30, "management": 0.25}
+POSITIONAL_TIMING_STRONG     = 60.0   # Axis A ≥ this → a valid entry exists now
+POSITIONAL_DURABILITY_STRONG = 60.0   # Axis B ≥ this → business can compound
+# Each additional strategy that agrees adds this many points to the technical
+# pillar (capped at 100) — rewards confluence over a single lone signal.
+POSITIONAL_CONFLUENCE_BONUS  = 8.0
+
+# ── Phase-3 management-outlook research (Screener.in concalls) ───────────────
+# A buy-side-analyst step: scrape Screener.in Pros/Cons + announcements and the
+# latest concall transcript / investor presentation PDFs, then have the local
+# LLM judge management outlook (feeds the "management" pillar) and a verdict.
+POSITIONAL_CONCALL_RESEARCH_ENABLED = os.environ.get("POSITIONAL_CONCALL_RESEARCH_ENABLED", "True").lower() == "true"
+POSITIONAL_RESEARCH_LIMIT     = int(os.environ.get("POSITIONAL_RESEARCH_LIMIT", "25"))   # candidates researched per run
+POSITIONAL_CONCALL_MAX_PAGES  = int(os.environ.get("POSITIONAL_CONCALL_MAX_PAGES", "40")) # cap PDF pages extracted
+POSITIONAL_RESEARCH_CHUNK_CHARS = int(os.environ.get("POSITIONAL_RESEARCH_CHUNK_CHARS", "80000"))  # map-reduce threshold
+POSITIONAL_CONCALL_CACHE_DAYS = int(os.environ.get("POSITIONAL_CONCALL_CACHE_DAYS", "25"))  # reuse research within this window
+# A management score at/below this vetoes the buy regardless of technicals.
+POSITIONAL_MANAGEMENT_VETO_SCORE = float(os.environ.get("POSITIONAL_MANAGEMENT_VETO_SCORE", "25.0"))
+
+# Decoupled daily research refresh — re-runs the concall analyst over open
+# positions + watchlist + recent shortlist regardless of any technical trigger,
+# so holdings pick up new quarterly concalls (staggered across the quarter).
+POSITIONAL_RESEARCH_REFRESH_TIME = os.environ.get("POSITIONAL_RESEARCH_REFRESH_TIME", "08:30")
+# Held stocks whose management read drops to/below this raise an advisory review alert.
+POSITIONAL_MANAGEMENT_REVIEW_SCORE = float(os.environ.get("POSITIONAL_MANAGEMENT_REVIEW_SCORE", "35.0"))
+# When True, deteriorating management (SKIP / NEGATIVE / below review score) also
+# triggers an exit in run_exit_checks. Off by default — advisory alert only.
+POSITIONAL_MANAGEMENT_AUTO_EXIT = os.environ.get("POSITIONAL_MANAGEMENT_AUTO_EXIT", "False").lower() == "true"
+
+# New positional strategy tunables
+POS_BVM_HALT_ON_BEARISH = True
+POS_FTM_TIGHT_RANGE_LIMIT = 15.0
+POS_YMC_IMPULSE_MIN = 20.0
+POS_YMC_IMPULSE_MAX = 50.0
+POS_YMC_MAX_PAUSE = 6
+POS_YMC_FIB_THRESHOLD = 0.382
+
 
 # Delivery STT / stamp legacy names
 POS_EMA_FAST = 9
@@ -377,6 +430,14 @@ LLM_ENABLE_EVENTS       = True   # Earnings / corporate-action extraction from n
 LLM_ENABLE_EOD_REVIEW   = True   # End-of-day trade analysis + parameter recommendations
 LLM_ENABLE_META_WEIGHTS = True   # Hourly adaptive strategy weight rebalancing
 
+# Toggles for Positional LLM Research and Swapping
+POSITIONAL_LLM_RESEARCH_ENABLED = os.environ.get("POSITIONAL_LLM_RESEARCH_ENABLED", "True").lower() == "true"
+POSITIONAL_SWAP_ENABLED = os.environ.get("POSITIONAL_SWAP_ENABLED", "True").lower() == "true"
+POSITIONAL_SWAP_MIN_HOLD_DAYS = int(os.environ.get("POSITIONAL_SWAP_MIN_HOLD_DAYS", "5"))
+POSITIONAL_SWAP_SCORE_DIFF = int(os.environ.get("POSITIONAL_SWAP_SCORE_DIFF", "15"))
+POSITIONAL_SWAP_MAX_PNL_PCT = float(os.environ.get("POSITIONAL_SWAP_MAX_PNL_PCT", "3.0"))
+POSITIONAL_VIX_HIGH_THRESHOLD = float(os.environ.get("POSITIONAL_VIX_HIGH_THRESHOLD", "20.0"))
+
 # Provider selection — set LLM_PROVIDER=anthropic or LLM_PROVIDER=openrouter in .env
 # "openrouter" is the default (free models available, no Anthropic account needed).
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openrouter").lower()
@@ -390,6 +451,17 @@ if LLM_PROVIDER == "anthropic":
     LLM_EVENTS_MODEL     = "claude-haiku-4-5"
     LLM_EOD_MODEL        = "claude-sonnet-4-6"   # better pattern recognition for daily review
     LLM_META_MODEL       = "claude-haiku-4-5"
+elif LLM_PROVIDER == "ollama":
+    # Local Ollama model. Override via OLLAMA_MODEL in .env
+    _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
+    # _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "granite4.1:8b")
+    LLM_DEFAULT_MODEL    = _OLLAMA_MODEL
+    LLM_SENTIMENT_MODEL  = _OLLAMA_MODEL
+    LLM_VETO_MODEL       = _OLLAMA_MODEL
+    LLM_REGIME_MODEL     = _OLLAMA_MODEL
+    LLM_EVENTS_MODEL     = _OLLAMA_MODEL
+    LLM_EOD_MODEL        = _OLLAMA_MODEL
+    LLM_META_MODEL       = _OLLAMA_MODEL
 else:
     # OpenRouter — requires OPENROUTER_API_KEY.
     # Override any individual model via OPENROUTER_MODEL env var.
@@ -404,7 +476,10 @@ else:
     LLM_META_MODEL       = _OR_MODEL
 
 LLM_MAX_RETRIES       = 2    # retries on 429 / 5xx
-LLM_REQUEST_TIMEOUT_S = 30   # per-request timeout in seconds
+LLM_REQUEST_TIMEOUT_S = 90   # per-request timeout in seconds (hosted APIs)
+# Local Ollama is much slower (large prompts like concall transcripts can take
+# minutes), so it gets its own, longer timeout. Override via OLLAMA_REQUEST_TIMEOUT_S.
+OLLAMA_REQUEST_TIMEOUT_S = int(os.environ.get("OLLAMA_REQUEST_TIMEOUT_S", "600"))
 
 # Emit a clear startup line so you can always verify which model/provider is active.
 import logging as _logging

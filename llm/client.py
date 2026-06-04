@@ -72,6 +72,8 @@ def get_client():
 def _init_client():
     if LLM_PROVIDER == "anthropic":
         return _init_anthropic()
+    if LLM_PROVIDER == "ollama":
+        return "ollama_placeholder"
     return _init_openrouter()
 
 
@@ -202,6 +204,10 @@ def call_json(
             result, prompt_tokens, completion_tokens = _call_anthropic(
                 client, prompt=prompt, schema=schema,
                 system=system, model=model, max_tokens=max_tokens)
+        elif LLM_PROVIDER == "ollama":
+            result, prompt_tokens, completion_tokens = _call_ollama(
+                prompt=prompt, schema=schema,
+                system=system, model=model, max_tokens=max_tokens)
         else:
             result, prompt_tokens, completion_tokens = _call_openrouter(
                 client, prompt=prompt, schema=schema,
@@ -234,6 +240,105 @@ def call_json(
     if cache_key:
         _cache_put(cache_key, result)
     return result
+
+
+def call_text(
+    *,
+    prompt: str,
+    system: Optional[str] = None,
+    model: Optional[str] = None,
+    max_tokens: int = 512,
+    caller: str = "",
+) -> Optional[str]:
+    """Free-form text completion (no JSON, no schema). Returns the string or None.
+
+    Use this for "map" steps — e.g. summarising a long concall transcript — where
+    we want the model's natural prose output. Asking a local model for JSON on a
+    very large input makes it lapse into prose; produce text here, then run a small
+    JSON-extraction call (call_json) on the compact result.
+    """
+    from llm.observability import record as _obs_record
+    model = model or LLM_DEFAULT_MODEL
+
+    if _cb_is_open():
+        return None
+    client = get_client()
+    if client is None and LLM_PROVIDER != "ollama":
+        return None
+
+    t0 = time.monotonic()
+    text = None
+    pt = ct = None
+    error_msg = None
+    try:
+        if LLM_PROVIDER == "ollama":
+            text, pt, ct = _text_ollama(prompt=prompt, system=system, model=model, max_tokens=max_tokens)
+        elif LLM_PROVIDER == "anthropic":
+            text, pt, ct = _text_anthropic(client, prompt=prompt, system=system, model=model, max_tokens=max_tokens)
+        else:
+            text, pt, ct = _text_openrouter(client, prompt=prompt, system=system, model=model, max_tokens=max_tokens)
+    except Exception as e:
+        text = None
+        error_msg = str(e)
+
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    if text is None:
+        if "429" in (error_msg or ""):
+            _cb_record_429(model)
+        _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
+                    status="error", latency_ms=latency_ms, error_msg=error_msg)
+        return None
+    _cb_record_success()
+    _obs_record(provider=LLM_PROVIDER, model=model, caller=caller, status="ok",
+                prompt_tokens=pt, completion_tokens=ct, latency_ms=latency_ms)
+    return text
+
+
+def _text_ollama(*, prompt, system, model, max_tokens):
+    import requests
+    from config import OLLAMA_REQUEST_TIMEOUT_S
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3]
+    url = f"{base_url}/api/chat"
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    payload = {
+        "model": model, "messages": messages, "stream": False,
+        "options": {"temperature": 0.0, "num_predict": max_tokens}, "think": False,
+    }
+    res = requests.post(url, json=payload, timeout=OLLAMA_REQUEST_TIMEOUT_S)
+    if res.status_code != 200:
+        log.warning("Ollama text call HTTP %d: %s", res.status_code, res.text[:200])
+        return None, None, None
+    data = res.json()
+    content = (data.get("message", {}) or {}).get("content", "") or ""
+    return (content.strip() or None), data.get("prompt_eval_count"), data.get("eval_count")
+
+
+def _text_openrouter(client, *, prompt, system, model, max_tokens):
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    resp = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
+    usage = getattr(resp, "usage", None)
+    content = resp.choices[0].message.content or ""
+    return (content.strip() or None), getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None)
+
+
+def _text_anthropic(client, *, prompt, system, model, max_tokens):
+    kwargs: dict[str, Any] = {"model": model, "max_tokens": max_tokens,
+                              "messages": [{"role": "user", "content": prompt}]}
+    if system:
+        kwargs["system"] = system
+    resp = client.messages.create(**kwargs)
+    pt = getattr(getattr(resp, "usage", None), "input_tokens", None)
+    ct = getattr(getattr(resp, "usage", None), "output_tokens", None)
+    txt = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), None)
+    return (txt.strip() if txt else None), pt, ct
 
 
 def _call_anthropic(client, *, prompt, schema, system, model, max_tokens):
@@ -307,28 +412,56 @@ def _schema_to_prompt_hint(schema: dict) -> str:
     return "{\n" + "\n".join(lines) + "\n}"
 
 
+def _first_json_object(text: str) -> Optional[dict]:
+    """Return the first complete, balanced, parseable JSON object in ``text``,
+    even when it's surrounded by prose or markdown. Brace-counting (string-aware)
+    so a ``}`` inside prose after the object doesn't truncate it."""
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_str = esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except json.JSONDecodeError:
+                        break  # malformed; advance to the next "{"
+        start = text.find("{", start + 1)
+    return None
+
+
 def _extract_json(text: str) -> Optional[dict]:
-    """Parse JSON from model output, tolerating markdown code fences."""
+    """Parse JSON from model output, tolerating markdown fences and prose
+    preamble/epilogue that local models often add around the object."""
+    if not text:
+        return None
     text = text.strip()
     # Strip ```json ... ``` or ``` ... ``` fences if present
-    if text.startswith("```"):
-        lines = text.splitlines()
-        text = "\n".join(
-            line for line in lines
-            if not line.strip().startswith("```")
-        ).strip()
+    if "```" in text:
+        import re
+        text = re.sub(r"```(?:json)?", "", text).strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Try to find the first {...} block
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(text[start:end + 1])
-            except json.JSONDecodeError:
-                pass
-    log.warning("LLM: could not parse JSON from response: %.120s", text)
+        pass
+    obj = _first_json_object(text)
+    if obj is not None:
+        return obj
+    log.warning("LLM: could not parse JSON from response: %.160s", text)
     return None
 
 
@@ -356,3 +489,59 @@ def _cache_put(key: str, value: dict) -> None:
         _cache_path(key).write_text(json.dumps(value), encoding="utf-8")
     except Exception as e:
         log.debug("LLM cache write failed: %s", e)
+
+
+def _call_ollama(*, prompt, schema, system, model, max_tokens):
+    """Call local Ollama native chat endpoint, explicitly disabling thinking mode."""
+    import requests
+    from config import OLLAMA_REQUEST_TIMEOUT_S
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    # Clean and convert OpenAI v1 compatibility base URL to raw Ollama base URL
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3]
+    url = f"{base_url}/api/chat"
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    schema_hint = _schema_to_prompt_hint(schema)
+    instr = ("\n\nRespond with a JSON object ONLY — no prose, no markdown, no preamble. "
+             f"Match this structure exactly:\n{schema_hint}")
+    if messages and messages[0]["role"] == "system":
+        messages[0]["content"] += instr
+    else:
+        messages.insert(0, {"role": "system", "content": instr.strip()})
+
+    def _post(fmt):
+        """POST once with a given Ollama ``format`` (a JSON schema dict, or "json")."""
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "format": fmt,
+            "options": {"temperature": 0.0, "num_predict": max_tokens},
+            "think": False,
+        }
+        res = requests.post(url, json=payload, timeout=OLLAMA_REQUEST_TIMEOUT_S)
+        if res.status_code != 200:
+            log.warning("Ollama call HTTP %d (format=%s): %s", res.status_code,
+                        "schema" if isinstance(fmt, dict) else fmt, res.text[:200])
+            return None, None, None
+        data = res.json()
+        content = data.get("message", {}).get("content", "") or ""
+        return _extract_json(content), data.get("prompt_eval_count"), data.get("eval_count")
+
+    try:
+        # 1) Grammar-constrained structured output — the model is forced to emit
+        #    schema-conforming JSON (strongest guarantee for local models).
+        parsed, pt, ct = _post(schema)
+        if parsed is not None:
+            return parsed, pt, ct
+        # 2) Fallback for older Ollama (or a rejected schema): plain JSON mode.
+        log.info("Ollama: schema-constrained output unusable — retrying in plain json mode")
+        return _post("json")
+    except Exception as e:
+        log.warning("Ollama native call exception (%s): %s", model, e)
+        raise

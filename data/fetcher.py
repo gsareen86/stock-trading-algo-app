@@ -75,8 +75,11 @@ def fetch_candles(
         return pd.DataFrame()
 
     # yfinance sometimes returns MultiIndex columns for single ticker — flatten.
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+    if isinstance(df.columns, pd.MultiIndex) or hasattr(df.columns, "levels"):
+        if any(yf_t in str(col) for col in df.columns.get_level_values(0)):
+            df = df[yf_t]
+        else:
+            df.columns = df.columns.get_level_values(0)
 
     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
     df.dropna(inplace=True)
@@ -216,8 +219,7 @@ NSE_HOLIDAYS: set[str] = {
     "2026-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
     "2026-04-21",  # Ram Navami
     "2026-04-30",  # Mahavir Jayanti  ← user reported "market closed today"
-    "2026-05-01",  # Maharashtra Day
-    "2026-05-27",  # Buddha Pournima
+    "2026-05-01",  # Maharashtra Day (also Buddha Pournima 2026 — full-moon Vaisakha falls May 1)
     "2026-08-15",  # Independence Day
     "2026-08-27",  # Ganesh Chaturthi
     "2026-10-02",  # Mahatma Gandhi Jayanti / Dussehra

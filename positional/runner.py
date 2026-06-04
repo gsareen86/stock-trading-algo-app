@@ -25,11 +25,13 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timedelta
+from typing import Optional
 
 from config import (
     DEFAULT_MODE,
     IST,
     POSITIONAL_ALERT_TIME,
+    POSITIONAL_RESEARCH_REFRESH_TIME,
     POSITIONAL_SCAN_TIME,
 )
 
@@ -59,10 +61,18 @@ def _fetch_daily_df(ticker: str):
     """Fetch 14 months of daily data for a ticker. Returns DataFrame or None."""
     try:
         import yfinance as yf
+        import pandas as pd
         t = ticker if ticker.endswith((".NS", ".BO")) else ticker + ".NS"
         df = yf.download(t, period="14mo", interval="1d",
                          auto_adjust=True, progress=False)
-        return df if df is not None and not df.empty else None
+        if df is not None and not df.empty:
+            if isinstance(df.columns, pd.MultiIndex) or hasattr(df.columns, "levels"):
+                if any(t in str(col) for col in df.columns.get_level_values(0)):
+                    df = df[t]
+                else:
+                    df.columns = df.columns.get_level_values(0)
+            return df
+        return None
     except Exception as e:
         log.debug("[pos_runner] fetch failed for %s: %s", ticker, e)
         return None
@@ -71,7 +81,9 @@ def _fetch_daily_df(ticker: str):
 # ── Open a new position ───────────────────────────────────────────────────────
 
 def _open_position(ticker: str, price: float, score: float,
-                   scan_id: int, regime_flag: str) -> bool:
+                   scan_id: int, regime_flag: str,
+                   reason: Optional[str] = None,
+                   reduce_size: bool = False) -> bool:
     """Place a BUY order and record in pos_positions + pos_trades."""
     from positional.risk import (
         positional_position_size, compute_hard_stop, compute_target,
@@ -87,10 +99,63 @@ def _open_position(ticker: str, price: float, score: float,
         return False
 
     size_mult = current_size_multiplier()
+    if reduce_size:
+        size_mult *= 0.50
+
     qty       = positional_position_size(price, size_multiplier=size_mult)
     if qty <= 0:
         log.info("[pos_runner] %s: qty=0 at price=%.2f (insufficient capital)", ticker, price)
         return False
+
+    # Pre-trade LLM Veto Gate
+    from config import LLM_ENABLE_VETO
+    if LLM_ENABLE_VETO and reason is None:
+        try:
+            from llm.veto import llm_veto, apply_veto_to_qty
+            # Fetch recent news and metadata for the ticker
+            with get_conn() as conn:
+                _recent_news = [
+                    dict(r) for r in conn.execute(
+                        """SELECT title, ts, sentiment FROM news
+                           WHERE tickers LIKE ? ORDER BY ts DESC LIMIT 5""",
+                        (f"%{ticker}%",),
+                    ).fetchall()
+                ]
+                row_sector = conn.execute(
+                    "SELECT sector FROM fundamentals WHERE ticker=?",
+                    (ticker,),
+                ).fetchone()
+                sector = row_sector["sector"] if row_sector and row_sector["sector"] else ""
+
+            sentiments = [float(n["sentiment"]) for n in _recent_news if n.get("sentiment") is not None]
+            sentiment_score = sum(sentiments) / len(sentiments) if sentiments else 0.0
+
+            _fired = [("Minervini Trend Template & VCP", "BUY", score)]
+            
+            _verdict, _vreason = llm_veto(
+                ticker=ticker,
+                side="LONG",
+                price=price,
+                composite_score=score,
+                technical_score=score,
+                sentiment_score=sentiment_score,
+                fired_strategies=_fired,
+                regime=regime_flag.lower(),
+                recent_news=_recent_news,
+                sector=sector,
+            )
+            
+            qty = apply_veto_to_qty(qty, _verdict)
+            if qty == 0:
+                log.info("[pos_runner] LLM veto SKIP LONG %s: %s", ticker, _vreason)
+                return False
+            if _verdict == "REDUCE":
+                log.info("[pos_runner] LLM veto REDUCE LONG %s (50%%): %s", ticker, _vreason)
+                reason = f"LLM VETO REDUCE (50%): {_vreason}"
+            else:
+                reason = f"LLM VETO PROCEED: {_vreason}"
+        except Exception as e:
+            log.warning("[pos_runner] LLM veto failed for %s: %s", ticker, e)
 
     # Place order
     broker = get_broker()
@@ -104,6 +169,8 @@ def _open_position(ticker: str, price: float, score: float,
     hard_stop  = compute_hard_stop(fill)
     target     = compute_target(fill)
     entry_date = datetime.now(IST).isoformat()
+
+    entry_reason = reason or f"EOD scan entry score={score:.0f}"
 
     try:
         with get_conn() as conn:
@@ -122,14 +189,14 @@ def _open_position(ticker: str, price: float, score: float,
                    (ts, ticker, side, quantity, price, costs, pnl, reason, position_id)
                    VALUES (?,?,?,?,?,?,0,?,?)""",
                 (entry_date, ticker, "BUY", qty, fill, costs,
-                 f"EOD scan entry score={score:.0f}", pos_id),
+                 entry_reason, pos_id),
             )
     except Exception as e:
         log.error("[pos_runner] DB write failed for %s: %s", ticker, e)
         return False
 
-    log.info("[pos_runner] OPENED: %s qty=%d fill=%.2f stop=%.2f target=%.2f broker=%s",
-             ticker, qty, fill, hard_stop, target, broker.name)
+    log.info("[pos_runner] OPENED: %s qty=%d fill=%.2f stop=%.2f target=%.2f broker=%s reason=%s",
+             ticker, qty, fill, hard_stop, target, broker.name, entry_reason)
     return True
 
 
@@ -191,12 +258,32 @@ def _close_position(pos: dict, current_price: float, reason: str) -> bool:
 
 # ── EOD Exit Management ───────────────────────────────────────────────────────
 
-def run_exit_checks() -> dict:
+def _calendar_days_held(entry_date) -> int:
+    """Calendar days a position has been held, derived from its entry date.
+
+    Hold duration must come from the entry date — the old approach incremented
+    a stored counter on every exit-check run, so extra EOD scans, manual
+    triggers and server restarts inflated it (e.g. 51 "days" for a 16-day hold).
+    """
+    if not entry_date:
+        return 0
+    raw = str(entry_date)
+    try:
+        ed = datetime.fromisoformat(raw)
+    except ValueError:
+        try:
+            ed = datetime.fromisoformat(raw.replace("Z", "").split(".")[0].replace(" ", "T"))
+        except ValueError:
+            return 0
+    return max(0, (datetime.now(IST).date() - ed.date()).days)
+
+
+def run_exit_checks(force: bool = False) -> dict:
     """
     Check all OPEN pos_positions for exit conditions.
     Returns summary: {exited, sell_alerts, reentry_alerts, updated, errors}
     """
-    if not _is_trading_day():
+    if not force and not _is_trading_day():
         return {"skipped": True, "reason": "non-trading day"}
 
     log.info("[pos_runner] === EXIT CHECK START ===")
@@ -235,11 +322,19 @@ def run_exit_checks() -> dict:
             if current_price > peak:
                 peak = current_price
 
-            # Increment days_held
-            days_held = int(pos.get("days_held", 0)) + 1
+            # Derive hold duration from the entry date (not a per-run counter).
+            # Set it on the pos dict too so check_time_stop sees the right value.
+            days_held = _calendar_days_held(pos.get("entry_date"))
+            pos["days_held"] = days_held
 
-            # Evaluate exit
+            # Evaluate exit (technical first, then optional management-based exit)
             exit_reason = evaluate_exits(pos, df)
+            if not exit_reason:
+                try:
+                    from positional.research import management_exit_reason
+                    exit_reason = management_exit_reason(ticker)
+                except Exception:
+                    exit_reason = None
             if exit_reason:
                 _close_position(pos, current_price, exit_reason)
                 sell_alerts_list.append({
@@ -249,13 +344,10 @@ def run_exit_checks() -> dict:
                 })
                 exited += 1
             else:
-                # Update current EMA trail stop and counters
+                # Persist the EMA-trail level + the trailing below-EMA count
+                # already computed by check_ema_trailing_stop (no re-increment).
                 ema21_val = compute_ema21(df)
                 below_ema = int(pos.get("below_ema_consecutive", 0))
-                if current_price < ema21_val:
-                    below_ema += 1
-                else:
-                    below_ema = 0
                 try:
                     with get_conn() as conn:
                         conn.execute(
@@ -319,23 +411,245 @@ def run_exit_checks() -> dict:
     return summary
 
 
+def _fetch_india_vix() -> float:
+    """Fetch the latest close of ^INDIAVIX from yfinance. Returns a fallback value (15.0) on failure."""
+    try:
+        import yfinance as yf
+        vix = yf.Ticker("^INDIAVIX")
+        # Fetch 5 days of history to guarantee a valid close price
+        df = vix.history(period="5d")
+        if df is not None and not df.empty:
+            close = df["Close"].dropna()
+            if not close.empty:
+                val = float(close.iloc[-1])
+                log.info("[pos_runner] Fetched latest India VIX: %.2f", val)
+                return val
+        log.warning("[pos_runner] India VIX dataframe empty or null, using fallback 15.0")
+    except Exception as e:
+        log.warning("[pos_runner] Could not fetch India VIX: %s. Using fallback 15.0", e)
+    return 15.0
+
+
+def run_opportunity_swaps(open_positions: list[dict], buy_candidates: list[dict], regime_flag: str) -> list[dict]:
+    """
+    Evaluates currently held open positions for swapping opportunities.
+    If a currently held stock is stagnant/underperforming (days_held >= min, pnl_pct < max)
+    and a significantly better new buy candidate is available (score diff >= threshold),
+    sells the held position and buys the new candidate.
+
+    Returns list of executed swap dicts.
+    """
+    from config import (
+        POSITIONAL_SWAP_ENABLED,
+        POSITIONAL_SWAP_MIN_HOLD_DAYS,
+        POSITIONAL_SWAP_SCORE_DIFF,
+        POSITIONAL_SWAP_MAX_PNL_PCT,
+    )
+
+    swap_enabled = POSITIONAL_SWAP_ENABLED
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT positional_swap_enabled FROM bot_control WHERE id = 1"
+            ).fetchone()
+            if row and "positional_swap_enabled" in row.keys():
+                swap_enabled = bool(row["positional_swap_enabled"])
+    except Exception as e:
+        log.warning("[pos_runner] Could not fetch positional_swap_enabled from bot_control: %s", e)
+
+    if not swap_enabled:
+        return []
+
+    if not open_positions or not buy_candidates:
+        return []
+
+    log.info("[pos_runner] Checking for portfolio opportunity swaps (held: %d, candidates: %d)...",
+             len(open_positions), len(buy_candidates))
+
+    swaps_executed = []
+
+    # 1. Filter eligible held positions (stagnant/underperforming)
+    eligible_swaps = []
+    for pos in open_positions:
+        ticker = pos["ticker"]
+        days_held = pos.get("days_held", 0)
+        entry_price = float(pos["entry_price"])
+
+        df = _fetch_daily_df(ticker)
+        if df is None or df.empty:
+            log.warning("[pos_runner] Swap check: could not fetch daily df for %s", ticker)
+            continue
+        last_close = float(df["Close"].iloc[-1])
+        # Guard against NaN closes (yfinance can return an incomplete/empty
+        # latest bar). Without this, NaN cascades through pnl_pct → fill price
+        # → close_position and ultimately blows up the swap with
+        # "cannot convert float NaN to integer".
+        if last_close != last_close or entry_price <= 0:
+            log.warning("[pos_runner] Swap check: invalid last close for %s "
+                        "(close=%r entry=%r) — skipping",
+                        ticker, last_close, entry_price)
+            continue
+        current_price = last_close
+        pnl_pct = ((current_price - entry_price) / entry_price) * 100
+
+        if days_held < POSITIONAL_SWAP_MIN_HOLD_DAYS:
+            log.debug("[pos_runner] %s held %d days (< %d min), ineligible for swap",
+                      ticker, days_held, POSITIONAL_SWAP_MIN_HOLD_DAYS)
+            continue
+
+        if pnl_pct >= POSITIONAL_SWAP_MAX_PNL_PCT:
+            log.debug("[pos_runner] %s PnL is %.1f%% (>= %.1f%% max), winner letting it run",
+                      ticker, pnl_pct, POSITIONAL_SWAP_MAX_PNL_PCT)
+            continue
+
+        # 2. Get technical score for this held position today
+        from positional.scanner import scan_ticker
+        scan_res = scan_ticker(ticker, df)
+        if not scan_res:
+            log.debug("[pos_runner] Swap check: scan failed for %s", ticker)
+            continue
+        current_score = scan_res["score"]
+
+        eligible_swaps.append({
+            "pos": pos,
+            "ticker": ticker,
+            "current_score": current_score,
+            "current_price": current_price,
+            "pnl_pct": pnl_pct
+        })
+
+    if not eligible_swaps:
+        log.info("[pos_runner] No eligible stagnant positions for swapping today.")
+        return []
+
+    # Sort eligible swaps by their current score ascending (swap out worst scores first)
+    eligible_swaps.sort(key=lambda x: x["current_score"])
+
+    # Track which candidates are already held in open positions so we don't open duplicates
+    held_tickers = {p["ticker"] for p in open_positions}
+
+    # Available candidates copy
+    available_candidates = list(buy_candidates)
+
+    for swap_item in eligible_swaps:
+        old_ticker = swap_item["ticker"]
+        old_score = swap_item["current_score"]
+        old_price = swap_item["current_price"]
+        old_pnl = swap_item["pnl_pct"]
+        pos = swap_item["pos"]
+
+        best_cand = None
+        for cand in available_candidates:
+            new_ticker = cand["ticker"]
+            new_score = cand["score"]
+
+            if new_ticker in held_tickers:
+                continue
+
+            if new_score >= old_score + POSITIONAL_SWAP_SCORE_DIFF:
+                best_cand = cand
+                break
+
+        if best_cand:
+            new_ticker = best_cand["ticker"]
+            new_score = best_cand["score"]
+            new_price = best_cand["price"]
+            reduce_size = best_cand.get("llm_verdict") == "REDUCE"
+
+            log.info("[pos_runner] SWAP TRIGGERED: Replacing %s (Score %.1f, PnL %.1f%%) with %s (Score %.1f)",
+                     old_ticker, old_score, old_pnl, new_ticker, new_score)
+
+            # Executing swap:
+            # A. Sell stagnant position first to release capital
+            exit_reason = f"SWAP: Replaced by {new_ticker} (Score {new_score:.0f} vs {old_score:.0f})"
+            close_ok = _close_position(pos, old_price, exit_reason)
+
+            if close_ok:
+                # B. Buy the superior candidate immediately
+                entry_reason = f"SWAP: Replacing {old_ticker} (Score {new_score:.0f} vs {old_score:.0f})"
+                opened = _open_position(
+                    ticker=new_ticker,
+                    price=new_price,
+                    score=new_score,
+                    scan_id=0,
+                    regime_flag=regime_flag,
+                    reason=entry_reason,
+                    reduce_size=reduce_size
+                )
+
+                if opened:
+                    # Successfully swapped!
+                    # Add to held_tickers and remove from candidates to avoid repeated buys
+                    held_tickers.add(new_ticker)
+                    if best_cand in available_candidates:
+                        available_candidates.remove(best_cand)
+
+                    swaps_executed.append({
+                        "old_ticker": old_ticker,
+                        "new_ticker": new_ticker,
+                        "old_score": old_score,
+                        "new_score": new_score,
+                        "old_price": old_price,
+                        "new_price": new_price,
+                        "pnl_pct": old_pnl
+                    })
+
+                    # Send dedicated swap Telegram alert
+                    try:
+                        from positional.alerts import send_swap_alert
+                        send_swap_alert(
+                            old_ticker=old_ticker,
+                            new_ticker=new_ticker,
+                            old_score=old_score,
+                            new_score=new_score,
+                            old_price=old_price,
+                            new_price=new_price,
+                            pnl_pct=old_pnl
+                        )
+                    except Exception as e:
+                        log.warning("[pos_runner] Swap Telegram alert failed: %s", e)
+                else:
+                    log.error("[pos_runner] Swap execution: failed to open new position for %s after closing %s!",
+                              new_ticker, old_ticker)
+
+    log.info("[pos_runner] Opportunity swap check complete. Executed swaps: %d", len(swaps_executed))
+    return swaps_executed
+
+
 # ── EOD Scan ─────────────────────────────────────────────────────────────────
 
-def run_eod_scan() -> dict:
+def run_eod_scan(force: bool = False) -> dict:
     """
     Main EOD scan: runs Minervini Trend Template + VCP on the fundamental universe.
     Opens positions for BUY alerts (paper mode) or sends SELL/BUY alerts.
+    Supports dynamic VIX adjustments, LLM research, and opportunity swapping.
     Returns summary dict.
     """
     if not _positional_enabled():
         log.debug("[pos_runner] positional module disabled")
         return {"skipped": True, "reason": "positional_enabled=0"}
-    if not _is_trading_day():
+    if not force and not _is_trading_day():
         return {"skipped": True, "reason": "non-trading day"}
 
     log.info("[pos_runner] === EOD SCAN START ===")
 
-    # Step 1: Market regime
+    # Step 1: India VIX Check & Dynamic Score Threshold Adjustment
+    import config
+    import positional.scanner
+
+    vix_value = _fetch_india_vix()
+    if vix_value > config.POSITIONAL_VIX_HIGH_THRESHOLD:
+        log.info("[pos_runner] High VIX regime (%.2f > %.2f). Tightening screening score threshold to 67.",
+                 vix_value, config.POSITIONAL_VIX_HIGH_THRESHOLD)
+        config.POSITIONAL_MIN_TREND_SCORE = 67
+        positional.scanner.POSITIONAL_MIN_TREND_SCORE = 67
+    else:
+        log.info("[pos_runner] Standard VIX regime (%.2f). Score threshold is 60.", vix_value)
+        config.POSITIONAL_MIN_TREND_SCORE = 60
+        positional.scanner.POSITIONAL_MIN_TREND_SCORE = 60
+
+    # Step 2: Market regime
     from positional.market_regime import get_latest_regime
     regime = get_latest_regime()
     regime_flag  = regime.get("flag", "NEUTRAL")
@@ -345,21 +659,45 @@ def run_eod_scan() -> dict:
         log.info("[pos_runner] Regime=DEFENSIVE — reduced position sizes (%.0f%%)",
                  size_mult * 100)
 
-    # Step 2: Exit management first
-    exit_result = run_exit_checks()
+    # Step 3: Exit management first
+    exit_result = run_exit_checks(force=force)
     sell_alerts = exit_result.get("sell_alerts", [])
     reentry_alerts = exit_result.get("reentry_alerts", [])
 
-    # Step 3: Technical scan
+    # Step 4: Technical scan
     from positional.scanner import run_eod_scan as _scan
     scan_results = _scan()
     buy_alerts_scanned = [r for r in scan_results if r["alert_type"] == "BUY"]
-    buy_alerts_taken: list[dict] = []
+    longterm_watch = [r for r in scan_results if r.get("horizon") == "LONG_TERM"]
 
-    for result in buy_alerts_scanned:
+    # Step 5: Management-outlook research (analyst pass over BUY setups +
+    # LONG_TERM watch candidates). Returns only the cleared buy pool; LONG_TERM
+    # names are researched + persisted for the dashboard but never auto-bought.
+    from config import POSITIONAL_LLM_RESEARCH_ENABLED
+    buy_candidates = list(buy_alerts_scanned)
+    if POSITIONAL_LLM_RESEARCH_ENABLED:
+        from positional.research import run_positional_llm_research
+        # A manually forced scan also forces fresh research (bypass analyst cache)
+        # so prompt/logic changes are reflected across the whole candidate list.
+        buy_candidates = run_positional_llm_research(
+            buy_alerts_scanned + longterm_watch, vix_value, force=force
+        )
+
+    buy_alerts_taken: list[dict] = []
+    processed_buy_tickers = set()
+
+    # Step 6: Normal buying (fill empty slots)
+    for result in buy_candidates:
         ticker = result["ticker"]
+        if ticker in processed_buy_tickers:
+            continue
+        processed_buy_tickers.add(ticker)
+        
         price  = result["price"]
         score  = result["score"]
+        verdict = result.get("llm_verdict", "PROCEED")
+        reduce_size = (verdict == "REDUCE")
+        reason = result.get("llm_reason", f"EOD scan entry score={score:.0f}")
 
         # Send Telegram alert for each BUY setup
         try:
@@ -376,13 +714,33 @@ def run_eod_scan() -> dict:
                 score=score,
                 scan_id=0,  # scan_id looked up from pos_scans in real use
                 regime_flag=regime_flag,
+                reason=reason,
+                reduce_size=reduce_size,
             )
             if opened:
                 buy_alerts_taken.append(result)
         except Exception as e:
             log.warning("[pos_runner] open_position failed for %s: %s", ticker, e)
 
-    # Step 4: Send EOD Telegram summary
+    # Step 7: Opportunity Swaps
+    swaps_executed = []
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            open_positions = conn.execute(
+                "SELECT * FROM pos_positions WHERE status='OPEN'"
+            ).fetchall()
+        open_positions = [dict(p) for p in open_positions]
+
+        # Remaining buy candidates that were NOT already taken in the normal entries
+        taken_tickers = {b["ticker"] for b in buy_alerts_taken}
+        remaining_candidates = [c for c in buy_candidates if c["ticker"] not in taken_tickers]
+
+        swaps_executed = run_opportunity_swaps(open_positions, remaining_candidates, regime_flag)
+    except Exception as e:
+        log.error("[pos_runner] Opportunity swapping error: %s", e)
+
+    # Step 8: Send EOD Telegram summary
     try:
         from positional.alerts import send_eod_summary
         time_stops = [s for s in sell_alerts if "TIME_STOP" in s.get("reason", "")]
@@ -390,18 +748,21 @@ def run_eod_scan() -> dict:
         hard_stops = [s for s in sell_alerts if "HARD_STOP" in s.get("reason", "")]
         send_eod_summary(
             regime=regime,
-            buy_alerts=buy_alerts_scanned,
+            buy_alerts=buy_candidates,  # use LLM-approved candidates
             sell_alerts=ema_exits + hard_stops,
             time_stops=time_stops,
             reentry_alerts=reentry_alerts,
+            swaps=swaps_executed,
         )
     except Exception as e:
         log.warning("[pos_runner] Telegram summary failed: %s", e)
 
     summary = {
         "regime": regime_flag,
-        "buy_alerts": len(buy_alerts_scanned),
+        "vix": vix_value,
+        "buy_alerts": len(buy_candidates),
         "positions_opened": len(buy_alerts_taken),
+        "swaps_executed": len(swaps_executed),
         "positions_exited": exit_result.get("exited", 0),
         "reentry_alerts": len(reentry_alerts),
         "universe_size": len(scan_results),
@@ -436,12 +797,38 @@ def run_positional_forever() -> None:
     Also runs a monthly regime check on the 1st trading day of the month.
     """
     log.info("[pos_runner] positional daemon started")
+
+    # NOTE: no scan/research is triggered on startup. The full-universe
+    # technical scan + LLM management research run ONLY at the scheduled
+    # times below (POSITIONAL_SCAN_TIME / POSITIONAL_RESEARCH_REFRESH_TIME)
+    # or via the manual UI triggers (/api/positional/scan and
+    # /api/positional/research/refresh). This avoids re-scanning the whole
+    # universe and re-running LLM summaries on every server restart.
+
     _last_scan_date:   object = None
     _last_alert_date:  object = None
     _last_regime_month: object = None
+    _last_refresh_date: object = None
 
     scan_h,  scan_m  = [int(x) for x in POSITIONAL_SCAN_TIME.split(":")]
     alert_h, alert_m = [int(x) for x in POSITIONAL_ALERT_TIME.split(":")]
+    refresh_h, refresh_m = [int(x) for x in POSITIONAL_RESEARCH_REFRESH_TIME.split(":")]
+
+    # If booted after a scheduled time, mark it as already handled so we do
+    # NOT auto-run a catch-up scan / research pass on startup. The scheduled
+    # work has effectively been missed for this boot — trigger it manually from
+    # the UI if needed; otherwise it resumes at its scheduled time tomorrow.
+    now = datetime.now(IST)
+    if (now.hour, now.minute) >= (scan_h, scan_m):
+        _last_scan_date = now.date()
+    if (now.hour, now.minute) >= (alert_h, alert_m):
+        _last_alert_date = now.date()
+    if (now.hour, now.minute) >= (refresh_h, refresh_m):
+        _last_refresh_date = now.date()
+    # Regime is a monthly job (first trading days of the month). Mark the
+    # current month handled on boot so a fresh start within that window does
+    # not auto-recompute it — use the manual trigger or wait for next month.
+    _last_regime_month = now.month
 
     while True:
         try:
@@ -459,11 +846,24 @@ def run_positional_forever() -> None:
                     except Exception as e:
                         log.error("[pos_runner] regime check error: %s", e)
 
+            # Daily management-research refresh (holdings + watchlist + shortlist).
+            # Decoupled from the technical scan so holdings pick up new concalls.
+            past_refresh = (now.hour, now.minute) >= (refresh_h, refresh_m)
+            if past_refresh and _is_trading_day() and _last_refresh_date != today:
+                _last_refresh_date = today
+                try:
+                    from positional.research import refresh_management_research
+                    refresh_management_research()
+                except Exception as e:
+                    log.error("[pos_runner] research refresh error: %s", e)
+                time.sleep(30)
+                continue
+
             # 4:00 PM: EOD scan
             if past_scan and _is_trading_day() and _last_scan_date != today:
                 _last_scan_date = today
                 try:
-                    run_eod_scan()
+                    run_eod_scan(force=False)
                 except Exception as e:
                     log.error("[pos_runner] EOD scan error: %s", e)
                 time.sleep(30)

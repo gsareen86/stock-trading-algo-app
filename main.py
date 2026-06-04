@@ -53,25 +53,13 @@ def _setup_logging():
         logging.getLogger(_noisy).setLevel(logging.ERROR)
 
 
-def start_dashboard():
-    """Launch Streamlit dashboard as a subprocess."""
-    script = Path(__file__).parent / "dashboard" / "app.py"
-    cmd = [
-        sys.executable, "-m", "streamlit", "run", str(script),
-        "--server.headless", "true",
-        "--server.port", os.environ.get("STREAMLIT_PORT", "8501"),
-        "--browser.gatherUsageStats", "false",
-        # Disable the local-sources file watcher. Without this, Streamlit walks
-        # every transitive module of `transformers` (loaded for FinBERT) and
-        # triggers lazy imports of vision models that depend on `torchvision` —
-        # which we don't install, so each one prints a ModuleNotFoundError
-        # traceback. Hundreds of these flood the terminal at startup. We
-        # don't need module hot-reload in a production bot.
-        "--server.fileWatcherType", "none",
-    ]
-    env = os.environ.copy()
-    env.setdefault("STREAMLIT_SERVER_FILE_WATCHER_TYPE", "none")
-    return subprocess.Popen(cmd, env=env)
+def start_api_server():
+    """Launch the FastAPI + React dashboard server."""
+    import uvicorn
+    port = int(os.environ.get("PORT", "8000"))
+    host = os.environ.get("HOST", "127.0.0.1")
+    print(f"[startup] Starting Unified FastAPI + React Dashboard on http://{host}:{port} ...", flush=True)
+    uvicorn.run("api.server:app", host=host, port=port, log_level="info")
 
 
 def main():
@@ -94,15 +82,21 @@ def main():
 
     init_db()
     initialize_if_empty()
-    # Auto-start: if market is currently open, set RUNNING immediately so the
-    # bot doesn't sit idle requiring a manual click. If market is closed, keep
-    # STOPPED — the run_forever loop will pick up automatically once open.
-    from data.fetcher import market_is_open as _market_is_open
+    # Auto-arm at startup: on any trading day (Mon-Fri, not an NSE holiday) set
+    # the bot RUNNING so it actually trades when the market opens. run_cycle()
+    # short-circuits on market_is_open(), so RUNNING outside market hours is
+    # harmless — it just idles. Previously this only armed if market was open
+    # AT BOOT, which left the bot STOPPED for the whole day after a pre-market
+    # restart (run_forever doesn't auto-flip status). On weekends/holidays,
+    # keep STOPPED. The user can still HALT manually via the UI any time.
+    from data.fetcher import is_nse_holiday
     from datetime import datetime as _dt
     from config import IST as _IST
-    _auto_status = "RUNNING" if _market_is_open(_dt.now(_IST)) else "STOPPED"
+    _now = _dt.now(_IST)
+    _is_trading_day = _now.weekday() < 5 and not is_nse_holiday(_now)
+    _auto_status = "RUNNING" if _is_trading_day else "STOPPED"
     set_bot_state(status=_auto_status, mode=DEFAULT_MODE)
-    print(f"[startup] Market {'OPEN' if _auto_status == 'RUNNING' else 'CLOSED'}"
+    print(f"[startup] {'Trading day' if _is_trading_day else 'Non-trading day'}"
           f" — bot status set to {_auto_status}, mode={DEFAULT_MODE}", flush=True)
 
     # Pre-warm FinBERT in a background thread so the first news-scrape cycle
@@ -123,8 +117,7 @@ def main():
         return
 
     if args.dashboard_only:
-        proc = start_dashboard()
-        proc.wait()
+        start_api_server()
         return
 
     if args.runner_only:
@@ -135,8 +128,7 @@ def main():
         run_positional_forever()
         return
 
-    # Full mode: dashboard + intraday runner + positional runner
-    dash_proc = start_dashboard()
+    # Full mode: API Server + Intraday Runner + Positional Runner
     runner = threading.Thread(target=run_forever, daemon=True, name="bot-runner")
     pos_runner = threading.Thread(target=run_positional_forever, daemon=True,
                                   name="positional-runner")
@@ -144,14 +136,11 @@ def main():
     pos_runner.start()
 
     try:
-        dash_proc.wait()
+        start_api_server()
     except KeyboardInterrupt:
-        print("\nShutting down…")
-    finally:
-        if dash_proc.poll() is None:
-            dash_proc.terminate()
-            dash_proc.wait()
+        print("\nShutting down unified trading app...")
 
 
 if __name__ == "__main__":
     main()
+

@@ -140,6 +140,48 @@ def send_sell_alert(ticker: str, price: float, reason: str,
     )
 
 
+def send_swap_alert(old_ticker: str, new_ticker: str, old_score: float, new_score: float,
+                    old_price: float, new_price: float, pnl_pct: float) -> None:
+    """Send alert for a positional portfolio swap (stagnant stock replaced by higher score)."""
+    pnl_icon = "✅" if pnl_pct >= 0 else "❌"
+    _send(
+        f"🔁 <b>PORTFOLIO SWAP REPLACEMENT</b>\n"
+        f"Replaced stagnant <b>{old_ticker}</b> (Score {old_score:.0f}) with promising <b>{new_ticker}</b> (Score {new_score:.0f})\n"
+        f"• Sold {old_ticker} @ ₹{old_price:,.2f} | P&L: {pnl_icon} {pnl_pct:+.1f}%\n"
+        f"• Bought {new_ticker} @ ₹{new_price:,.2f}"
+    )
+
+
+def send_management_review(review: dict) -> None:
+    """Advisory alert: a held stock's management/outlook read has deteriorated."""
+    ticker  = review.get("ticker", "?")
+    verdict = review.get("verdict", "?")
+    outlook = review.get("outlook", "?")
+    mgmt    = review.get("management_score")
+    thesis  = review.get("thesis", "")
+    mgmt_str = f"{mgmt:.0f}" if isinstance(mgmt, (int, float)) else "n/a"
+    _send(
+        f"⚠️ <b>MANAGEMENT REVIEW: {ticker}</b>\n"
+        f"Outlook: {outlook} | Verdict: {verdict} | Mgmt score: {mgmt_str}\n"
+        f"{thesis[:300]}"
+    )
+
+
+def send_news_impact_alert(alert: dict) -> bool:
+    """Critical news-impact alert for a held stock. Returns True on success."""
+    ticker = alert.get("ticker", "?")
+    severity = (alert.get("severity") or "info").upper()
+    action = alert.get("recommended_action", "")
+    summary = (alert.get("impact_summary") or "")[:400]
+    linkage_label = alert.get("linkage_label") or ""
+    return _send(
+        f"🚨 <b>[{severity}] NEWS IMPACT: {ticker}</b>\n"
+        f"Recommended action: <b>{action}</b>\n"
+        f"Linkage: {linkage_label}\n\n"
+        f"{summary}"
+    )
+
+
 def send_reentry_alert(ticker: str, price: float, ema21: float,
                        vol_ratio: float) -> None:
     """Send RE-ENTRY alert."""
@@ -156,6 +198,7 @@ def send_eod_summary(
     sell_alerts: list[dict],
     time_stops: list[dict],
     reentry_alerts: list[dict],
+    swaps: list[dict] = None,
 ) -> None:
     """
     Send the full 4:30 PM EOD summary via Telegram.
@@ -183,6 +226,18 @@ def send_eod_summary(
                          f"(₹{s['current_price']:,.0f})")
         lines.append("")
 
+    if swaps:
+        lines.append(f"🔁 <b>PORTFOLIO SWAPS ({len(swaps)}):</b>")
+        for sw in swaps:
+            pnl_pct = sw.get("pnl_pct", 0.0)
+            pnl_icon = "✅" if pnl_pct >= 0 else "❌"
+            lines.append(
+                f"• SWAP: <b>{sw['old_ticker']}</b> ➔ <b>{sw['new_ticker']}</b>\n"
+                f"  Sold {sw['old_ticker']} @ ₹{sw['old_price']:,.0f} ({pnl_icon} {pnl_pct:+.1f}%)\n"
+                f"  Bought {sw['new_ticker']} @ ₹{sw['new_price']:,.0f} (Score {sw['new_score']:.0f})"
+            )
+        lines.append("")
+
     if buy_alerts:
         lines.append(f"🔔 <b>NEW SETUPS ({len(buy_alerts)}):</b>")
         for b in buy_alerts[:5]:  # cap at 5
@@ -208,7 +263,7 @@ def send_eod_summary(
             lines.append(f"• WATCH: <b>{r['ticker']}</b> — {r['reason']}")
         lines.append("")
 
-    if not (sell_alerts or buy_alerts or time_stops or reentry_alerts):
+    if not (sell_alerts or buy_alerts or time_stops or reentry_alerts or swaps):
         lines.append("No actionable signals today.")
 
     lines.append("─────────────────────────────")

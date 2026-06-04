@@ -168,7 +168,10 @@ CREATE TABLE IF NOT EXISTS bot_control (
     risk_per_trade_pct REAL DEFAULT 0.04,
     stop_loss_pct REAL DEFAULT 0.05,
     take_profit_pct REAL DEFAULT 0.10,
-    min_composite_score REAL DEFAULT 60
+    min_composite_score REAL DEFAULT 60,
+    positional_enabled INTEGER DEFAULT 0,
+    positional_llm_research_enabled INTEGER DEFAULT 1,
+    positional_swap_enabled INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS pending_approvals (
@@ -319,7 +322,20 @@ CREATE TABLE IF NOT EXISTS pos_scans (
     atr_pct         REAL,
     score           REAL,
     alert_type      TEXT,
-    reason          TEXT
+    reason          TEXT,
+    composite_score   REAL,
+    confluence        INTEGER DEFAULT 0,
+    strategies_fired  TEXT,
+    horizon           TEXT,
+    conviction        TEXT,
+    timing_score      REAL,
+    durability_score  REAL,
+    quality_pillar    REAL,
+    valuation_pillar  REAL,
+    momentum_pillar   REAL,
+    sentiment_pillar  REAL,
+    management_pillar REAL,
+    est_hold_days     INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pos_positions (
@@ -367,11 +383,72 @@ CREATE TABLE IF NOT EXISTS pos_watchlist (
     reentry_eligible INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS pos_research (
+    ticker           TEXT PRIMARY KEY,
+    researched_at    TEXT NOT NULL,
+    concall_date     TEXT,
+    management_score REAL,
+    verdict          TEXT,
+    outlook          TEXT,
+    thesis           TEXT,
+    key_positives    TEXT,
+    key_risks        TEXT,
+    guidance         TEXT,
+    recommendation   TEXT,
+    recommendation_rationale TEXT,
+    concall_summary  TEXT,
+    fundamentals_summary TEXT,
+    sources          TEXT,
+    confidence       REAL
+);
+
+CREATE TABLE IF NOT EXISTS fundamentals_pins (
+    ticker     TEXT PRIMARY KEY,
+    added_at   TEXT NOT NULL,
+    notes      TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_tick     ON pos_scans(ticker);
 CREATE INDEX IF NOT EXISTS idx_pos_positions_stat ON pos_positions(status);
 CREATE INDEX IF NOT EXISTS idx_pos_trades_ts      ON pos_trades(ts);
+
+-- ── Alerts & Insights (LLM news-impact + sector linkage) ─────────────────────
+
+CREATE TABLE IF NOT EXISTS news_impact_alerts (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at          TEXT NOT NULL,
+    ticker              TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    sector              TEXT,
+    severity            TEXT NOT NULL,
+    recommended_action  TEXT NOT NULL,
+    linkage             TEXT NOT NULL,
+    linkage_sector      TEXT,
+    impact_summary      TEXT NOT NULL,
+    content_hash        TEXT NOT NULL,
+    superseded_by       INTEGER REFERENCES news_impact_alerts(id),
+    delivered_telegram  INTEGER DEFAULT 0,
+    model               TEXT,
+    meta                TEXT
+);
+
+CREATE TABLE IF NOT EXISTS news_sector_tags (
+    news_id            INTEGER PRIMARY KEY REFERENCES news(id),
+    tagged_at          TEXT NOT NULL,
+    primary_sector     TEXT,
+    ancillary_sectors  TEXT,
+    why_note           TEXT,
+    model              TEXT,
+    confidence         REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_created  ON news_impact_alerts(created_at);
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_ticker   ON news_impact_alerts(ticker);
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_severity ON news_impact_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_news_sector_tags_primary    ON news_sector_tags(primary_sector);
+CREATE INDEX IF NOT EXISTS idx_news_sector_tags_tagged_at  ON news_sector_tags(tagged_at);
 """
 
 # Postgres schema. We keep ts columns as TEXT (ISO strings) to match the
@@ -485,7 +562,10 @@ CREATE TABLE IF NOT EXISTS bot_control (
     risk_per_trade_pct DOUBLE PRECISION DEFAULT 0.04,
     stop_loss_pct DOUBLE PRECISION DEFAULT 0.05,
     take_profit_pct DOUBLE PRECISION DEFAULT 0.10,
-    min_composite_score DOUBLE PRECISION DEFAULT 60
+    min_composite_score DOUBLE PRECISION DEFAULT 60,
+    positional_enabled INTEGER DEFAULT 0,
+    positional_llm_research_enabled INTEGER DEFAULT 1,
+    positional_swap_enabled INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS pending_approvals (
@@ -631,7 +711,20 @@ CREATE TABLE IF NOT EXISTS pos_scans (
     atr_pct           DOUBLE PRECISION,
     score             DOUBLE PRECISION,
     alert_type        TEXT,
-    reason            TEXT
+    reason            TEXT,
+    composite_score   DOUBLE PRECISION,
+    confluence        INTEGER DEFAULT 0,
+    strategies_fired  TEXT,
+    horizon           TEXT,
+    conviction        TEXT,
+    timing_score      DOUBLE PRECISION,
+    durability_score  DOUBLE PRECISION,
+    quality_pillar    DOUBLE PRECISION,
+    valuation_pillar  DOUBLE PRECISION,
+    momentum_pillar   DOUBLE PRECISION,
+    sentiment_pillar  DOUBLE PRECISION,
+    management_pillar DOUBLE PRECISION,
+    est_hold_days     INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pos_positions (
@@ -679,11 +772,72 @@ CREATE TABLE IF NOT EXISTS pos_watchlist (
     reentry_eligible INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS pos_research (
+    ticker           TEXT PRIMARY KEY,
+    researched_at    TEXT NOT NULL,
+    concall_date     TEXT,
+    management_score DOUBLE PRECISION,
+    verdict          TEXT,
+    outlook          TEXT,
+    thesis           TEXT,
+    key_positives    TEXT,
+    key_risks        TEXT,
+    guidance         TEXT,
+    recommendation   TEXT,
+    recommendation_rationale TEXT,
+    concall_summary  TEXT,
+    fundamentals_summary TEXT,
+    sources          TEXT,
+    confidence       DOUBLE PRECISION
+);
+
+CREATE TABLE IF NOT EXISTS fundamentals_pins (
+    ticker     TEXT PRIMARY KEY,
+    added_at   TEXT NOT NULL,
+    notes      TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_tick     ON pos_scans(ticker);
 CREATE INDEX IF NOT EXISTS idx_pos_positions_stat ON pos_positions(status);
 CREATE INDEX IF NOT EXISTS idx_pos_trades_ts      ON pos_trades(ts);
+
+-- ── Alerts & Insights (LLM news-impact + sector linkage) ─────────────────────
+
+CREATE TABLE IF NOT EXISTS news_impact_alerts (
+    id                  BIGSERIAL PRIMARY KEY,
+    created_at          TEXT NOT NULL,
+    ticker              TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    sector              TEXT,
+    severity            TEXT NOT NULL,
+    recommended_action  TEXT NOT NULL,
+    linkage             TEXT NOT NULL,
+    linkage_sector      TEXT,
+    impact_summary      TEXT NOT NULL,
+    content_hash        TEXT NOT NULL,
+    superseded_by       BIGINT REFERENCES news_impact_alerts(id),
+    delivered_telegram  INTEGER DEFAULT 0,
+    model               TEXT,
+    meta                JSONB
+);
+
+CREATE TABLE IF NOT EXISTS news_sector_tags (
+    news_id            BIGINT PRIMARY KEY REFERENCES news(id),
+    tagged_at          TEXT NOT NULL,
+    primary_sector     TEXT,
+    ancillary_sectors  JSONB,
+    why_note           TEXT,
+    model              TEXT,
+    confidence         DOUBLE PRECISION
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_created  ON news_impact_alerts(created_at);
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_ticker   ON news_impact_alerts(ticker);
+CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_severity ON news_impact_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_news_sector_tags_primary    ON news_sector_tags(primary_sector);
+CREATE INDEX IF NOT EXISTS idx_news_sector_tags_tagged_at  ON news_sector_tags(tagged_at);
 """
 
 
@@ -865,8 +1019,15 @@ def _migrate_positional_columns(conn) -> None:
         appr_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
         if "trade_type" not in appr_cols:
             conn.execute("ALTER TABLE pending_approvals ADD COLUMN trade_type TEXT DEFAULT 'intraday'")
-        if "positional_enabled" not in {r["name"] for r in conn.execute("PRAGMA table_info(bot_control)").fetchall()}:
+        
+        bot_ctrl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(bot_control)").fetchall()}
+        if "positional_enabled" not in bot_ctrl_cols:
             conn.execute("ALTER TABLE bot_control ADD COLUMN positional_enabled INTEGER DEFAULT 0")
+        if "positional_llm_research_enabled" not in bot_ctrl_cols:
+            conn.execute("ALTER TABLE bot_control ADD COLUMN positional_llm_research_enabled INTEGER DEFAULT 1")
+        if "positional_swap_enabled" not in bot_ctrl_cols:
+            conn.execute("ALTER TABLE bot_control ADD COLUMN positional_swap_enabled INTEGER DEFAULT 1")
+            
         sig_cols = {r["name"] for r in conn.execute("PRAGMA table_info(signals)").fetchall()}
         if "threshold_at_time" not in sig_cols:
             conn.execute("ALTER TABLE signals ADD COLUMN threshold_at_time REAL")
@@ -882,9 +1043,163 @@ def _migrate_positional_columns(conn) -> None:
         "ALTER TABLE positions ADD COLUMN IF NOT EXISTS trade_type TEXT DEFAULT 'intraday'",
         "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS trade_type TEXT DEFAULT 'intraday'",
         "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS positional_enabled INTEGER DEFAULT 0",
+        "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS positional_llm_research_enabled INTEGER DEFAULT 1",
+        "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS positional_swap_enabled INTEGER DEFAULT 1",
         "ALTER TABLE signals ADD COLUMN IF NOT EXISTS threshold_at_time DOUBLE PRECISION",
         "ALTER TABLE signals ADD COLUMN IF NOT EXISTS mode_at_time TEXT",
         "ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS side TEXT DEFAULT 'LONG'",
+    ):
+        cur.execute(sql)
+
+
+def _migrate_pos_scans_scorecard_columns(conn) -> None:
+    """Add the confluence-scorecard columns to ``pos_scans`` if missing.
+
+    Pre-migration scan rows keep NULL in the new columns; the API tolerates that.
+    """
+    cols = (
+        ("composite_score",  "REAL", "DOUBLE PRECISION"),
+        ("confluence",       "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+        ("strategies_fired", "TEXT", "TEXT"),
+        ("horizon",          "TEXT", "TEXT"),
+        ("conviction",       "TEXT", "TEXT"),
+        ("timing_score",     "REAL", "DOUBLE PRECISION"),
+        ("durability_score", "REAL", "DOUBLE PRECISION"),
+        ("quality_pillar",   "REAL", "DOUBLE PRECISION"),
+        ("valuation_pillar", "REAL", "DOUBLE PRECISION"),
+        ("momentum_pillar",  "REAL", "DOUBLE PRECISION"),
+        ("sentiment_pillar", "REAL", "DOUBLE PRECISION"),
+        ("management_pillar", "REAL", "DOUBLE PRECISION"),
+        ("est_hold_days",    "INTEGER", "INTEGER"),
+    )
+    if BACKEND == "sqlite":
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(pos_scans)").fetchall()}
+        for name, sqlite_type, _ in cols:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE pos_scans ADD COLUMN {name} {sqlite_type}")
+        return
+
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    for name, _, pg_type in cols:
+        cur.execute(f"ALTER TABLE pos_scans ADD COLUMN IF NOT EXISTS {name} {pg_type}")
+
+
+def _migrate_pos_research_columns(conn) -> None:
+    """Add the two-stage-summary + recommendation columns to ``pos_research``."""
+    cols = (
+        ("recommendation",           "TEXT", "TEXT"),
+        ("recommendation_rationale", "TEXT", "TEXT"),
+        ("concall_summary",          "TEXT", "TEXT"),
+        ("fundamentals_summary",     "TEXT", "TEXT"),
+    )
+    if BACKEND == "sqlite":
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(pos_research)").fetchall()}
+        for name, sqlite_type, _ in cols:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE pos_research ADD COLUMN {name} {sqlite_type}")
+        return
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    for name, _, pg_type in cols:
+        cur.execute(f"ALTER TABLE pos_research ADD COLUMN IF NOT EXISTS {name} {pg_type}")
+
+
+def _migrate_news_impact_columns(conn) -> None:
+    """Idempotently create the two ``news_impact_*`` tables + matching indexes
+    for legacy databases that pre-date the Alerts & Insights feature.
+
+    Also adds the ``last_news_impact_at`` throttle column to ``bot_control``
+    so the news-impact pipeline can keep cross-process visibility of when it
+    last ran (in-process sentinel handles same-process throttling).
+    """
+    if BACKEND == "sqlite":
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS news_impact_alerts (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at          TEXT NOT NULL,
+                ticker              TEXT NOT NULL,
+                scope               TEXT NOT NULL,
+                sector              TEXT,
+                severity            TEXT NOT NULL,
+                recommended_action  TEXT NOT NULL,
+                linkage             TEXT NOT NULL,
+                linkage_sector      TEXT,
+                impact_summary      TEXT NOT NULL,
+                content_hash        TEXT NOT NULL,
+                superseded_by       INTEGER REFERENCES news_impact_alerts(id),
+                delivered_telegram  INTEGER DEFAULT 0,
+                model               TEXT,
+                meta                TEXT
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS news_sector_tags (
+                news_id            INTEGER PRIMARY KEY REFERENCES news(id),
+                tagged_at          TEXT NOT NULL,
+                primary_sector     TEXT,
+                ancillary_sectors  TEXT,
+                why_note           TEXT,
+                model              TEXT,
+                confidence         REAL
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_created  ON news_impact_alerts(created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_ticker   ON news_impact_alerts(ticker)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_severity ON news_impact_alerts(severity)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_sector_tags_primary    ON news_sector_tags(primary_sector)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_sector_tags_tagged_at  ON news_sector_tags(tagged_at)"
+        )
+        bot_ctrl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(bot_control)").fetchall()}
+        if "last_news_impact_at" not in bot_ctrl_cols:
+            conn.execute("ALTER TABLE bot_control ADD COLUMN last_news_impact_at TEXT")
+        return
+
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS news_impact_alerts (
+            id                  BIGSERIAL PRIMARY KEY,
+            created_at          TEXT NOT NULL,
+            ticker              TEXT NOT NULL,
+            scope               TEXT NOT NULL,
+            sector              TEXT,
+            severity            TEXT NOT NULL,
+            recommended_action  TEXT NOT NULL,
+            linkage             TEXT NOT NULL,
+            linkage_sector      TEXT,
+            impact_summary      TEXT NOT NULL,
+            content_hash        TEXT NOT NULL,
+            superseded_by       BIGINT REFERENCES news_impact_alerts(id),
+            delivered_telegram  INTEGER DEFAULT 0,
+            model               TEXT,
+            meta                JSONB
+        )"""
+    )
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS news_sector_tags (
+            news_id            BIGINT PRIMARY KEY REFERENCES news(id),
+            tagged_at          TEXT NOT NULL,
+            primary_sector     TEXT,
+            ancillary_sectors  JSONB,
+            why_note           TEXT,
+            model              TEXT,
+            confidence         DOUBLE PRECISION
+        )"""
+    )
+    for sql in (
+        "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_created  ON news_impact_alerts(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_ticker   ON news_impact_alerts(ticker)",
+        "CREATE INDEX IF NOT EXISTS idx_news_impact_alerts_severity ON news_impact_alerts(severity)",
+        "CREATE INDEX IF NOT EXISTS idx_news_sector_tags_primary    ON news_sector_tags(primary_sector)",
+        "CREATE INDEX IF NOT EXISTS idx_news_sector_tags_tagged_at  ON news_sector_tags(tagged_at)",
+        "ALTER TABLE bot_control ADD COLUMN IF NOT EXISTS last_news_impact_at TEXT",
     ):
         cur.execute(sql)
 
@@ -897,6 +1212,9 @@ def init_db() -> None:
             conn.executescript(_SQLITE_SCHEMA)
             _migrate_positions_atr_columns(conn)
             _migrate_positional_columns(conn)
+            _migrate_pos_scans_scorecard_columns(conn)
+            _migrate_pos_research_columns(conn)
+            _migrate_news_impact_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
                    VALUES (1, 'STOPPED', 'auto', ?)
@@ -915,6 +1233,9 @@ def init_db() -> None:
                 cur.execute(_POSTGRES_SCHEMA)
                 _migrate_positions_atr_columns(cur)
                 _migrate_positional_columns(cur)
+                _migrate_pos_scans_scorecard_columns(cur)
+                _migrate_pos_research_columns(cur)
+                _migrate_news_impact_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
                        VALUES (1, 'STOPPED', 'auto', %s)
@@ -978,6 +1299,43 @@ def insert_returning_id(conn, sql: str, params: Iterable[Any] = ()) -> int:
         raise RuntimeError("INSERT ... RETURNING id produced no row")
     # _Row supports both dict access and int indexing
     return int(row["id"]) if "id" in row else int(row[0])
+
+
+def upsert_pos_research(*, ticker: str, researched_at: str, concall_date,
+                        management_score, verdict, outlook, thesis,
+                        key_positives, key_risks, guidance, sources, confidence,
+                        recommendation="", recommendation_rationale="",
+                        concall_summary="", fundamentals_summary="") -> None:
+    """Insert or update the latest management-outlook research for a ticker."""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO pos_research
+               (ticker, researched_at, concall_date, management_score, verdict,
+                outlook, thesis, key_positives, key_risks, guidance, recommendation,
+                recommendation_rationale, concall_summary, fundamentals_summary,
+                sources, confidence)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT (ticker) DO UPDATE SET
+                   researched_at = excluded.researched_at,
+                   concall_date = excluded.concall_date,
+                   management_score = excluded.management_score,
+                   verdict = excluded.verdict,
+                   outlook = excluded.outlook,
+                   thesis = excluded.thesis,
+                   key_positives = excluded.key_positives,
+                   key_risks = excluded.key_risks,
+                   guidance = excluded.guidance,
+                   recommendation = excluded.recommendation,
+                   recommendation_rationale = excluded.recommendation_rationale,
+                   concall_summary = excluded.concall_summary,
+                   fundamentals_summary = excluded.fundamentals_summary,
+                   sources = excluded.sources,
+                   confidence = excluded.confidence""",
+            (ticker, researched_at, concall_date, management_score, verdict,
+             outlook, thesis, key_positives, key_risks, guidance, recommendation,
+             recommendation_rationale, concall_summary, fundamentals_summary,
+             sources, confidence),
+        )
 
 
 def query_df(sql: str, params: Iterable[Any] = ()):

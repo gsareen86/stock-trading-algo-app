@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 
 from config import BENCHMARK_TICKER, INITIAL_CAPITAL
 from data.fetcher import fetch_candles
+from db.models import query_df
 from engine.portfolio import snapshots_df, trades_df
 
 
@@ -44,8 +45,12 @@ def sharpe_ratio(returns: pd.Series, rf: float = 0.0, periods_per_year: int = 25
 def sortino_ratio(returns: pd.Series, rf: float = 0.0, periods_per_year: int = 252) -> float:
     if returns is None or returns.empty:
         return 0.0
-    downside = returns[returns < 0]
-    dstd = float(downside.std()) if not downside.empty else 0.0
+    # Downside deviation is measured about the target (0), i.e.
+    # sqrt(mean(min(r,0)^2)) over the FULL series — not the sample std of the
+    # negative subset about its own mean (which distorts the ratio and blows up
+    # with a single losing period under ddof=1).
+    dd = np.minimum(returns.to_numpy(dtype=float), 0.0)
+    dstd = float(np.sqrt(np.mean(dd ** 2))) if dd.size else 0.0
     if dstd != dstd:  # NaN — insufficient downside data
         log.debug("sortino_ratio: downside std is NaN, returning 0.0")
         return 0.0
@@ -103,9 +108,28 @@ def _per_position_pnl() -> pd.DataFrame:
     open_sides  = df["side"].isin(["BUY", "SHORT"])
     close_sides = df["side"].isin(["SELL", "COVER"])
 
-    # Sum net_value per position — that's the realised P&L from cash flow.
+    # Realised P&L per position = Σ over CLOSE legs of (net_value − entry×qty).
+    # Summing net_value across ALL legs (the previous approach) silently breaks
+    # when a SHORT's OPEN leg has a missing/mis-signed net_value: the sum then
+    # collapses to (entry_notional + pnl) and reports a wildly inflated P&L
+    # (e.g. ₹9,115 instead of ₹27). The close-leg identity ignores the open leg
+    # entirely and still folds in T1 partials, for both directions:
+    #   LONG  SELL : net_value = proceeds        → proceeds − entry×qty = pnl
+    #   SHORT COVER: net_value = entry×qty + pnl  → − entry×qty        = pnl
+    entry_px_df = query_df("SELECT id AS position_id, entry_price FROM positions")
+    entry_map = (
+        dict(zip(entry_px_df["position_id"], entry_px_df["entry_price"]))
+        if not entry_px_df.empty else {}
+    )
+    close_legs = df[close_sides].copy()
+    close_legs["_entry"] = close_legs["position_id"].map(entry_map)
+    close_legs = close_legs.dropna(subset=["_entry"])
+    close_legs["_legpnl"] = (
+        close_legs["net_value"].astype(float)
+        - close_legs["_entry"].astype(float) * close_legs["quantity"].astype(float)
+    )
     pnl_by_pos = (
-        df.groupby("position_id")["net_value"].sum()
+        close_legs.groupby("position_id")["_legpnl"].sum()
         .rename("pnl").reset_index()
     )
 

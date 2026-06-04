@@ -34,6 +34,12 @@ def _fetch_monthly_close(ticker: str, months: int) -> Optional[list[float]]:
         if df is None or df.empty:
             log.warning("market_regime: no data for %s", ticker)
             return None
+        import pandas as pd
+        if isinstance(df.columns, pd.MultiIndex) or hasattr(df.columns, "levels"):
+            if any(ticker in str(col) for col in df.columns.get_level_values(0)):
+                df = df[ticker]
+            else:
+                df.columns = df.columns.get_level_values(0)
         closes = df["Close"].dropna().tolist()
         # Need at least months+1 data points to compute ROC
         if len(closes) < months + 1:

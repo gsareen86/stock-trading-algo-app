@@ -477,6 +477,13 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         except Exception as e:
             log.warning("news refresh failed: %s", e)
 
+        # News-impact LLM pass (throttled internally; safe to call every tick).
+        try:
+            from news_impact.pipeline import maybe_run as _ni_maybe_run
+            _ni_maybe_run(triggered_by="scheduler")
+        except Exception as e:
+            log.warning("news_impact pipeline failed (non-fatal): %s", e)
+
         # Limit universe to keep runtime reasonable. Sample size is a runtime
         # knob so you can scale up to 100 / 500 without code edits — see
         # CYCLE_SAMPLE_SIZE in config.py and the dashboard's Runtime

@@ -18,6 +18,9 @@ beautifulsoup4>=4.12.0
 requests>=2.31.0
 lxml>=4.9.0
 
+# Concall transcript / investor presentation PDF text extraction (Phase-3 research)
+pypdf>=4.0.0
+
 # Sentiment analysis
 # vaderSentiment is kept as a fallback if FinBERT load fails.
 vaderSentiment>=3.3.2
@@ -33,14 +36,6 @@ torch>=2.0.0
 openai>=1.30.0        # used for OpenRouter (OpenAI-compatible API)
 anthropic>=0.40.0     # only needed when LLM_PROVIDER=anthropic
 
-# Dashboard
-streamlit>=1.37.0   # need st.fragment (stable in 1.37) for non-blocking partial refresh
-plotly>=5.18.0
-# streamlit-autorefresh intentionally NOT used — it is a Streamlit custom
-# component, and any custom component forces Streamlit to import pyarrow,
-# which is blocked on Windows by Smart App Control (DLL signing). We use
-# `st.fragment(run_every=...)` instead — server-side, no full page rerun.
-
 # Scheduling
 APScheduler>=3.10.4
 
@@ -52,8 +47,9 @@ python-dotenv>=1.0.0
 tqdm>=4.66.0
 tabulate>=0.9.0
 
-# Positional trading module — Telegram notifications (optional; silently
-# skipped if TELEGRAM_BOT_TOKEN not set). Uses stdlib urllib for requests
-# so this entry is only needed if you prefer the full python-telegram-bot SDK.
-# The current alerts.py uses urllib directly to avoid the extra dependency.
-# python-telegram-bot>=20.0   # optional — uncomment if you want richer Telegram features
+# FastAPI API Stack
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+
