@@ -742,6 +742,19 @@ def refresh_management_research(vix_value: float = 0.0, force: bool = False) -> 
     return {"researched": len(tickers), "reviews": reviews}
 
 
+def research_single_ticker(ticker: str, vix_value: float = 0.0,
+                           force: bool = True) -> dict | None:
+    """Run the full LLM analyst pipeline for ONE ticker on demand. Reuses the
+    latest scan row (for pillar re-blend) when available, otherwise persists the
+    thesis/management score without touching composite. Returns the verdict dict
+    (without the internal material), or None when material was unavailable / the
+    LLM failed open."""
+    if not (config.POSITIONAL_LLM_RESEARCH_ENABLED and config.POSITIONAL_CONCALL_RESEARCH_ENABLED):
+        return None
+    cand = _cand_from_scan(ticker)
+    return _research_and_apply(cand, _vix_regime(vix_value), force=force)
+
+
 def _is_deteriorating(res: dict) -> bool:
     mgmt = res.get("management_score")
     return (

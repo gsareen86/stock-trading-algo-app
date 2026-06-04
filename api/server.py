@@ -1898,6 +1898,41 @@ def trigger_research_refresh(background_tasks: BackgroundTasks, force: bool = Qu
         log.error("Error triggering research refresh: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/positional/research/ticker/{ticker}")
+def trigger_single_ticker_research(ticker: str, force: bool = Query(True)):
+    """Run the LLM analyst pipeline for ONE ticker on demand — refreshes concall
+    summary, management guidance, recommendation, thesis and key positives/risks
+    for that stock only. Runs synchronously so the caller can show fresh data on
+    completion; expect 30-180s per call when using a local LLM."""
+    bare = ticker.replace(".NS", "").replace(".BO", "").strip().upper()
+    if not bare:
+        raise HTTPException(status_code=400, detail="Ticker is required")
+    try:
+        from positional.research import research_single_ticker
+        from positional.runner import _fetch_india_vix
+        try:
+            vix = _fetch_india_vix()
+        except Exception:
+            vix = 15.0
+        res = research_single_ticker(bare, vix_value=vix, force=force)
+        if res is None:
+            return {
+                "success": False,
+                "ticker": bare,
+                "message": ("No management material available for this ticker "
+                            "(Screener concall/presentation missing), LLM research "
+                            "disabled, or analyst failed open."),
+            }
+        return {
+            "success": True,
+            "ticker": bare,
+            "research": res,
+            "message": f"LLM research refreshed for {bare}.",
+        }
+    except Exception as e:
+        log.error("Error in single-ticker research for %s: %s", ticker, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/positional/analytics")
 def get_positional_analytics():
     """Retrieve closed positional metrics breakdown (avg winner/win rate)."""

@@ -699,9 +699,11 @@ interface PositionalScanTableProps {
   variant: "swing" | "longterm";
   alertBadges?: Record<string, number>;
   onOpenAlerts?: (bareTicker: string) => void;
+  onResearchTicker?: (bareTicker: string) => void;
+  researchingTickers?: Set<string>;
 }
 
-const PositionalScanTable: React.FC<PositionalScanTableProps> = ({ rows, research, variant, alertBadges, onOpenAlerts }) => {
+const PositionalScanTable: React.FC<PositionalScanTableProps> = ({ rows, research, variant, alertBadges, onOpenAlerts, onResearchTicker, researchingTickers }) => {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const isLong = variant === "longterm";
   const inr = (v: number | null) => (v != null ? `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : "—");
@@ -763,6 +765,22 @@ const PositionalScanTable: React.FC<PositionalScanTableProps> = ({ rows, researc
                     <tr className="hover:bg-slate-900/20 cursor-pointer" onClick={() => toggle(scan.id)}>
                       <td className="py-3 px-4 text-slate-500 text-center w-6">{open ? "▾" : "▸"}</td>
                       <td className="py-3 px-4 text-slate-200 font-bold">
+                        {(() => {
+                          const bare = scan.ticker.replace(/\.(NS|BO)$/, "");
+                          const isResearching = researchingTickers?.has(bare) ?? false;
+                          return (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); if (!isResearching) onResearchTicker?.(bare); }}
+                              disabled={isResearching || !onResearchTicker}
+                              className="mr-2 inline-flex items-center justify-center w-5 h-5 rounded text-indigo-300 hover:text-indigo-200 hover:bg-indigo-500/10 border border-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors align-middle"
+                              title={isResearching
+                                ? `Researching ${bare}…`
+                                : `Run LLM research for ${bare} only (updates concall summary, guidance, thesis, recommendation, positives & risks)`}
+                            >
+                              <Sparkles size={11} className={isResearching ? "animate-pulse" : ""} />
+                            </button>
+                          );
+                        })()}
                         {scan.ticker}
                         {(() => {
                           const bare = scan.ticker.replace(/\.(NS|BO)$/, "");
@@ -1839,6 +1857,7 @@ export default function App() {
   const [positionalRegime, setPositionalRegime] = useState<PositionalRegime | null>(null);
   const [positionalScanResults, setPositionalScanResults] = useState<PositionalScanResult[]>([]);
   const [positionalResearch, setPositionalResearch] = useState<Record<string, PositionalResearch>>({});
+  const [researchingTickers, setResearchingTickers] = useState<Set<string>>(new Set());
   const [positionalPositions, setPositionalPositions] = useState<PositionalPosition[]>([]);
   const [uploadProgress, setUploadProgress] = useState<string>("");
 
@@ -2451,6 +2470,50 @@ export default function App() {
       setErrorMsg("Network error starting full re-scan.");
     } finally {
       setLoading((prev) => ({ ...prev, full_rescan: false }));
+    }
+  };
+
+  // Per-row: re-run the analyst for ONE ticker only. Synchronous on the server
+  // (30-180s on local Ollama). Updates the in-memory research map on success so
+  // the expanded row picks up the fresh concall summary, guidance, thesis,
+  // recommendation and positives/risks immediately.
+  const handleSingleTickerResearch = async (bareTicker: string) => {
+    const tk = bareTicker.replace(/\.(NS|BO)$/, "").toUpperCase();
+    if (!tk) return;
+    setResearchingTickers((prev) => {
+      const n = new Set(prev);
+      n.add(tk);
+      return n;
+    });
+    setSuccessMsg(`Researching ${tk} — this can take 30-180 seconds on local Ollama…`);
+    try {
+      const res = await fetch(`${API_BASE}/api/positional/research/ticker/${encodeURIComponent(tk)}?force=true`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setSuccessMsg(data.message || `LLM research refreshed for ${tk}.`);
+        try {
+          const resRes = await fetch(`${API_BASE}/api/positional/research`);
+          const researchData: PositionalResearch[] = await resRes.json();
+          const byTicker: Record<string, PositionalResearch> = {};
+          (researchData || []).forEach((r) => { byTicker[r.ticker] = r; });
+          setPositionalResearch(byTicker);
+        } catch { /* keep the existing map if refetch fails */ }
+        try {
+          const resScan = await fetch(`${API_BASE}/api/positional/scan-results`);
+          const scanData = await resScan.json();
+          setPositionalScanResults(scanData);
+        } catch { /* keep existing rows if refetch fails */ }
+      } else {
+        setErrorMsg(data.message || data.detail || `Could not research ${tk}.`);
+      }
+    } catch (e) {
+      setErrorMsg(`Network error researching ${tk}.`);
+    } finally {
+      setResearchingTickers((prev) => {
+        const n = new Set(prev);
+        n.delete(tk);
+        return n;
+      });
     }
   };
 
@@ -4074,6 +4137,8 @@ export default function App() {
                 variant="swing"
                 alertBadges={alertBadges}
                 onOpenAlerts={(t) => { setAlertTickerFilter(t); setActiveTab("alerts"); }}
+                onResearchTicker={handleSingleTickerResearch}
+                researchingTickers={researchingTickers}
               />
               <p className="text-[11px] text-slate-500 mt-3">
                 Click any row to expand the analyst thesis (positives, risks, guidance, sources). Long-term-only candidates
@@ -4125,6 +4190,8 @@ export default function App() {
                 variant="longterm"
                 alertBadges={alertBadges}
                 onOpenAlerts={(t) => { setAlertTickerFilter(t); setActiveTab("alerts"); }}
+                onResearchTicker={handleSingleTickerResearch}
+                researchingTickers={researchingTickers}
               />
             </div>
           )}
