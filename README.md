@@ -405,18 +405,24 @@ Key tables:
 
 ---
 
-## 10. Dashboard tabs
+## 10. Dashboard pages
 
-| Tab | Contents |
-|---|---|
-| Control Panel | Start/stop, mode toggle, positional enable, live parameter edit, pending approvals |
-| Portfolio | Equity curve vs NIFTY 50, open positions, unrealised P&L |
-| Trades | Full trade history with cost breakdown |
-| Signals | All generated signals (intraday + positional) with scores |
-| Analytics | Sharpe, Sortino, max drawdown, win rate, strategy P&L breakdown |
-| News | Latest scraped articles with per-ticker sentiment |
-| Fundamentals | NIFTY 500 fundamental scores |
-| Long-Term Research | lt_quality scores, FII/DII holding data |
+The React dashboard is organised into four groups (sidebar):
+
+| Group | Page | Contents |
+|---|---|---|
+| Portfolio | Overview | All three books at a glance: value, P&L, equity curve, drawdown, open positions |
+| Portfolio | Performance | Results after costs — per book and per strategy |
+| Trading Books | Intraday | Open/closed intraday positions, ATR exit ladder, full signal history |
+| Trading Books | Swing | EOD scan scorecards (Timing/Durability/horizon), holdings with partial & stops, universe upload/sync |
+| Trading Books | Long-Term | Tranche holdings, candidates (durability ≥ 70), LT trade log, thesis-stop status |
+| Research | Research & Guidance | LLM concall verdicts + theses, guidance ledger with MET/BEAT/MISSED and credibility scores |
+| Research | News & Alerts | Scraped headlines, sentiment leaderboard, LLM news-impact alerts with severity filters |
+| Research | Fundamentals | Financial scorecards for every tracked name, pinned watchlist, Screener deep-links |
+| Engine | Control Center | Start/stop, mode, risk parameters, approval queue, every manual trigger, cycle log |
+| Engine | Engine Room | Signal outcomes (forward returns), calibration report, backtest lab, NSE event calendar, ASM/GSM lists, per-ticker hygiene checker |
+| Engine | LLM Usage | Live token consumption by provider/model/feature, recent call log |
+| Engine | System Logs | Auto-refreshing runtime log tail with level filter |
 
 ---
 

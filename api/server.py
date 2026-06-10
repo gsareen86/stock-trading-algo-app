@@ -1802,6 +1802,7 @@ def get_positional_research():
                 "fundamentals_summary": clean_str(r.get("fundamentals_summary"), default=""),
                 "sources": _json_list(r.get("sources")),
                 "confidence": clean_float(r.get("confidence")),
+                "guidance_credibility": clean_float(r.get("guidance_credibility")),
             })
         return results
     except Exception as e:
@@ -1865,6 +1866,10 @@ def get_positional_positions():
                 "unrealized_pnl": round(pnl, 2),
                 "unrealized_pnl_pct": round(pnl_pct, 2),
                 "strategy": strategy,
+                # Conviction-engine fields (NULL on pre-migration rows)
+                "partial_taken": int(r["partial_taken"]) if "partial_taken" in r and pd.notna(r["partial_taken"]) else 0,
+                "initial_quantity": int(r["initial_quantity"]) if "initial_quantity" in r and pd.notna(r["initial_quantity"]) else None,
+                "time_stop_days": int(r["time_stop_days"]) if "time_stop_days" in r and pd.notna(r["time_stop_days"]) else None,
                 "notes": r["notes"] or "—"
             })
         return results
