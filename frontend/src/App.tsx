@@ -403,35 +403,66 @@ interface ResearchFailure {
 }
 
 interface ObservabilityTotals {
+  provider: string;
+  model: string;
+  calls_today: number;
+  ok_today: number;
+  cached_today: number;
+  errors_today: number;
   prompt_tokens_today: number;
   completion_tokens_today: number;
-  cost_today_usd: number;
-  max_daily_budget_usd: number;
-  calls_today: number;
+  tokens_today: number;
   success_rate_pct: number;
 }
 
 interface ObservabilityCaller {
   caller: string;
   calls: number;
+  ok: number;
+  cached: number;
+  errors: number;
   tokens: number;
+  avg_latency_ms: number;
   pct: number;
 }
 
 interface ObservabilityDaily {
   date: string;
   calls: number;
-  cost: number;
+  ok: number;
+  cached: number;
+  errors: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  tokens: number;
+}
+
+interface ObservabilityModel {
+  provider: string;
+  model: string;
+  calls: number;
+  ok: number;
+  cached: number;
+  errors: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  avg_latency_ms: number;
+  last_used: string | null;
 }
 
 interface ObservabilityCall {
   id: number;
   ts: string;
-  caller: string;
+  provider: string;
   model: string;
+  caller: string;
   status: string;
-  tokens: number;
-  note: string;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  latency_ms: number | null;
+  error_msg: string | null;
 }
 
 interface PositionalStatus {
@@ -1850,6 +1881,7 @@ export default function App() {
   const [observabilityTotals, setObservabilityTotals] = useState<ObservabilityTotals | null>(null);
   const [observabilityCallers, setObservabilityCallers] = useState<ObservabilityCaller[]>([]);
   const [observabilityDaily, setObservabilityDaily] = useState<ObservabilityDaily[]>([]);
+  const [observabilityModels, setObservabilityModels] = useState<ObservabilityModel[]>([]);
   const [observabilityCalls, setObservabilityCalls] = useState<ObservabilityCall[]>([]);
 
   // Positional states
@@ -2141,6 +2173,10 @@ export default function App() {
           const resD = await fetch(`${API_BASE}/api/llm/observability/daily`);
           const dData = await resD.json();
           setObservabilityDaily(dData);
+
+          const resM = await fetch(`${API_BASE}/api/llm/observability/models`);
+          const mData = await resM.json();
+          setObservabilityModels(mData);
 
           const resCalls = await fetch(`${API_BASE}/api/llm/observability/calls`);
           const callsData = await resCalls.json();
@@ -2701,10 +2737,97 @@ export default function App() {
     if (f === "BEARISH" || f === "STOPPED" || f === "FAILED" || f === "REJECTED" || f === "DANGER") {
       return "bg-rose-500/10 text-rose-400 border border-rose-500/20";
     }
+    if (f === "OK") {
+      return "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
+    }
+    if (f === "ERROR" || f === "RATE_LIMITED" || f === "CIRCUIT_OPEN") {
+      return "bg-rose-500/10 text-rose-400 border border-rose-500/20";
+    }
     if (f === "NEUTRAL" || f === "PAUSED" || f === "PENDING" || f === "CACHED") {
       return "bg-amber-500/10 text-amber-400 border border-amber-500/20";
     }
     return "bg-slate-800/50 text-slate-300 border border-slate-700/50";
+  };
+
+  // ISO-UTC timestamp -> readable IST date-time (e.g. "10 Jun, 14:32:05")
+  const formatIST = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  };
+
+  // ── Navigation: grouped by what the user is trying to do ─────────────
+  // Portfolio   — "how is my money doing?"
+  // Trading     — "operate the bot / the two trading books"
+  // Research    — "why should I buy/hold/sell?"
+  // System      — "is the machinery healthy?"
+  const NAV_GROUPS: {
+    label: string;
+    items: { key: string; label: string; icon: React.ReactNode; badge?: number }[];
+  }[] = [
+    {
+      label: "Portfolio",
+      items: [
+        { key: "dashboard", label: "Overview", icon: <PieChart size={16} /> },
+        { key: "positions", label: "Intraday Positions", icon: <DollarSign size={16} /> },
+        { key: "analytics", label: "Performance", icon: <Activity size={16} /> },
+      ],
+    },
+    {
+      label: "Trading",
+      items: [
+        {
+          key: "control",
+          label: "Control Center",
+          icon: <Sliders size={16} />,
+          badge: pendingApprovals.length || undefined,
+        },
+        { key: "positional", label: "Swing Positional", icon: <Layers size={16} /> },
+        { key: "longterm", label: "Long-Term Investing", icon: <TrendingUp size={16} /> },
+      ],
+    },
+    {
+      label: "Research",
+      items: [
+        { key: "alerts", label: "Alerts & Insights", icon: <Bell size={16} /> },
+        { key: "news", label: "News & Sentiment", icon: <Newspaper size={16} /> },
+        { key: "fundamentals", label: "Fundamentals", icon: <Shield size={16} /> },
+        { key: "research", label: "Research Pipeline", icon: <BookOpen size={16} /> },
+      ],
+    },
+    {
+      label: "System",
+      items: [
+        { key: "observability", label: "LLM Usage", icon: <Cpu size={16} /> },
+        ...(showLogs ? [{ key: "logs", label: "System Logs", icon: <FileText size={16} /> }] : []),
+      ],
+    },
+  ];
+
+  // One-line purpose of every tab, shown in the page header so a first-time
+  // user always knows what they are looking at and where data comes from.
+  const TAB_META: Record<string, { title: string; subtitle: string }> = {
+    dashboard: { title: "Overview", subtitle: "Portfolio value, equity curve and open holdings at a glance" },
+    positions: { title: "Intraday Positions", subtitle: "Open and closed intraday trades with live P&L and exit levels" },
+    analytics: { title: "Performance", subtitle: "Win rate, Sharpe, drawdown and per-strategy results" },
+    control: { title: "Control Center", subtitle: "Start/stop the bot, trading mode, risk parameters and pending approvals" },
+    positional: { title: "Swing Positional", subtitle: "EOD scans, scorecards and swing holdings (hold: days to weeks)" },
+    longterm: { title: "Long-Term Investing", subtitle: "Quality-scored universe and compounder candidates (hold: months to years)" },
+    alerts: { title: "Alerts & Insights", subtitle: "LLM-assessed news impact on holdings and watchlist, by severity" },
+    news: { title: "News & Sentiment", subtitle: "Scraped headlines with per-stock sentiment scores" },
+    fundamentals: { title: "Fundamentals", subtitle: "Financial health, ratios and shareholding for the stock universe" },
+    research: { title: "Research Pipeline", subtitle: "LLM concall research verdicts, theses and screening failures" },
+    observability: { title: "LLM Usage", subtitle: "Live token consumption by provider, model and feature" },
+    logs: { title: "System Logs", subtitle: "Runtime logs and scheduler cycle history" },
   };
 
   return (
@@ -2762,158 +2885,36 @@ export default function App() {
             </div>
           </div>
 
-          {/* SIDEBAR NAVIGATION ITEMS */}
-          <nav className="px-3 space-y-1">
-            <button
-              onClick={() => setActiveTab("dashboard")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "dashboard"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <PieChart size={16} />
-              Overview Dashboard
-            </button>
-
-            <button
-              onClick={() => setActiveTab("control")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 relative ${
-                activeTab === "control"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <Sliders size={16} />
-              Control Center
-              {pendingApprovals.length > 0 && (
-                <span className="absolute right-3 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold active-pulse">
-                  {pendingApprovals.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab("positions")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "positions"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <DollarSign size={16} />
-              Active Positions
-            </button>
-
-            <button
-              onClick={() => setActiveTab("positional")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "positional"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <Layers size={16} />
-              Swing Positional
-            </button>
-
-            <button
-              onClick={() => setActiveTab("longterm")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "longterm"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <TrendingUp size={16} />
-              Long-Term
-            </button>
-
-            <button
-              onClick={() => setActiveTab("alerts")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 relative ${
-                activeTab === "alerts"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <Bell size={16} />
-              Alerts & Insights
-            </button>
-
-            <button
-              onClick={() => setActiveTab("news")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "news"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <Newspaper size={16} />
-              NLP News Sentiment
-            </button>
-
-            <button
-              onClick={() => setActiveTab("fundamentals")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "fundamentals"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <Shield size={16} />
-              Fundamentals
-            </button>
-
-            <button
-              onClick={() => setActiveTab("analytics")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "analytics"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <TrendingUp size={16} />
-              Performance Stats
-            </button>
-
-            <button
-              onClick={() => setActiveTab("observability")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "observability"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <Cpu size={16} />
-              LLM Observability
-            </button>
-
-            <button
-              onClick={() => setActiveTab("research")}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                activeTab === "research"
-                  ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-              }`}
-            >
-              <BookOpen size={16} />
-              Research Pipeline
-            </button>
-
-            {showLogs && (
-              <button
-                onClick={() => setActiveTab("logs")}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-150 ${
-                  activeTab === "logs"
-                    ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
-                    : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-                }`}
-              >
-                <FileText size={16} />
-                Telemetry Logs
-              </button>
-            )}
+          {/* SIDEBAR NAVIGATION — grouped by purpose */}
+          <nav className="px-3 space-y-4">
+            {NAV_GROUPS.map((group) => (
+              <div key={group.label}>
+                <div className="px-4 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-600">
+                  {group.label}
+                </div>
+                <div className="space-y-1">
+                  {group.items.map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() => setActiveTab(item.key)}
+                      className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm transition-all duration-150 relative ${
+                        activeTab === item.key
+                          ? "grad-primary text-white shadow-lg shadow-indigo-600/20 font-medium"
+                          : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
+                      }`}
+                    >
+                      {item.icon}
+                      {item.label}
+                      {item.badge ? (
+                        <span className="absolute right-3 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold active-pulse">
+                          {item.badge}
+                        </span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </nav>
         </div>
 
@@ -2947,9 +2948,12 @@ export default function App() {
         {/* --- DYNAMIC HEADER --- */}
         <header className="h-16 border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-md flex items-center justify-between px-8 flex-shrink-0 z-10">
           <div>
-            <h2 className="text-lg font-bold text-slate-200 capitalize m-0">
-              {activeTab === "news" ? "NLP News Sentiment Hub" : activeTab === "positional" ? "Minervini VCP Positional Model" : activeTab === "alerts" ? "Alerts & Insights — LLM News Impact" : activeTab + " view"}
+            <h2 className="text-lg font-bold text-slate-200 m-0">
+              {TAB_META[activeTab]?.title || activeTab}
             </h2>
+            <p className="text-[11px] text-slate-500 m-0 leading-tight">
+              {TAB_META[activeTab]?.subtitle || ""}
+            </p>
           </div>
 
           {/* Quick Stats Banner */}
@@ -3020,7 +3024,7 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="glass-panel p-6 rounded-2xl glass-panel-hover flex flex-col justify-between h-32 relative overflow-hidden">
                   <div className="flex items-center justify-between text-slate-500">
-                    <span className="text-xs font-semibold uppercase tracking-wider">Net Realized Margin</span>
+                    <span className="text-xs font-semibold uppercase tracking-wider">Realized P&L</span>
                     <TrendingUp size={16} className="text-indigo-400" />
                   </div>
                   <div className="mt-2">
@@ -3028,12 +3032,12 @@ export default function App() {
                       {formatINR(portfolioSummary?.realized_pnl || 0)}
                     </span>
                   </div>
-                  <div className="text-[10px] text-slate-500 mt-1">Settled round-trip metrics</div>
+                  <div className="text-[10px] text-slate-500 mt-1">Profit booked on closed trades</div>
                 </div>
 
                 <div className="glass-panel p-6 rounded-2xl glass-panel-hover flex flex-col justify-between h-32 relative overflow-hidden">
                   <div className="flex items-center justify-between text-slate-500">
-                    <span className="text-xs font-semibold uppercase tracking-wider">Unrealized Live Margin</span>
+                    <span className="text-xs font-semibold uppercase tracking-wider">Unrealized P&L</span>
                     <TrendingDown size={16} className="text-purple-400" />
                   </div>
                   <div className="mt-2">
@@ -3041,12 +3045,12 @@ export default function App() {
                       {formatINR(portfolioSummary?.live_unrealized_pnl || 0)}
                     </span>
                   </div>
-                  <div className="text-[10px] text-slate-500 mt-1">Live ticker margins status</div>
+                  <div className="text-[10px] text-slate-500 mt-1">Open positions, marked to live prices</div>
                 </div>
 
                 <div className="glass-panel p-6 rounded-2xl glass-panel-hover flex flex-col justify-between h-32 relative overflow-hidden">
                   <div className="flex items-center justify-between text-slate-500">
-                    <span className="text-xs font-semibold uppercase tracking-wider">Positions Capacity Slots</span>
+                    <span className="text-xs font-semibold uppercase tracking-wider">Position Slots Used</span>
                     <Sliders size={16} className="text-amber-400" />
                   </div>
                   <div className="mt-2 flex items-baseline gap-2">
@@ -3067,13 +3071,13 @@ export default function App() {
 
                 <div className="glass-panel p-6 rounded-2xl glass-panel-hover flex flex-col justify-between h-32 relative overflow-hidden">
                   <div className="flex items-center justify-between text-slate-500">
-                    <span className="text-xs font-semibold uppercase tracking-wider">Intraday Active Holdings</span>
+                    <span className="text-xs font-semibold uppercase tracking-wider">Open Intraday Positions</span>
                     <Activity size={16} className="text-emerald-400 animate-pulse" />
                   </div>
                   <div className="mt-2">
                     <span className="text-2xl font-bold text-slate-100 font-mono">{openPositions.length}</span>
                   </div>
-                  <div className="text-[10px] text-slate-500 mt-1">Active automated positions open</div>
+                  <div className="text-[10px] text-slate-500 mt-1">Auto square-off at 15:10 IST</div>
                 </div>
               </div>
 
@@ -3084,9 +3088,9 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
-                        Synchronized Account Growth
+                        Equity Curve
                       </h3>
-                      <span className="text-xs text-slate-500">Comparative performance vs Nifty 50 benchmark</span>
+                      <span className="text-xs text-slate-500">Total portfolio value over time vs NIFTY 50 benchmark</span>
                     </div>
                   </div>
 
@@ -3126,9 +3130,9 @@ export default function App() {
                 <div className="glass-panel p-6 rounded-2xl space-y-4">
                   <div>
                     <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
-                      Portfolio High Drawdowns
+                      Drawdown
                     </h3>
-                    <span className="text-xs text-slate-500">Continuous peak-to-trough risk tracking</span>
+                    <span className="text-xs text-slate-500">Decline from the portfolio's previous peak (%)</span>
                   </div>
 
                   <div className="h-80 w-full font-mono text-[10px]">
@@ -3165,14 +3169,19 @@ export default function App() {
               <div className="glass-panel p-6 rounded-2xl">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
-                    Live Holdings Fastboard
+                    Open Positions Snapshot
                   </h3>
-                  <span className="text-xs text-slate-500">{openPositions.length} trades currently scanning</span>
+                  <button
+                    onClick={() => setActiveTab("positions")}
+                    className="text-xs text-indigo-400 hover:text-indigo-300"
+                  >
+                    Full details → Intraday Positions
+                  </button>
                 </div>
 
                 {openPositions.length === 0 ? (
                   <div className="p-8 text-center border border-dashed border-slate-800 rounded-xl text-slate-500 text-xs">
-                    No active intraday positions currently running. Use the Control Center to audit signals.
+                    No open intraday positions. Start the bot from the Control Center to begin trading.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -5135,103 +5144,185 @@ export default function App() {
           {/* ==================== 8. LLM OBSERVABILITY ==================== */}
           {activeTab === "observability" && (
             <div className="space-y-8 animate-fadeIn">
-              {/* STATS OVERVIEW CARDS */}
+              {/* STATS OVERVIEW CARDS — live data from llm_call_log */}
               {observabilityTotals && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                   <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between h-32 relative overflow-hidden">
                     <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">
-                      Daily API Token Count
+                      Active Provider / Model
+                    </span>
+                    <span className="text-lg font-extrabold text-indigo-400 font-mono mt-2 capitalize">
+                      {observabilityTotals.provider}
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-1 font-mono truncate" title={observabilityTotals.model}>
+                      {observabilityTotals.model}
+                    </span>
+                  </div>
+
+                  <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between h-32 relative overflow-hidden">
+                    <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">
+                      Tokens Today
                     </span>
                     <span className="text-2xl font-extrabold text-indigo-400 font-mono mt-2">
-                      {observabilityTotals.prompt_tokens_today + observabilityTotals.completion_tokens_today}
+                      {observabilityTotals.tokens_today.toLocaleString()}
                     </span>
                     <span className="text-[10px] text-slate-500 mt-1">
-                      {observabilityTotals.prompt_tokens_today} prompt / {observabilityTotals.completion_tokens_today} comp
+                      {observabilityTotals.prompt_tokens_today.toLocaleString()} prompt /{" "}
+                      {observabilityTotals.completion_tokens_today.toLocaleString()} completion
                     </span>
                   </div>
 
                   <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between h-32 relative overflow-hidden">
                     <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">
-                      Today's API Cost (USD)
-                    </span>
-                    <span className="text-2xl font-extrabold text-emerald-400 font-mono mt-2">
-                      ${observabilityTotals.cost_today_usd.toFixed(3)}
-                    </span>
-                    <div className="w-full bg-slate-800 rounded-full h-1.5 mt-2">
-                      <div
-                        className="grad-success h-1.5 rounded-full"
-                        style={{
-                          width: `${(observabilityTotals.cost_today_usd / observabilityTotals.max_daily_budget_usd) * 100}%`
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between h-32 relative overflow-hidden">
-                    <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">
-                      Active Daily Budget
+                      Calls Today
                     </span>
                     <span className="text-2xl font-extrabold text-slate-100 font-mono mt-2">
-                      ${observabilityTotals.max_daily_budget_usd.toFixed(2)}
-                    </span>
-                    <span className="text-[10px] text-slate-500 mt-1">Daily hard boundary set in .env</span>
-                  </div>
-
-                  <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between h-32 relative overflow-hidden">
-                    <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">
-                      Today's query Sessions
-                    </span>
-                    <span className="text-2xl font-extrabold text-indigo-400 font-mono mt-2">
                       {observabilityTotals.calls_today}
                     </span>
                     <span className="text-[10px] text-slate-500 mt-1">
-                      Success rate: {observabilityTotals.success_rate_pct}%
+                      {observabilityTotals.ok_today} ok · {observabilityTotals.cached_today} cached ·{" "}
+                      {observabilityTotals.errors_today} failed
                     </span>
+                  </div>
+
+                  <div className="glass-panel p-6 rounded-2xl flex flex-col justify-between h-32 relative overflow-hidden">
+                    <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider block">
+                      Success Rate (API calls)
+                    </span>
+                    <span
+                      className={`text-2xl font-extrabold font-mono mt-2 ${
+                        observabilityTotals.success_rate_pct >= 90 ? "text-emerald-400" : "text-amber-400"
+                      }`}
+                    >
+                      {observabilityTotals.success_rate_pct}%
+                    </span>
+                    <span className="text-[10px] text-slate-500 mt-1">Cache hits excluded</span>
                   </div>
                 </div>
               )}
 
+              {/* MODEL / PROVIDER BREAKDOWN (last 7 days) */}
+              <div className="glass-panel p-6 rounded-2xl">
+                <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
+                    Usage by Model — Last 7 Days
+                  </h3>
+                  <span className="text-xs text-slate-500">Exact provider + model id per call</span>
+                </div>
+                {observabilityModels.length === 0 ? (
+                  <div className="p-6 text-center border border-dashed border-slate-800 rounded-xl text-slate-500 text-xs">
+                    No LLM calls recorded yet. Calls appear here as soon as any LLM feature (sentiment,
+                    veto, regime, research, news-impact) runs.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs font-mono text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px]">
+                          <th className="py-2 px-3">Provider</th>
+                          <th className="py-2 px-3">Model</th>
+                          <th className="py-2 px-3 text-right">Calls</th>
+                          <th className="py-2 px-3 text-right">OK</th>
+                          <th className="py-2 px-3 text-right">Cached</th>
+                          <th className="py-2 px-3 text-right">Failed</th>
+                          <th className="py-2 px-3 text-right">Prompt Tok</th>
+                          <th className="py-2 px-3 text-right">Compl Tok</th>
+                          <th className="py-2 px-3 text-right">Total Tok</th>
+                          <th className="py-2 px-3 text-right">Avg Latency</th>
+                          <th className="py-2 px-3">Last Used</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-850">
+                        {observabilityModels.map((m, i) => (
+                          <tr key={`${m.provider}-${m.model}-${i}`} className="hover:bg-slate-900/20">
+                            <td className="py-2 px-3 text-slate-200 font-semibold capitalize">{m.provider}</td>
+                            <td className="py-2 px-3 text-indigo-300">{m.model}</td>
+                            <td className="py-2 px-3 text-right text-slate-300">{m.calls}</td>
+                            <td className="py-2 px-3 text-right text-emerald-400">{m.ok}</td>
+                            <td className="py-2 px-3 text-right text-slate-400">{m.cached}</td>
+                            <td className={`py-2 px-3 text-right ${m.errors > 0 ? "text-rose-400" : "text-slate-500"}`}>
+                              {m.errors}
+                            </td>
+                            <td className="py-2 px-3 text-right text-slate-300">{m.prompt_tokens.toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right text-slate-300">{m.completion_tokens.toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right text-slate-100 font-bold">{m.total_tokens.toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right text-slate-400">
+                              {m.avg_latency_ms ? `${Math.round(m.avg_latency_ms)} ms` : "—"}
+                            </td>
+                            <td className="py-2 px-3 text-slate-500">{m.last_used ? formatIST(m.last_used) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
               {/* CHARTS SECTION */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Daily Cost Trend */}
+                {/* Daily token / call trend */}
                 <div className="glass-panel p-6 rounded-2xl lg:col-span-2">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-4">
-                    7-Day LLM Query Calls & Cost Trends
+                    7-Day Token Consumption & Call Volume
                   </h3>
                   <div className="h-64 w-full font-mono text-[10px]">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={observabilityDaily} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <ComposedChart data={observabilityDaily} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                         <defs>
-                          <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                          <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
                         <XAxis dataKey="date" stroke="#475569" />
-                        <YAxis stroke="#475569" />
+                        <YAxis yAxisId="tokens" stroke="#6366f1" />
+                        <YAxis yAxisId="calls" orientation="right" stroke="#10b981" />
                         <Tooltip contentStyle={{ backgroundColor: "#090d1a", borderColor: "#1e293b", color: "#e2e8f0" }} />
-                        <Area type="monotone" dataKey="cost" name="Query Cost ($)" stroke="#10b981" fillOpacity={1} fill="url(#colorCost)" />
-                      </AreaChart>
+                        <Area
+                          yAxisId="tokens"
+                          type="monotone"
+                          dataKey="tokens"
+                          name="Tokens"
+                          stroke="#6366f1"
+                          fillOpacity={1}
+                          fill="url(#colorTokens)"
+                        />
+                        <Line
+                          yAxisId="calls"
+                          type="monotone"
+                          dataKey="calls"
+                          name="Calls"
+                          stroke="#10b981"
+                          strokeWidth={2}
+                          dot={false}
+                        />
+                      </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
-                {/* calling share breakdown */}
+                {/* Token share by feature */}
                 <div className="glass-panel p-6 rounded-2xl">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-4">
-                    Token Calling Share by Trigger Component
+                    Today's Token Share by Feature
                   </h3>
                   <div className="h-64 w-full font-mono text-[10px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={observabilityCallers} layout="vertical" margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
-                        <XAxis type="number" stroke="#475569" />
-                        <YAxis dataKey="caller" type="category" stroke="#475569" width={100} />
-                        <Tooltip contentStyle={{ backgroundColor: "#090d1a", borderColor: "#1e293b", color: "#e2e8f0" }} />
-                        <Bar dataKey="pct" name="Tokens Share (%)" fill="#6366f1" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    {observabilityCallers.length === 0 ? (
+                      <div className="h-full flex items-center justify-center text-slate-500 text-xs">
+                        No calls today yet
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={observabilityCallers} layout="vertical" margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" opacity={0.3} />
+                          <XAxis type="number" stroke="#475569" />
+                          <YAxis dataKey="caller" type="category" stroke="#475569" width={110} />
+                          <Tooltip contentStyle={{ backgroundColor: "#090d1a", borderColor: "#1e293b", color: "#e2e8f0" }} />
+                          <Bar dataKey="pct" name="Token Share (%)" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
                 </div>
               </div>
@@ -5240,38 +5331,50 @@ export default function App() {
               <div className="glass-panel p-6 rounded-2xl">
                 <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400 m-0">
-                    Recent LLM Call Sessions Logger
+                    Recent LLM Calls
                   </h3>
-                  <span className="text-xs text-slate-500">Observability audits</span>
+                  <span className="text-xs text-slate-500">Latest 100 — newest first</span>
                 </div>
 
-                <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+                <div className="overflow-x-auto max-h-[340px] overflow-y-auto">
                   <table className="w-full text-xs font-mono text-left border-collapse">
                     <thead>
                       <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-wider text-[9px] sticky top-0 bg-[#080d21]">
-                        <th className="py-2 px-3">Session Timestamp</th>
-                        <th className="py-2 px-3">Trigger Caller</th>
-                        <th className="py-2 px-3">Target Model</th>
-                        <th className="py-2 px-3 text-center">Tokens consumed</th>
-                        <th className="py-2 px-3 text-center">Cost Estim</th>
-                        <th className="py-2 px-3">Session Status</th>
-                        <th className="py-2 px-3">Notes (Ticker/Scans)</th>
+                        <th className="py-2 px-3">Timestamp</th>
+                        <th className="py-2 px-3">Feature</th>
+                        <th className="py-2 px-3">Provider / Model</th>
+                        <th className="py-2 px-3 text-right">Tokens (P+C)</th>
+                        <th className="py-2 px-3 text-right">Latency</th>
+                        <th className="py-2 px-3">Status</th>
+                        <th className="py-2 px-3">Error</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-850">
                       {observabilityCalls.map((call) => (
                         <tr key={call.id} className="hover:bg-slate-900/20">
-                          <td className="py-2 px-3 text-slate-400">{call.ts}</td>
-                          <td className="py-2 px-3 text-slate-200 font-semibold">{call.caller}</td>
-                          <td className="py-2 px-3 text-slate-400">{call.model}</td>
-                          <td className="py-2 px-3 text-center text-slate-300">{call.tokens}</td>
-                          <td className="py-2 px-3 text-center text-slate-300">${(call.tokens * 0.000002).toFixed(4)}</td>
+                          <td className="py-2 px-3 text-slate-400 whitespace-nowrap">{formatIST(call.ts)}</td>
+                          <td className="py-2 px-3 text-slate-200 font-semibold">{call.caller || "—"}</td>
+                          <td className="py-2 px-3 text-slate-400">
+                            <span className="capitalize">{call.provider}</span>
+                            <span className="text-slate-600"> / </span>
+                            <span className="text-indigo-300">{call.model}</span>
+                          </td>
+                          <td className="py-2 px-3 text-right text-slate-300">
+                            {call.total_tokens != null
+                              ? `${call.total_tokens.toLocaleString()} (${call.prompt_tokens ?? 0}+${call.completion_tokens ?? 0})`
+                              : "—"}
+                          </td>
+                          <td className="py-2 px-3 text-right text-slate-400">
+                            {call.latency_ms != null && call.latency_ms > 0 ? `${call.latency_ms} ms` : "—"}
+                          </td>
                           <td className="py-2 px-3">
                             <span className={`px-2 py-0.5 rounded-full text-[9px] ${getBadgeColor(call.status)}`}>
                               {call.status}
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-slate-400 max-w-[200px] truncate">{call.note}</td>
+                          <td className="py-2 px-3 text-rose-400/80 max-w-[220px] truncate" title={call.error_msg || ""}>
+                            {call.error_msg || ""}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

@@ -107,6 +107,26 @@ def record(
 
 
 # ── Query helpers used by the dashboard ──────────────────────────────
+# NOTE: cutoffs are computed in Python and the boolean sums use portable
+# CASE WHEN so every query works identically on SQLite and Postgres.
+# (The previous SQLite-only forms — date('now'), SUM(status='ok') — threw
+# on Postgres, were swallowed by the except, and the dashboard showed
+# nothing.)
+
+_OK_SUM     = "SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END)"
+_CACHED_SUM = "SUM(CASE WHEN status='cached' THEN 1 ELSE 0 END)"
+_ERR_SUM    = ("SUM(CASE WHEN status IN ('error','rate_limited','circuit_open')"
+               " THEN 1 ELSE 0 END)")
+
+
+def _utc_cutoff_days(days: int) -> str:
+    from datetime import timedelta
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _utc_today_prefix() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
 
 def daily_summary(days: int = 7) -> list[dict]:
     """Rows: {date, calls, ok, cached, errors, prompt_tokens, completion_tokens}."""
@@ -115,19 +135,19 @@ def daily_summary(days: int = 7) -> list[dict]:
         from db.models import get_conn
         with get_conn() as conn:
             rows = conn.execute(
-                """SELECT
+                f"""SELECT
                        substr(ts,1,10)            AS date,
                        COUNT(*)                   AS calls,
-                       SUM(status='ok')            AS ok,
-                       SUM(status='cached')        AS cached,
-                       SUM(status IN ('error','rate_limited','circuit_open')) AS errors,
+                       {_OK_SUM}                  AS ok,
+                       {_CACHED_SUM}              AS cached,
+                       {_ERR_SUM}                 AS errors,
                        COALESCE(SUM(prompt_tokens),0)     AS prompt_tokens,
                        COALESCE(SUM(completion_tokens),0) AS completion_tokens
                    FROM llm_call_log
-                   WHERE ts >= datetime('now',?)
-                   GROUP BY date
+                   WHERE ts >= ?
+                   GROUP BY substr(ts,1,10)
                    ORDER BY date DESC""",
-                (f"-{days} days",),
+                (_utc_cutoff_days(days),),
             ).fetchall()
         return [dict(r) for r in rows]
     except Exception:
@@ -135,24 +155,62 @@ def daily_summary(days: int = 7) -> list[dict]:
 
 
 def today_by_caller() -> list[dict]:
-    """Rows: {caller, calls, ok, cached, errors, total_tokens} for today."""
+    """Rows: {caller, calls, ok, cached, errors, total_tokens} for today (UTC)."""
     _ensure_table()
     try:
         from db.models import get_conn
         with get_conn() as conn:
             rows = conn.execute(
-                """SELECT
+                f"""SELECT
                        caller,
                        COUNT(*)                   AS calls,
-                       SUM(status='ok')            AS ok,
-                       SUM(status='cached')        AS cached,
-                       SUM(status IN ('error','rate_limited','circuit_open')) AS errors,
+                       {_OK_SUM}                  AS ok,
+                       {_CACHED_SUM}              AS cached,
+                       {_ERR_SUM}                 AS errors,
                        COALESCE(SUM(total_tokens),0) AS total_tokens,
                        COALESCE(AVG(CASE WHEN status='ok' THEN latency_ms END),0) AS avg_latency_ms
                    FROM llm_call_log
-                   WHERE substr(ts,1,10) = date('now')
+                   WHERE substr(ts,1,10) = ?
                    GROUP BY caller
                    ORDER BY calls DESC""",
+                (_utc_today_prefix(),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def by_model(days: int = 7) -> list[dict]:
+    """Provider/model usage breakdown over the last N days.
+
+    Rows: {provider, model, calls, ok, cached, errors,
+           prompt_tokens, completion_tokens, total_tokens,
+           avg_latency_ms, last_used}.
+    Lets the dashboard show exactly which models burned which tokens
+    (e.g. "anthropic / claude-sonnet-4-6" vs "ollama / gemma3:9b").
+    """
+    _ensure_table()
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            rows = conn.execute(
+                f"""SELECT
+                       provider,
+                       model,
+                       COUNT(*)                   AS calls,
+                       {_OK_SUM}                  AS ok,
+                       {_CACHED_SUM}              AS cached,
+                       {_ERR_SUM}                 AS errors,
+                       COALESCE(SUM(prompt_tokens),0)     AS prompt_tokens,
+                       COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+                       COALESCE(SUM(total_tokens),0)      AS total_tokens,
+                       COALESCE(AVG(CASE WHEN status='ok' THEN latency_ms END),0) AS avg_latency_ms,
+                       MAX(ts)                    AS last_used
+                   FROM llm_call_log
+                   WHERE ts >= ?
+                   GROUP BY provider, model
+                   ORDER BY total_tokens DESC, calls DESC""",
+                (_utc_cutoff_days(days),),
             ).fetchall()
         return [dict(r) for r in rows]
     except Exception:
@@ -166,7 +224,7 @@ def recent_calls(limit: int = 100) -> list[dict]:
         from db.models import get_conn
         with get_conn() as conn:
             rows = conn.execute(
-                """SELECT ts, provider, model, caller, status,
+                """SELECT id, ts, provider, model, caller, status,
                           prompt_tokens, completion_tokens, total_tokens,
                           latency_ms, error_msg
                    FROM llm_call_log
@@ -179,20 +237,23 @@ def recent_calls(limit: int = 100) -> list[dict]:
 
 
 def today_totals() -> dict:
-    """Quick summary dict for the sidebar / header badges."""
+    """Quick summary dict for the sidebar / header badges (today, UTC)."""
     _ensure_table()
     try:
         from db.models import get_conn
         with get_conn() as conn:
             row = conn.execute(
-                """SELECT
+                f"""SELECT
                        COUNT(*)                              AS calls,
-                       SUM(status='ok')                      AS ok,
-                       SUM(status='cached')                  AS cached,
-                       SUM(status IN ('error','rate_limited','circuit_open')) AS errors,
+                       {_OK_SUM}                             AS ok,
+                       {_CACHED_SUM}                         AS cached,
+                       {_ERR_SUM}                            AS errors,
+                       COALESCE(SUM(prompt_tokens),0)        AS prompt_tokens,
+                       COALESCE(SUM(completion_tokens),0)    AS completion_tokens,
                        COALESCE(SUM(total_tokens),0)         AS tokens
                    FROM llm_call_log
-                   WHERE substr(ts,1,10) = date('now')""",
+                   WHERE substr(ts,1,10) = ?""",
+                (_utc_today_prefix(),),
             ).fetchone()
         return dict(row) if row else {}
     except Exception:

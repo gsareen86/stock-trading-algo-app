@@ -21,6 +21,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -261,6 +262,9 @@ def call_text(
     model = model or LLM_DEFAULT_MODEL
 
     if _cb_is_open():
+        _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
+                    status="circuit_open", latency_ms=0,
+                    error_msg="circuit breaker open — skipping API call")
         return None
     client = get_client()
     if client is None and LLM_PROVIDER != "ollama":
@@ -283,10 +287,12 @@ def call_text(
 
     latency_ms = int((time.monotonic() - t0) * 1000)
     if text is None:
-        if "429" in (error_msg or ""):
+        is_429 = "429" in (error_msg or "")
+        if is_429:
             _cb_record_429(model)
         _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
-                    status="error", latency_ms=latency_ms, error_msg=error_msg)
+                    status="rate_limited" if is_429 else "error",
+                    latency_ms=latency_ms, error_msg=error_msg)
         return None
     _cb_record_success()
     _obs_record(provider=LLM_PROVIDER, model=model, caller=caller, status="ok",

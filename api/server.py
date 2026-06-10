@@ -1444,62 +1444,95 @@ def get_strategy_performance():
 # -------------------------------------------------------------
 # LLM OBSERVABILITY ENDPOINTS
 # -------------------------------------------------------------
+# All data comes live from the llm_call_log table, which llm/client.py
+# writes for every LLM request (success, cache hit, rate-limit, error).
+
 @app.get("/api/llm/observability/totals")
 def get_llm_observability_totals():
-    """Fetch total LLM calls statistics and daily token usage budgets."""
-    # We query from custom observability tables or return dummy values if it's mock
-    try:
-        df = query_df("SELECT * FROM cycle_log ORDER BY id DESC")
-        # Sum token values or LLM flags inside cycles
-        return {
-            "prompt_tokens_today": 12500,
-            "completion_tokens_today": 4800,
-            "cost_today_usd": 0.082,
-            "max_daily_budget_usd": 1.00,
-            "calls_today": 14,
-            "success_rate_pct": 100.0
-        }
-    except Exception as e:
-        return {
-            "prompt_tokens_today": 0,
-            "completion_tokens_today": 0,
-            "cost_today_usd": 0.0,
-            "max_daily_budget_usd": 1.00,
-            "calls_today": 0,
-            "success_rate_pct": 0.0
-        }
+    """Today's LLM usage totals plus the currently configured provider/model."""
+    from llm.observability import today_totals
+    from config import LLM_PROVIDER, LLM_DEFAULT_MODEL
+
+    t = today_totals() or {}
+    calls = int(t.get("calls") or 0)
+    ok = int(t.get("ok") or 0)
+    cached = int(t.get("cached") or 0)
+    errors = int(t.get("errors") or 0)
+    attempted = max(calls - cached, 0)  # cache hits never fail
+    return {
+        "provider": LLM_PROVIDER,
+        "model": LLM_DEFAULT_MODEL,
+        "calls_today": calls,
+        "ok_today": ok,
+        "cached_today": cached,
+        "errors_today": errors,
+        "prompt_tokens_today": int(t.get("prompt_tokens") or 0),
+        "completion_tokens_today": int(t.get("completion_tokens") or 0),
+        "tokens_today": int(t.get("tokens") or 0),
+        "success_rate_pct": round(100.0 * ok / attempted, 1) if attempted else 100.0,
+    }
+
 
 @app.get("/api/llm/observability/callers")
 def get_llm_observability_callers():
-    """Fetch breakdown of LLM usage statistics by trading trigger/strategy."""
+    """Today's LLM usage broken down by feature (veto, sentiment, regime, ...)."""
+    from llm.observability import today_by_caller
+
+    rows = today_by_caller()
+    total_tokens = sum(int(r.get("total_tokens") or 0) for r in rows) or 1
     return [
-        {"caller": "FinBERT Sentiment Scoring", "calls": 82, "tokens": 45000, "pct": 65},
-        {"caller": "VETO Signal Verification", "calls": 12, "tokens": 15000, "pct": 21},
-        {"caller": "EOD Market Regime Review", "calls": 1, "tokens": 8000, "pct": 11},
-        {"caller": "Meta Weights Optimization", "calls": 1, "tokens": 2000, "pct": 3}
+        {
+            "caller": r.get("caller") or "(untagged)",
+            "calls": int(r.get("calls") or 0),
+            "ok": int(r.get("ok") or 0),
+            "cached": int(r.get("cached") or 0),
+            "errors": int(r.get("errors") or 0),
+            "tokens": int(r.get("total_tokens") or 0),
+            "avg_latency_ms": int(r.get("avg_latency_ms") or 0),
+            "pct": round(100.0 * int(r.get("total_tokens") or 0) / total_tokens, 1),
+        }
+        for r in rows
     ]
+
+
+@app.get("/api/llm/observability/models")
+def get_llm_observability_models(days: int = 7):
+    """Provider/model usage breakdown (calls, tokens, latency) for last N days."""
+    from llm.observability import by_model
+
+    return by_model(days=days)
+
 
 @app.get("/api/llm/observability/daily")
-def get_llm_observability_daily():
-    """Fetch 7-day historic summaries of daily budgets."""
-    return [
-        {"date": "2026-05-15", "calls": 12, "cost": 0.065},
-        {"date": "2026-05-16", "calls": 15, "cost": 0.078},
-        {"date": "2026-05-17", "calls": 0, "cost": 0.000},  # Weekend
-        {"date": "2026-05-18", "calls": 0, "cost": 0.000},  # Weekend
-        {"date": "2026-05-19", "calls": 18, "cost": 0.105},
-        {"date": "2026-05-20", "calls": 16, "cost": 0.092},
-        {"date": "2026-05-21", "calls": 14, "cost": 0.082}
-    ]
+def get_llm_observability_daily(days: int = 7):
+    """Daily calls/tokens/errors for the trend chart (last N days)."""
+    from llm.observability import daily_summary
+
+    rows = daily_summary(days=days)
+    out = []
+    for r in rows:
+        pt = int(r.get("prompt_tokens") or 0)
+        ct = int(r.get("completion_tokens") or 0)
+        out.append({
+            "date": r.get("date"),
+            "calls": int(r.get("calls") or 0),
+            "ok": int(r.get("ok") or 0),
+            "cached": int(r.get("cached") or 0),
+            "errors": int(r.get("errors") or 0),
+            "prompt_tokens": pt,
+            "completion_tokens": ct,
+            "tokens": pt + ct,
+        })
+    # Chronological order for the chart (daily_summary returns DESC)
+    return sorted(out, key=lambda r: r["date"] or "")
+
 
 @app.get("/api/llm/observability/calls")
-def get_llm_observability_calls():
-    """Fetch details of recent LLM query sessions."""
-    return [
-        {"id": 1, "ts": "2026-05-21 15:30:12 IST", "caller": "VETO", "model": "gpt-4o-mini", "status": "CACHED", "tokens": 1200, "note": "Approved INFOSYS Buy signal"},
-        {"id": 2, "ts": "2026-05-21 15:00:08 IST", "caller": "FinBERT", "model": "finbert-local", "status": "SUCCESS", "tokens": 350, "note": "Scored news sentiment for RELIANCE"},
-        {"id": 3, "ts": "2026-05-21 14:30:05 IST", "caller": "VETO", "model": "gpt-4o-mini", "status": "SUCCESS", "tokens": 1400, "note": "Vetoed TATASTEEL entry (Negative sentiment)"},
-    ]
+def get_llm_observability_calls(limit: int = 100):
+    """Most recent LLM calls with provider, model, tokens, latency and status."""
+    from llm.observability import recent_calls
+
+    return recent_calls(limit=min(max(limit, 1), 500))
 
 
 # -------------------------------------------------------------
