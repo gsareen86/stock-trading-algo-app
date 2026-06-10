@@ -33,6 +33,7 @@ def run_phase_a(
     score_only: bool = False,
     progress_cb: Optional[Callable] = None,
     skip_existing: bool = False,
+    sync_positional: bool = True,
 ) -> Dict[str, Dict[str, int]]:
     """
     Run universe build + quality scoring end-to-end.
@@ -75,7 +76,19 @@ def run_phase_a(
     )
     log.info("Quality: %s", quality_counts)
 
-    return {"universe": universe_counts, "quality": quality_counts}
+    # Phase 4 (conviction engine): feed the positional scanner's universe
+    # from the scraped pipeline so the CSV upload is optional. Fail-open.
+    sync_counts: Dict[str, int] = {}
+    if sync_positional:
+        try:
+            from positional.universe_sync import sync_lt_to_pos_universe
+            sync_counts = sync_lt_to_pos_universe()
+            log.info("Positional sync: %s", sync_counts)
+        except Exception as e:
+            log.warning("Positional universe sync failed (non-fatal): %s", e)
+
+    return {"universe": universe_counts, "quality": quality_counts,
+            "positional_sync": sync_counts}
 
 
 def main():

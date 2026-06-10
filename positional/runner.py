@@ -113,6 +113,18 @@ def _open_position(ticker: str, price: float, score: float,
         except Exception as e:
             log.debug("[pos_runner] event guard check failed for %s: %s", ticker, e)
 
+    # Stage-0 hygiene gate — known ASM/GSM listing or known-poor liquidity
+    # blocks the entry; missing data never does.
+    try:
+        from data.hygiene import hygiene_check
+        hc = hygiene_check(ticker)
+        if not hc["passed"]:
+            log.info("[pos_runner] %s: entry blocked by hygiene gate — %s",
+                     ticker, "; ".join(hc["reasons"]))
+            return False
+    except Exception as e:
+        log.debug("[pos_runner] hygiene check failed for %s: %s", ticker, e)
+
     size_mult = current_size_multiplier()
     if reduce_size:
         size_mult *= 0.50
@@ -344,6 +356,40 @@ def _partial_close_position(pos: dict, current_price: float) -> bool:
     return True
 
 
+def _maybe_convert_to_longterm(pos: dict, current_price: float) -> bool:
+    """After a +2R partial, move the runner into the long-term book when the
+    name's latest durability score clears the LT gate. Closes the swing
+    position (reason CONVERT_TO_LT) and absorbs the quantity into
+    lt_positions at market with no extra costs. Returns True on conversion."""
+    from config import LT_BOOK_ENABLED, LT_CONVERT_FROM_SWING, LT_DURABILITY_GATE
+    if not (LT_BOOK_ENABLED and LT_CONVERT_FROM_SWING):
+        return False
+    ticker = pos["ticker"]
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            row = conn.execute(
+                """SELECT durability_score FROM pos_scans
+                   WHERE ticker=? ORDER BY id DESC LIMIT 1""",
+                (ticker,),
+            ).fetchone()
+        durability = float(row["durability_score"]) if row and row["durability_score"] is not None else None
+        if durability is None or durability < LT_DURABILITY_GATE:
+            return False
+        qty = int(pos.get("quantity") or 0)
+        if qty <= 0:
+            return False
+        if not _close_position(pos, current_price,
+                               f"CONVERT_TO_LT: durability {durability:.0f} ≥ {LT_DURABILITY_GATE:.0f}"):
+            return False
+        from longterm.book import absorb_from_swing
+        absorb_from_swing(ticker, qty, current_price, source_pos_id=pos["id"])
+        return True
+    except Exception as e:
+        log.debug("[pos_runner] LT conversion failed for %s: %s", ticker, e)
+        return False
+
+
 # ── EOD Exit Management ───────────────────────────────────────────────────────
 
 def _calendar_days_held(entry_date) -> int:
@@ -426,6 +472,13 @@ def run_exit_checks(force: bool = False) -> dict:
                 if trigger and current_price >= trigger:
                     if _partial_close_position(pos, current_price):
                         partials += 1
+                        # Swing → long-term conversion: a +2R runner on a
+                        # durable business moves to the LT book instead of
+                        # riding the swing trail (Phase 6; off unless
+                        # LT_BOOK_ENABLED).
+                        if _maybe_convert_to_longterm(pos, current_price):
+                            exited += 1
+                            continue
 
             # Evaluate exit (technical first, then optional management-based exit)
             exit_reason = evaluate_exits(pos, df)
@@ -735,13 +788,19 @@ def run_eod_scan(force: bool = False) -> dict:
 
     log.info("[pos_runner] === EOD SCAN START ===")
 
-    # Step 0: refresh the deterministic NSE event calendar (throttled inside;
-    # fail-open — a fetch failure never stops the scan).
+    # Step 0: refresh the deterministic NSE event calendar + ASM/GSM
+    # surveillance lists (both throttled inside; fail-open — a fetch failure
+    # never stops the scan).
     try:
         from data.nse_calendar import refresh_event_calendar
         refresh_event_calendar()
     except Exception as e:
         log.debug("[pos_runner] event calendar refresh failed: %s", e)
+    try:
+        from data.hygiene import refresh_surveillance_lists
+        refresh_surveillance_lists()
+    except Exception as e:
+        log.debug("[pos_runner] surveillance refresh failed: %s", e)
 
     # Step 1: India VIX Check & Dynamic Score Threshold Adjustment
     import config
@@ -879,6 +938,11 @@ def run_eod_scan(force: bool = False) -> dict:
         run_guidance_jobs()
     except Exception as e:
         log.debug("[pos_runner] guidance jobs failed: %s", e)
+    try:
+        from longterm.book import run_longterm_book
+        run_longterm_book()   # no-op unless LT_BOOK_ENABLED
+    except Exception as e:
+        log.debug("[pos_runner] LT book pass failed: %s", e)
 
     summary = {
         "regime": regime_flag,
@@ -933,6 +997,7 @@ def run_positional_forever() -> None:
     _last_alert_date:  object = None
     _last_regime_month: object = None
     _last_refresh_date: object = None
+    _last_universe_date: object = None
 
     scan_h,  scan_m  = [int(x) for x in POSITIONAL_SCAN_TIME.split(":")]
     alert_h, alert_m = [int(x) for x in POSITIONAL_ALERT_TIME.split(":")]
@@ -969,6 +1034,26 @@ def run_positional_forever() -> None:
                         run_regime_check()
                     except Exception as e:
                         log.error("[pos_runner] regime check error: %s", e)
+
+            # Weekly unified-universe refresh (Phase 4): re-run the Screener
+            # pipeline + quality scoring + positional sync on the scheduled
+            # weekday (default Saturday — markets closed, scrape freely).
+            from config import (UNIVERSE_WEEKLY_REFRESH_ENABLED,
+                                UNIVERSE_REFRESH_WEEKDAY, UNIVERSE_REFRESH_TIME)
+            uh, um = [int(x) for x in UNIVERSE_REFRESH_TIME.split(":")]
+            if (UNIVERSE_WEEKLY_REFRESH_ENABLED
+                    and today.weekday() == UNIVERSE_REFRESH_WEEKDAY
+                    and (now.hour, now.minute) >= (uh, um)
+                    and _last_universe_date != today):
+                _last_universe_date = today
+                try:
+                    from longterm.tasks import run_phase_a
+                    log.info("[pos_runner] weekly universe refresh starting")
+                    run_phase_a(sync_positional=True)
+                except Exception as e:
+                    log.error("[pos_runner] weekly universe refresh error: %s", e)
+                time.sleep(30)
+                continue
 
             # Daily management-research refresh (holdings + watchlist + shortlist).
             # Decoupled from the technical scan so holdings pick up new concalls.

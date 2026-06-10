@@ -454,6 +454,52 @@ CREATE TABLE IF NOT EXISTS event_calendar (
     UNIQUE (ticker, event_type, event_date)
 );
 
+CREATE TABLE IF NOT EXISTS surveillance_list (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker      TEXT NOT NULL,
+    list_type   TEXT NOT NULL,
+    stage       TEXT,
+    fetched_at  TEXT NOT NULL,
+    UNIQUE (ticker, list_type)
+);
+
+CREATE TABLE IF NOT EXISTS lt_positions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker          TEXT NOT NULL,
+    opened_at       TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'OPEN',
+    quantity        INTEGER NOT NULL DEFAULT 0,
+    avg_entry_price REAL,
+    tranches_taken  INTEGER DEFAULT 0,
+    last_tranche_at TEXT,
+    halved          INTEGER DEFAULT 0,
+    source          TEXT,
+    sector          TEXT,
+    exit_date       TEXT,
+    exit_price      REAL,
+    exit_reason     TEXT,
+    pnl             REAL,
+    pnl_pct         REAL,
+    notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lt_trades (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,
+    ticker      TEXT NOT NULL,
+    side        TEXT NOT NULL,
+    quantity    INTEGER NOT NULL,
+    price       REAL NOT NULL,
+    costs       REAL NOT NULL,
+    pnl         REAL,
+    reason      TEXT,
+    position_id INTEGER REFERENCES lt_positions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_surveillance_ticker ON surveillance_list(ticker);
+CREATE INDEX IF NOT EXISTS idx_lt_positions_status ON lt_positions(status);
+CREATE INDEX IF NOT EXISTS idx_lt_trades_ts        ON lt_trades(ts);
+
 CREATE INDEX IF NOT EXISTS idx_guidance_ticker        ON guidance_ledger(ticker);
 CREATE INDEX IF NOT EXISTS idx_signal_outcomes_ticker ON signal_outcomes(ticker);
 CREATE INDEX IF NOT EXISTS idx_event_calendar_ticker  ON event_calendar(ticker, event_date);
@@ -892,6 +938,52 @@ CREATE TABLE IF NOT EXISTS event_calendar (
     fetched_at  TEXT NOT NULL,
     UNIQUE (ticker, event_type, event_date)
 );
+
+CREATE TABLE IF NOT EXISTS surveillance_list (
+    id          BIGSERIAL PRIMARY KEY,
+    ticker      TEXT NOT NULL,
+    list_type   TEXT NOT NULL,
+    stage       TEXT,
+    fetched_at  TEXT NOT NULL,
+    UNIQUE (ticker, list_type)
+);
+
+CREATE TABLE IF NOT EXISTS lt_positions (
+    id              BIGSERIAL PRIMARY KEY,
+    ticker          TEXT NOT NULL,
+    opened_at       TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'OPEN',
+    quantity        INTEGER NOT NULL DEFAULT 0,
+    avg_entry_price DOUBLE PRECISION,
+    tranches_taken  INTEGER DEFAULT 0,
+    last_tranche_at TEXT,
+    halved          INTEGER DEFAULT 0,
+    source          TEXT,
+    sector          TEXT,
+    exit_date       TEXT,
+    exit_price      DOUBLE PRECISION,
+    exit_reason     TEXT,
+    pnl             DOUBLE PRECISION,
+    pnl_pct         DOUBLE PRECISION,
+    notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lt_trades (
+    id          BIGSERIAL PRIMARY KEY,
+    ts          TEXT NOT NULL,
+    ticker      TEXT NOT NULL,
+    side        TEXT NOT NULL,
+    quantity    INTEGER NOT NULL,
+    price       DOUBLE PRECISION NOT NULL,
+    costs       DOUBLE PRECISION NOT NULL,
+    pnl         DOUBLE PRECISION,
+    reason      TEXT,
+    position_id BIGINT REFERENCES lt_positions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_surveillance_ticker ON surveillance_list(ticker);
+CREATE INDEX IF NOT EXISTS idx_lt_positions_status ON lt_positions(status);
+CREATE INDEX IF NOT EXISTS idx_lt_trades_ts        ON lt_trades(ts);
 
 CREATE INDEX IF NOT EXISTS idx_guidance_ticker        ON guidance_ledger(ticker);
 CREATE INDEX IF NOT EXISTS idx_signal_outcomes_ticker ON signal_outcomes(ticker);

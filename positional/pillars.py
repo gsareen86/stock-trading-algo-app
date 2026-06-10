@@ -143,21 +143,26 @@ def relative_momentum_pillar(
 
 
 def sentiment_pillar(ticker: str, days: int = 14) -> Optional[float]:
-    """Average recent news sentiment (-1..+1) mapped to 0-100; None if no news."""
+    """Time-decayed recent news sentiment (-1..+1) mapped to 0-100.
+
+    Uses nlp.sentiment.aggregated_sentiment so the same exponential decay
+    (SENTIMENT_HALF_LIFE_HOURS) applies here as in the veto/composite paths —
+    a fresh headline outweighs a two-week-old one. None if no news.
+    """
     try:
         from db.models import get_conn
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         base = _base(ticker)
         with get_conn() as conn:
-            rows = conn.execute(
-                """SELECT sentiment FROM news
+            row = conn.execute(
+                """SELECT COUNT(*) AS n FROM news
                    WHERE tickers LIKE ? AND ts >= ? AND sentiment IS NOT NULL""",
                 (f"%{base}%", cutoff),
-            ).fetchall()
-        vals = [float(r["sentiment"]) for r in rows if r["sentiment"] is not None]
-        if not vals:
+            ).fetchone()
+        if not row or int(row["n"] or 0) == 0:
             return None
-        avg = sum(vals) / len(vals)
+        from nlp.sentiment import aggregated_sentiment
+        avg = aggregated_sentiment(base, hours=days * 24)
         return round(_clip(50.0 + avg * 50.0), 1)
     except Exception as e:
         log.debug("[pillars] sentiment lookup failed for %s: %s", ticker, e)

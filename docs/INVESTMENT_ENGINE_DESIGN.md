@@ -294,13 +294,13 @@ OUTCOME_HORIZONS_DAYS          = (5, 20, 60)
 
 | Phase | Contents | Status |
 |---|---|---|
-| **1. Quick fixes** | news matcher precision ✅ · LLM observability ✅ · NSE event calendar (`data/nse_calendar.py`) ✅ · sentiment time-decay ✅ · per-ticker news throttle ✅ · LLM cache TTL ✅ · liquidity/ASM-GSM gate ⏳ | mostly done |
+| **1. Quick fixes** | news matcher precision ✅ · LLM observability ✅ · NSE event calendar (`data/nse_calendar.py`) ✅ · sentiment time-decay ✅ · per-ticker news throttle ✅ · LLM cache TTL ✅ · liquidity/ASM-GSM gate (`data/hygiene.py`) ✅ | done |
 | **2. Swing book mechanics** | risk-based sizing ✅ · +2R partial (`_partial_close_position`) ✅ · strategy-scaled time stop ✅ · deterministic event guard on entries ✅ | done |
-| **3. Guidance ledger** | extraction (`positional/guidance.py`) ✅ · quarterly reconciliation vs Screener actuals ✅ · credibility score → `pos_research.guidance_credibility` ✅ · miss-streak review alerts ✅ · blend credibility into the management pillar ⏳ | mostly done |
-| **4. Unified universe** | one hygiene-gated universe; Screener as fundamental source of truth | pending |
-| **5. Feedback layer** | `signal_outcomes` table + daily forward-return job (`analytics/outcomes.py`) ✅ · walk-forward backtester ⏳ | partial |
-| **6. Long-term book execution** | tranche accumulation · swing→LT conversion · thesis stops · governance tripwires | pending |
-| **7. Adaptive layer** | re-tune thresholds/weights from outcomes; consider ML meta-model (≥ 200 outcomes) | pending |
+| **3. Guidance ledger** | extraction (`positional/guidance.py`) ✅ · quarterly reconciliation vs Screener actuals ✅ · credibility score → `pos_research.guidance_credibility` ✅ · miss-streak review alerts ✅ · credibility blended into the management pillar (`research.py::_apply_research`) ✅ | done |
+| **4. Unified universe** | Stage-0 hygiene gates (surveillance + liquidity) ✅ · `positional/universe_sync.py` (lt_universe → pos_universe, Screener as source of truth; CSV optional) ✅ · weekly scheduled refresh (Saturday, positional daemon) ✅ | done |
+| **5. Feedback layer** | `signal_outcomes` table + daily forward-return job (`analytics/outcomes.py`) ✅ · walk-forward backtester (`backtest/engine.py`) ✅ | done |
+| **6. Long-term book execution** | `longterm/book.py`: tranche accumulation (T1/T2/T3) ✅ · swing→LT conversion at +2R ✅ · thesis stops (guidance miss streak, verdict flip, management veto) ✅ · governance tripwire (pledge +10pp QoQ) ✅ · crash protection (40-week MA × DEFENSIVE) ✅ · re-entry quarantine ✅ — gated behind `LT_BOOK_ENABLED` (default off) | done |
+| **7. Adaptive layer** | advisory calibration report (`analytics/calibration.py`) ✅ — score-band hit-rates, verdict/severity separation, threshold recommendation gated on ≥200 outcomes; never auto-applied · ML meta-model | report done; ML deferred by design |
 
 Each phase is independently shippable and leaves the system in a working state.
 
@@ -321,3 +321,20 @@ Each phase is independently shippable and leaves the system in a working state.
 - **Guidance:** extraction fires automatically whenever new research is
   persisted; reconciliation waits ~70 days for the next results, so the
   credibility column stays NULL for the first quarter of operation.
+- **Hygiene gates:** ASM/GSM lists refresh with the EOD scan; a *known*
+  listing always blocks, missing data never does. Liquidity uses the
+  60-day median traded value from cached candles.
+- **Unified universe:** the Saturday refresh runs the full Screener
+  pipeline and syncs survivors into `pos_universe`. The CSV upload still
+  works (rows upsert by ticker, nothing is wiped) but is now optional.
+  Manual run: `python -m positional.universe_sync`.
+- **Long-term book:** entirely behind `LT_BOOK_ENABLED` (default False).
+  Enable via env once comfortable; it trades a separate paper pool
+  (`LT_CAPITAL`) and writes to `lt_positions`/`lt_trades`. Thesis-stopped
+  names are quarantined for `LT_REENTRY_QUARANTINE_DAYS`.
+- **Backtester:** `python -m backtest.engine --tickers RELIANCE,TCS --years 3`
+  (or `--walk-forward`). Validates the timing/exit/sizing layer only —
+  fundamental pillars and the LLM veto have no historical snapshot, and
+  stops fill at the close, so treat crash periods as optimistic.
+- **Calibration:** `python -m analytics.calibration` — advisory report;
+  refuses to recommend thresholds below 200 collected outcomes.

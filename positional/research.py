@@ -505,6 +505,23 @@ def _apply_research(cand: dict, res: dict) -> None:
     persist the thesis + the updated scan row."""
     material = res.pop("_material", {})
     mgmt = res.get("management_score")
+
+    # Phase-3 blend: once the guidance ledger has ≥2 reconciled quarters, the
+    # management pillar mixes the LLM's read with the objective delivery
+    # record (promises kept vs missed). Fail-open: no ledger → pure LLM score.
+    if mgmt is not None:
+        try:
+            from config import GUIDANCE_CREDIBILITY_WEIGHT
+            from positional.guidance import credibility_score
+            base = cand["ticker"].replace(".NS", "").replace(".BO", "")
+            cred = credibility_score(base)
+            if cred is not None:
+                mgmt = round((1.0 - GUIDANCE_CREDIBILITY_WEIGHT) * float(mgmt)
+                             + GUIDANCE_CREDIBILITY_WEIGHT * cred, 1)
+        except Exception as e:
+            log.debug("[research] credibility blend failed for %s: %s",
+                      cand.get("ticker"), e)
+
     verdict = res.get("verdict", "PROCEED")
     outlook = res.get("outlook", "NEUTRAL")
     thesis = res.get("thesis", "")

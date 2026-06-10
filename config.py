@@ -462,6 +462,39 @@ GUIDANCE_MISS_STREAK_REVIEW = 2      # consecutive missed quarters → review al
 OUTCOME_HORIZONS_DAYS = (5, 20, 60)
 OUTCOME_JOB_MAX_TICKERS = 25         # per daily run (price fetches are cached)
 
+# Stage-0 universe hygiene (Phase 1/4) — hard gates, never blended away.
+UNIVERSE_MIN_MEDIAN_TRADED_VALUE_CR = 5.0   # 60-day median ₹ Cr traded/day
+UNIVERSE_EXCLUDE_SURVEILLANCE = True         # block ASM/GSM-listed names
+SURVEILLANCE_REFRESH_HOURS = 12              # NSE ASM/GSM list refresh throttle
+
+# Weekly unified-universe refresh (Phase 4) — re-runs the Screener pipeline
+# (longterm.tasks.run_phase_a) and syncs passed names into pos_universe so
+# the CSV upload becomes optional rather than required.
+UNIVERSE_WEEKLY_REFRESH_ENABLED = os.environ.get("UNIVERSE_WEEKLY_REFRESH_ENABLED", "True").lower() == "true"
+UNIVERSE_REFRESH_WEEKDAY = 5                 # 5 = Saturday (markets closed)
+UNIVERSE_REFRESH_TIME = "10:00"              # IST
+
+# Guidance credibility blend (Phase 3) — once ≥2 quarters are reconciled,
+# the management pillar becomes a blend of the LLM read and delivery record.
+GUIDANCE_CREDIBILITY_WEIGHT = 0.30           # pillar = 0.7×LLM + 0.3×credibility
+
+# ── Long-term book (Phase 6) — paper/advisory, OFF by default ────────────────
+LT_BOOK_ENABLED = os.environ.get("LT_BOOK_ENABLED", "False").lower() == "true"
+LT_CAPITAL = 100_000.0                       # separate pool (paper)
+LT_MAX_POSITIONS = 10
+LT_MAX_POSITION_PCT = 0.10                   # max 10% of LT capital per name
+LT_SECTOR_CAP_PCT = 0.30                     # max 30% of LT capital per sector
+LT_TRANCHE_FRACTIONS = (0.34, 0.33, 0.33)    # staggered accumulation
+LT_DURABILITY_GATE = 70.0                    # durability ≥ this to enter the book
+LT_MIN_TRANCHE_GAP_DAYS = 10                 # min days between tranches
+LT_CONVERT_FROM_SWING = True                 # swing +2R runner → LT when durable
+LT_GUIDANCE_MISS_STREAK_EXIT = 2             # consecutive guidance misses → exit
+LT_CRASH_MA_WEEKS = 40                       # halve below 40-week MA in DEFENSIVE
+LT_REENTRY_QUARANTINE_DAYS = 90              # no re-entry after a thesis stop
+
+# Calibration (Phase 7) — advisory only; recommendations are never auto-applied.
+MIN_OUTCOMES_FOR_CALIBRATION = 200
+
 # ----- Feature flags (Phase 2) -----
 ENABLE_ML_META_MODEL = False      # Phase 2
 ENABLE_ADAPTIVE_WEIGHTS = False   # Phase 2
