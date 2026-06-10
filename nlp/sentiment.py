@@ -111,8 +111,9 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
                 tuple(ids),
             ).fetchall()
         else:
+            # Newest first so the LLM budget is spent on the freshest articles.
             rows = conn.execute(
-                "SELECT id, title, summary FROM news WHERE processed=0"
+                "SELECT id, title, summary FROM news WHERE processed=0 ORDER BY id DESC"
             ).fetchall()
 
         if not rows:
@@ -121,28 +122,48 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
 
         texts = [f"{r['title']}. {r['summary'] or ''}" for r in rows]
 
-        _LLM_BATCH_MAX = 20  # cap per LLM call to protect rate-limit budget
-        if LLM_ENABLE_SENTIMENT and len(rows) <= _LLM_BATCH_MAX:
+        # LLM scoring runs in chunks of _LLM_BATCH_MAX items per call instead
+        # of abandoning the LLM entirely when a big scrape lands (the old
+        # behaviour silently downgraded 91 fresh articles to VADER). A per-run
+        # cap bounds the worst-case token spend; anything beyond it — and any
+        # chunk that fails (rate limit / circuit breaker) — falls back to
+        # FinBERT/VADER so nothing is left unscored.
+        _LLM_BATCH_MAX = 20
+        try:
+            from config import LLM_SENTIMENT_MAX_ITEMS_PER_RUN as _LLM_RUN_CAP
+        except ImportError:
+            _LLM_RUN_CAP = 120
+
+        scores: list = [None] * len(rows)
+        if LLM_ENABLE_SENTIMENT:
             from llm.sentiment import score_batch_llm  # lazy — keeps dep optional
-            llm_items = [
-                {"ticker": "", "title": r["title"], "summary": r["summary"] or ""}
-                for r in rows
-            ]
-            llm_scores = score_batch_llm(llm_items)
-            if llm_scores is not None and len(llm_scores) == len(rows):
-                scores = llm_scores
-                log.debug("LLM batch sentiment: scored %d items", len(scores))
-            else:
-                log.debug("LLM batch failed — falling back to FinBERT/VADER")
-                scores = _score_batch(texts)
-        else:
-            if LLM_ENABLE_SENTIMENT and len(rows) > _LLM_BATCH_MAX:
-                log.info(
-                    "sentiment: %d items exceeds LLM batch cap (%d) — "
-                    "using FinBERT/VADER to protect rate-limit budget",
-                    len(rows), _LLM_BATCH_MAX,
-                )
-            scores = _score_batch(texts)
+            llm_budget = min(len(rows), _LLM_RUN_CAP)
+            llm_failed = False
+            for start in range(0, llm_budget, _LLM_BATCH_MAX):
+                chunk = rows[start:start + _LLM_BATCH_MAX]
+                llm_items = [
+                    {"ticker": "", "title": r["title"], "summary": r["summary"] or ""}
+                    for r in chunk
+                ]
+                chunk_scores = score_batch_llm(llm_items)
+                if chunk_scores is None or len(chunk_scores) != len(chunk):
+                    log.info("sentiment: LLM chunk %d-%d failed — remaining items "
+                             "fall back to FinBERT/VADER", start, start + len(chunk))
+                    llm_failed = True
+                    break
+                scores[start:start + len(chunk)] = chunk_scores
+            llm_scored = sum(1 for s in scores if s is not None)
+            if llm_scored:
+                log.info("sentiment: LLM scored %d/%d items in %d-item chunks%s",
+                         llm_scored, len(rows), _LLM_BATCH_MAX,
+                         " (run cap reached)" if not llm_failed and llm_scored < len(rows) else "")
+
+        # Fallback for whatever the LLM didn't cover.
+        missing_idx = [i for i, s in enumerate(scores) if s is None]
+        if missing_idx:
+            fallback = _score_batch([texts[i] for i in missing_idx])
+            for i, s in zip(missing_idx, fallback):
+                scores[i] = s
 
         for r, score in zip(rows, scores):
             conn.execute(

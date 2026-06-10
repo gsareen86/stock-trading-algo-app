@@ -722,11 +722,12 @@ def get_news_leaderboard(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/news/ticker/{ticker}")
-def get_ticker_news(ticker: str):
-    """Retrieve historical sentiment feed specifically for an individual ticker."""
+def get_ticker_news(ticker: str, hours: int = Query(24), limit: int = Query(20)):
+    """Recent tagged articles for one ticker (window/limit configurable)."""
     try:
         tk_upper = ticker.upper().strip()
-        feed = recent_news_for_ticker(tk_upper)
+        feed = recent_news_for_ticker(tk_upper, hours=min(int(hours), 24 * 14),
+                                      limit=min(int(limit), 50))
         
         results = []
         for r in feed:

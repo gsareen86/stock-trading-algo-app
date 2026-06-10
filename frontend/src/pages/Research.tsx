@@ -22,21 +22,42 @@ function VerdictRow({ r }: { r: any }) {
         {open ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
       </button>
       {open && (
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] leading-relaxed">
-          <div>
-            <div className="text-slate-500 font-semibold uppercase text-[9px] mb-1">Thesis</div>
-            <p className="text-slate-300 m-0">{r.thesis || "—"}</p>
-            <div className="text-slate-500 font-semibold uppercase text-[9px] mt-3 mb-1">Recommendation</div>
-            <p className="text-slate-300 m-0">{r.recommendation} — {r.recommendation_rationale}</p>
-            <div className="text-slate-500 font-semibold uppercase text-[9px] mt-3 mb-1">Management Guidance (restated)</div>
-            <p className="text-slate-300 m-0">{r.guidance || "none given"}</p>
+        <div className="mt-3 space-y-3 text-[11px] leading-relaxed">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <div className="text-slate-500 font-semibold uppercase text-[9px] mb-1">Thesis</div>
+              <p className="text-slate-300 m-0">{r.thesis || "—"}</p>
+              <div className="text-slate-500 font-semibold uppercase text-[9px] mt-3 mb-1">Recommendation</div>
+              <p className="text-slate-300 m-0">{r.recommendation} — {r.recommendation_rationale}</p>
+              <div className="text-slate-500 font-semibold uppercase text-[9px] mt-3 mb-1">Management Guidance (restated)</div>
+              <p className="text-slate-300 m-0">{r.guidance || "none given"}</p>
+            </div>
+            <div>
+              <div className="text-emerald-500 font-semibold uppercase text-[9px] mb-1">Positives</div>
+              <ul className="m-0 pl-4 text-slate-300">{(r.key_positives ?? []).map((x: string, i: number) => <li key={i}>{x}</li>)}</ul>
+              <div className="text-rose-500 font-semibold uppercase text-[9px] mt-3 mb-1">Risks</div>
+              <ul className="m-0 pl-4 text-slate-300">{(r.key_risks ?? []).map((x: string, i: number) => <li key={i}>{x}</li>)}</ul>
+            </div>
           </div>
-          <div>
-            <div className="text-emerald-500 font-semibold uppercase text-[9px] mb-1">Positives</div>
-            <ul className="m-0 pl-4 text-slate-300">{(r.key_positives ?? []).map((x: string, i: number) => <li key={i}>{x}</li>)}</ul>
-            <div className="text-rose-500 font-semibold uppercase text-[9px] mt-3 mb-1">Risks</div>
-            <ul className="m-0 pl-4 text-slate-300">{(r.key_risks ?? []).map((x: string, i: number) => <li key={i}>{x}</li>)}</ul>
-          </div>
+          {/* Full LLM commentary — the two stage summaries behind the verdict.
+              Informational only; shown verbatim so nothing is lost between
+              the model and the user. */}
+          {r.concall_summary && (
+            <details className="bg-slate-950/60 border border-slate-800/70 rounded-lg p-3">
+              <summary className="cursor-pointer text-indigo-300 font-semibold text-[10px] uppercase tracking-wider">
+                Concall Summary — full LLM commentary ({r.concall_date || "latest call"})
+              </summary>
+              <pre className="mt-2 whitespace-pre-wrap font-sans text-slate-300 text-[11px] leading-relaxed m-0 max-h-96 overflow-auto">{r.concall_summary}</pre>
+            </details>
+          )}
+          {r.fundamentals_summary && (
+            <details className="bg-slate-950/60 border border-slate-800/70 rounded-lg p-3">
+              <summary className="cursor-pointer text-indigo-300 font-semibold text-[10px] uppercase tracking-wider">
+                Fundamentals Read — full LLM commentary
+              </summary>
+              <pre className="mt-2 whitespace-pre-wrap font-sans text-slate-300 text-[11px] leading-relaxed m-0 max-h-96 overflow-auto">{r.fundamentals_summary}</pre>
+            </details>
+          )}
         </div>
       )}
     </div>

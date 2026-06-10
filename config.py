@@ -442,6 +442,10 @@ SENTIMENT_HALF_LIFE_HOURS = 72.0
 # per-ticker new-article gate + LLM response cache keep token cost flat.
 NEWS_IMPACT_THROTTLE_MIN = 60
 
+# LLM sentiment scoring runs in chunks of 20 articles per call; this caps the
+# total items sent to the LLM per scoring run (rest → FinBERT/VADER).
+LLM_SENTIMENT_MAX_ITEMS_PER_RUN = 120
+
 # LLM disk-cache TTL in hours, by cache-key prefix (Phase 1). Entries older
 # than their TTL are refetched. "default" applies to unmatched prefixes.
 LLM_CACHE_TTL_HOURS = {
