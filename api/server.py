@@ -2,6 +2,7 @@ import os
 import sys
 import math
 import logging
+import threading
 import io
 import json
 from datetime import datetime, timezone, timedelta
@@ -2106,6 +2107,393 @@ def alerts_run(background_tasks: BackgroundTasks, body: Optional[AlertsRunInput]
     except Exception as e:
         log.error("Error in alerts_run: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------
+# ENGINE ROOM — guidance ledger, outcomes, calibration, calendars,
+# hygiene, universe sync (conviction-engine surfaces)
+# -------------------------------------------------------------
+
+@app.get("/api/engine/guidance")
+def engine_guidance(ticker: Optional[str] = None, limit: int = 200):
+    """Guidance ledger rows (newest first) + per-ticker credibility scores."""
+    try:
+        with get_conn() as conn:
+            if ticker:
+                rows = conn.execute(
+                    """SELECT * FROM guidance_ledger WHERE ticker = ?
+                       ORDER BY id DESC LIMIT ?""",
+                    (ticker.upper(), min(limit, 500)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM guidance_ledger ORDER BY id DESC LIMIT ?",
+                    (min(limit, 500),),
+                ).fetchall()
+            creds = conn.execute(
+                """SELECT ticker, guidance_credibility FROM pos_research
+                   WHERE guidance_credibility IS NOT NULL"""
+            ).fetchall()
+        return {
+            "rows": [dict(r) for r in rows],
+            "credibility": {r["ticker"]: r["guidance_credibility"] for r in creds},
+        }
+    except Exception as e:
+        log.error("Error in engine_guidance: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/engine/outcomes/summary")
+def engine_outcomes_summary():
+    """Hit-rates and average forward returns per signal type."""
+    try:
+        from analytics.outcomes import outcome_summary
+        with get_conn() as conn:
+            pending = conn.execute(
+                "SELECT COUNT(*) AS n FROM signal_outcomes WHERE fwd_ret_60d IS NULL"
+            ).fetchone()["n"]
+            total = conn.execute("SELECT COUNT(*) AS n FROM signal_outcomes").fetchone()["n"]
+        return {"summary": outcome_summary(), "total": int(total or 0),
+                "incomplete": int(pending or 0)}
+    except Exception as e:
+        log.error("Error in engine_outcomes_summary: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/engine/outcomes")
+def engine_outcomes(signal_type: Optional[str] = None, limit: int = 100):
+    """Recent outcome rows, optionally filtered by signal type."""
+    try:
+        with get_conn() as conn:
+            if signal_type:
+                rows = conn.execute(
+                    """SELECT * FROM signal_outcomes WHERE signal_type = ?
+                       ORDER BY signal_ts DESC LIMIT ?""",
+                    (signal_type, min(limit, 500)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM signal_outcomes ORDER BY signal_ts DESC LIMIT ?",
+                    (min(limit, 500),),
+                ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error("Error in engine_outcomes: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/engine/outcomes/run")
+def engine_outcomes_run(background_tasks: BackgroundTasks):
+    """Trigger an incremental forward-return computation pass."""
+    def _task():
+        try:
+            from analytics.outcomes import compute_outcomes
+            compute_outcomes()
+        except Exception as e:
+            log.error("outcomes run failed: %s", e)
+    background_tasks.add_task(_task)
+    return {"success": True, "message": "Outcome computation started in background"}
+
+
+@app.get("/api/engine/calibration")
+def engine_calibration():
+    """Advisory calibration report (never auto-applied)."""
+    try:
+        from analytics.calibration import calibration_report
+        return calibration_report()
+    except Exception as e:
+        log.error("Error in engine_calibration: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/engine/events")
+def engine_events(days: int = 14, ticker: Optional[str] = None):
+    """Upcoming NSE corporate events from the deterministic calendar."""
+    try:
+        from datetime import date as _date, timedelta as _td
+        today = _date.today().isoformat()
+        until = (_date.today() + _td(days=min(days, 60))).isoformat()
+        with get_conn() as conn:
+            if ticker:
+                rows = conn.execute(
+                    """SELECT * FROM event_calendar
+                       WHERE ticker=? AND event_date >= ? AND event_date <= ?
+                       ORDER BY event_date""",
+                    (ticker.upper().split(".")[0], today, until),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT * FROM event_calendar
+                       WHERE event_date >= ? AND event_date <= ?
+                       ORDER BY event_date LIMIT 500""",
+                    (today, until),
+                ).fetchall()
+            last = conn.execute(
+                "SELECT MAX(fetched_at) AS m FROM event_calendar"
+            ).fetchone()["m"]
+        return {"rows": [dict(r) for r in rows], "last_refreshed": last}
+    except Exception as e:
+        log.error("Error in engine_events: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/engine/events/refresh")
+def engine_events_refresh(background_tasks: BackgroundTasks):
+    """Force-refresh the NSE event calendar in the background."""
+    def _task():
+        try:
+            from data.nse_calendar import refresh_event_calendar
+            refresh_event_calendar(force=True)
+        except Exception as e:
+            log.error("event calendar refresh failed: %s", e)
+    background_tasks.add_task(_task)
+    return {"success": True, "message": "Event calendar refresh started"}
+
+
+@app.get("/api/engine/surveillance")
+def engine_surveillance():
+    """Current ASM/GSM surveillance entries."""
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM surveillance_list ORDER BY list_type, ticker"
+            ).fetchall()
+            last = conn.execute(
+                "SELECT MAX(fetched_at) AS m FROM surveillance_list"
+            ).fetchone()["m"]
+        return {"rows": [dict(r) for r in rows], "last_refreshed": last}
+    except Exception as e:
+        log.error("Error in engine_surveillance: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/engine/surveillance/refresh")
+def engine_surveillance_refresh(background_tasks: BackgroundTasks):
+    def _task():
+        try:
+            from data.hygiene import refresh_surveillance_lists
+            refresh_surveillance_lists(force=True)
+        except Exception as e:
+            log.error("surveillance refresh failed: %s", e)
+    background_tasks.add_task(_task)
+    return {"success": True, "message": "Surveillance list refresh started"}
+
+
+@app.get("/api/engine/hygiene/{ticker}")
+def engine_hygiene(ticker: str, check_liquidity: bool = True):
+    """Stage-0 gate check for one ticker (surveillance + liquidity + events)."""
+    try:
+        from data.hygiene import hygiene_check, median_traded_value_cr
+        from data.nse_calendar import upcoming_events
+        from config import POSITIONAL_EVENT_GUARD_DAYS
+        hc = hygiene_check(ticker, check_liquidity=check_liquidity)
+        return {
+            "ticker": ticker.upper(),
+            **hc,
+            "median_traded_value_cr": median_traded_value_cr(ticker) if check_liquidity else None,
+            "upcoming_events": upcoming_events(ticker, days=POSITIONAL_EVENT_GUARD_DAYS + 7),
+        }
+    except Exception as e:
+        log.error("Error in engine_hygiene: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/positional/universe/sync")
+def positional_universe_sync(background_tasks: BackgroundTasks):
+    """Sync the scraped lt_universe/lt_quality survivors into pos_universe
+    (Phase 4 unified universe). Runs in the background."""
+    def _task():
+        try:
+            from positional.universe_sync import sync_lt_to_pos_universe
+            res = sync_lt_to_pos_universe()
+            log.info("manual universe sync done: %s", res)
+        except Exception as e:
+            log.error("universe sync failed: %s", e)
+    background_tasks.add_task(_task)
+    return {"success": True, "message": "Universe sync started (lt_universe → pos_universe)"}
+
+
+# -------------------------------------------------------------
+# LONG-TERM BOOK ENDPOINTS (Phase 6)
+# -------------------------------------------------------------
+
+@app.get("/api/longterm/book/status")
+def longterm_book_status():
+    """LT book pool status + open position count + enable flag."""
+    try:
+        from config import LT_BOOK_ENABLED, LT_CAPITAL, LT_MAX_POSITIONS
+        with get_conn() as conn:
+            open_rows = conn.execute(
+                "SELECT quantity, avg_entry_price, sector FROM lt_positions WHERE status='OPEN'"
+            ).fetchall()
+            realized = conn.execute(
+                """SELECT COALESCE(SUM(pnl),0) AS p FROM lt_positions
+                   WHERE status='CLOSED' AND pnl IS NOT NULL"""
+            ).fetchone()["p"]
+        invested = sum(float(r["avg_entry_price"] or 0) * int(r["quantity"] or 0)
+                       for r in open_rows)
+        return {
+            "enabled": bool(LT_BOOK_ENABLED),
+            "capital": LT_CAPITAL,
+            "invested": round(invested, 2),
+            "cash": round(LT_CAPITAL - invested, 2),
+            "open_positions": len(open_rows),
+            "max_positions": LT_MAX_POSITIONS,
+            "net_realized_pnl": round(float(realized or 0), 2),
+        }
+    except Exception as e:
+        log.error("Error in longterm_book_status: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/longterm/book/positions")
+def longterm_book_positions(status: Optional[str] = None):
+    try:
+        with get_conn() as conn:
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM lt_positions WHERE status=? ORDER BY id DESC",
+                    (status.upper(),),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM lt_positions ORDER BY status, id DESC"
+                ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            if d.get("status") == "OPEN" and d.get("avg_entry_price"):
+                try:
+                    from data.fetcher import latest_price
+                    px = latest_price(d["ticker"])
+                    if px:
+                        d["current_price"] = round(float(px), 2)
+                        d["unrealized_pnl"] = round(
+                            (float(px) - float(d["avg_entry_price"])) * int(d["quantity"] or 0), 2)
+                        d["unrealized_pnl_pct"] = round(
+                            (float(px) / float(d["avg_entry_price"]) - 1) * 100, 2)
+                except Exception:
+                    pass
+            out.append(d)
+        return out
+    except Exception as e:
+        log.error("Error in longterm_book_positions: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/longterm/book/trades")
+def longterm_book_trades(limit: int = 100):
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM lt_trades ORDER BY id DESC LIMIT ?",
+                (min(limit, 500),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error("Error in longterm_book_trades: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/longterm/book/run")
+def longterm_book_run(background_tasks: BackgroundTasks):
+    """Trigger a manual LT-book daily pass (no-op unless LT_BOOK_ENABLED)."""
+    def _task():
+        try:
+            from longterm.book import run_longterm_book
+            res = run_longterm_book()
+            log.info("manual LT book pass: %s", res)
+        except Exception as e:
+            log.error("LT book pass failed: %s", e)
+    background_tasks.add_task(_task)
+    return {"success": True, "message": "LT book pass started"}
+
+
+# -------------------------------------------------------------
+# BACKTEST ENDPOINTS (Phase 5)
+# -------------------------------------------------------------
+# One job at a time, tracked in memory. Results survive until restart.
+
+_BACKTEST_JOB: dict = {"state": "idle"}
+_BACKTEST_LOCK = threading.Lock()
+
+
+class BacktestInput(BaseModel):
+    tickers: Optional[str] = None        # comma-separated; default = pos_universe
+    years: int = 2
+    min_trend_score: float = 60.0
+    walk_forward: bool = False
+    max_tickers: int = 25
+
+
+def _run_backtest_job(params: dict) -> None:
+    global _BACKTEST_JOB
+    try:
+        from backtest.engine import load_price_data, run_backtest, walk_forward, BTConfig
+        from dataclasses import asdict
+
+        if params["tickers"]:
+            tickers = [t.strip().upper() for t in params["tickers"].split(",") if t.strip()]
+        else:
+            from positional.universe import get_fundamental_universe
+            tickers = get_fundamental_universe()
+        tickers = tickers[: params["max_tickers"]]
+        if not tickers:
+            _BACKTEST_JOB = {"state": "error",
+                             "error": "No tickers — pass some or populate the universe first."}
+            return
+
+        _BACKTEST_JOB["progress"] = f"loading {len(tickers)} tickers"
+        data = load_price_data(tickers, years=params["years"])
+        if not data:
+            _BACKTEST_JOB = {"state": "error", "error": "No price data could be loaded."}
+            return
+
+        _BACKTEST_JOB["progress"] = f"simulating {len(data)} tickers"
+        if params["walk_forward"]:
+            result = walk_forward(data)
+            payload = {"mode": "walk_forward", **result}
+        else:
+            res = run_backtest(data, cfg=BTConfig(min_trend_score=params["min_trend_score"]))
+            payload = {
+                "mode": "single",
+                "config": res.config,
+                "start": res.start, "end": res.end, "n_days": res.n_days,
+                "metrics": res.metrics,
+                "equity_curve": res.equity_curve[-500:],
+                "trades": [asdict(t) for t in res.trades][-200:],
+            }
+        _BACKTEST_JOB = {"state": "done", "params": params,
+                         "finished_at": datetime.now(timezone.utc).isoformat(),
+                         "result": payload}
+    except Exception as e:
+        log.error("backtest job failed: %s", e)
+        _BACKTEST_JOB = {"state": "error", "error": str(e)}
+
+
+@app.post("/api/backtest/run")
+def backtest_run(body: Optional[BacktestInput] = None):
+    """Start a backtest in a background thread (one at a time)."""
+    global _BACKTEST_JOB
+    body = body or BacktestInput()
+    with _BACKTEST_LOCK:
+        if _BACKTEST_JOB.get("state") == "running":
+            return {"success": False, "message": "A backtest is already running."}
+        params = {"tickers": body.tickers, "years": max(1, min(body.years, 5)),
+                  "min_trend_score": body.min_trend_score,
+                  "walk_forward": bool(body.walk_forward),
+                  "max_tickers": max(1, min(body.max_tickers, 50))}
+        _BACKTEST_JOB = {"state": "running", "params": params,
+                         "started_at": datetime.now(timezone.utc).isoformat(),
+                         "progress": "starting"}
+        threading.Thread(target=_run_backtest_job, args=(params,), daemon=True).start()
+    return {"success": True, "message": "Backtest started"}
+
+
+@app.get("/api/backtest/status")
+def backtest_status():
+    """Current backtest job state; includes the result when done."""
+    return _BACKTEST_JOB
 
 
 # -------------------------------------------------------------
