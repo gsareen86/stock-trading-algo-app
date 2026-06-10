@@ -292,14 +292,32 @@ OUTCOME_HORIZONS_DAYS          = (5, 20, 60)
 
 ## 10. Implementation roadmap
 
-| Phase | Contents | Depends on |
+| Phase | Contents | Status |
 |---|---|---|
-| **1. Quick fixes** | ~~news matcher precision~~ ✅ · ~~LLM observability~~ ✅ · NSE earnings calendar · liquidity/ASM gate · sentiment time-decay · per-ticker news throttle | — |
-| **2. Swing book mechanics** | risk-based sizing · +2R partial · strategy-scaled time stop | 1 |
-| **3. Guidance ledger** | extraction in research.py · reconciliation job · credibility score → durability | 1 |
-| **4. Unified universe** | one hygiene-gated universe; Screener as fundamental source of truth | 1 |
-| **5. Feedback layer** | `signal_outcomes` + EOD join job · walk-forward backtester | 2 |
-| **6. Long-term book execution** | tranche accumulation · swing→LT conversion · thesis stops · governance tripwires | 3, 4 |
-| **7. Adaptive layer** | re-tune thresholds/weights from outcomes; consider ML meta-model (≥ 200 outcomes) | 5 |
+| **1. Quick fixes** | news matcher precision ✅ · LLM observability ✅ · NSE event calendar (`data/nse_calendar.py`) ✅ · sentiment time-decay ✅ · per-ticker news throttle ✅ · LLM cache TTL ✅ · liquidity/ASM-GSM gate ⏳ | mostly done |
+| **2. Swing book mechanics** | risk-based sizing ✅ · +2R partial (`_partial_close_position`) ✅ · strategy-scaled time stop ✅ · deterministic event guard on entries ✅ | done |
+| **3. Guidance ledger** | extraction (`positional/guidance.py`) ✅ · quarterly reconciliation vs Screener actuals ✅ · credibility score → `pos_research.guidance_credibility` ✅ · miss-streak review alerts ✅ · blend credibility into the management pillar ⏳ | mostly done |
+| **4. Unified universe** | one hygiene-gated universe; Screener as fundamental source of truth | pending |
+| **5. Feedback layer** | `signal_outcomes` table + daily forward-return job (`analytics/outcomes.py`) ✅ · walk-forward backtester ⏳ | partial |
+| **6. Long-term book execution** | tranche accumulation · swing→LT conversion · thesis stops · governance tripwires | pending |
+| **7. Adaptive layer** | re-tune thresholds/weights from outcomes; consider ML meta-model (≥ 200 outcomes) | pending |
 
 Each phase is independently shippable and leaves the system in a working state.
+
+### Operational notes for the implemented pieces
+
+- **Event guard:** the NSE calendar refreshes at the start of each EOD scan
+  (throttled to every `EVENT_CALENDAR_REFRESH_HOURS`). If NSE is unreachable
+  the calendar is stale/empty and nothing is blocked (fail-open). Manual
+  refresh: `python -m data.nse_calendar`.
+- **Risk sizing:** flip back to equal-weight any time with
+  `POSITIONAL_USE_RISK_SIZING = False`.
+- **Partials:** positions opened before this change have
+  `initial_quantity`/`time_stop_days` NULL — they keep legacy behaviour
+  (no partial bookkeeping breakage; time stop falls back to the flat default).
+- **Outcomes:** runs automatically after each EOD scan (capped at
+  `OUTCOME_JOB_MAX_TICKERS` per day); inspect with
+  `python -m analytics.outcomes` → `outcome_summary()`.
+- **Guidance:** extraction fires automatically whenever new research is
+  persisted; reconciliation waits ~70 days for the next results, so the
+  credibility column stays NULL for the first quarter of operation.

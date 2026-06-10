@@ -83,10 +83,12 @@ def _fetch_daily_df(ticker: str):
 def _open_position(ticker: str, price: float, score: float,
                    scan_id: int, regime_flag: str,
                    reason: Optional[str] = None,
-                   reduce_size: bool = False) -> bool:
+                   reduce_size: bool = False,
+                   est_hold_days: Optional[int] = None) -> bool:
     """Place a BUY order and record in pos_positions + pos_trades."""
     from positional.risk import (
-        positional_position_size, compute_hard_stop, compute_target,
+        positional_position_size, positional_position_size_risk,
+        compute_hard_stop, compute_target,
         compute_delivery_costs, delivery_fill_price,
         get_positional_cash, can_open_position,
     )
@@ -98,11 +100,33 @@ def _open_position(ticker: str, price: float, score: float,
         log.info("[pos_runner] %s: max positions reached or no cash", ticker)
         return False
 
+    # Deterministic event guard — no entry within N days of a known results /
+    # ex-date (NSE calendar). Fail-open: empty calendar never blocks.
+    from config import POSITIONAL_EVENT_GUARD_ENABLED, POSITIONAL_EVENT_GUARD_DAYS
+    if POSITIONAL_EVENT_GUARD_ENABLED:
+        try:
+            from data.nse_calendar import has_blocking_event
+            block = has_blocking_event(ticker, days=POSITIONAL_EVENT_GUARD_DAYS)
+            if block:
+                log.info("[pos_runner] %s: entry blocked by event guard — %s", ticker, block)
+                return False
+        except Exception as e:
+            log.debug("[pos_runner] event guard check failed for %s: %s", ticker, e)
+
     size_mult = current_size_multiplier()
     if reduce_size:
         size_mult *= 0.50
 
-    qty       = positional_position_size(price, size_multiplier=size_mult)
+    from config import POSITIONAL_USE_RISK_SIZING
+    if POSITIONAL_USE_RISK_SIZING:
+        # Risk-based sizing: rupee risk to the hard stop, not equal weight.
+        stop_est = compute_hard_stop(price)
+        qty = positional_position_size_risk(
+            price, stop_est, size_multiplier=size_mult,
+            cash_available=get_positional_cash(),
+        )
+    else:
+        qty = positional_position_size(price, size_multiplier=size_mult)
     if qty <= 0:
         log.info("[pos_runner] %s: qty=0 at price=%.2f (insufficient capital)", ticker, price)
         return False
@@ -179,10 +203,12 @@ def _open_position(ticker: str, price: float, score: float,
                 """INSERT INTO pos_positions
                    (ticker, entry_date, entry_price, quantity, hard_stop,
                     ema_trail_stop, target_price, status, peak_price,
-                    below_ema_consecutive, days_held, regime_at_entry, scan_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,0,0,?,?)""",
+                    below_ema_consecutive, days_held, regime_at_entry, scan_id,
+                    initial_quantity, partial_taken, time_stop_days)
+                   VALUES (?,?,?,?,?,?,?,?,?,0,0,?,?,?,0,?)""",
                 (ticker, entry_date, fill, qty, hard_stop,
-                 None, target, "OPEN", fill, regime_flag, scan_id),
+                 None, target, "OPEN", fill, regime_flag, scan_id,
+                 qty, est_hold_days),
             )
             conn.execute(
                 """INSERT INTO pos_trades
@@ -256,6 +282,68 @@ def _close_position(pos: dict, current_price: float, reason: str) -> bool:
     return True
 
 
+# ── Partial de-risk (+2R) ─────────────────────────────────────────────────────
+
+def _partial_close_position(pos: dict, current_price: float) -> bool:
+    """Sell POSITIONAL_PARTIAL_FRACTION of the position at +R-multiple and
+    move the hard stop to breakeven. Mutates ``pos`` (quantity, partial_taken,
+    hard_stop) so the caller's subsequent exit checks see the new state."""
+    from config import POSITIONAL_PARTIAL_FRACTION
+    from positional.risk import compute_delivery_costs
+    from positional.broker import get_broker
+    from db.models import get_conn, insert_returning_id
+
+    pos_id = pos["id"]
+    ticker = pos["ticker"]
+    qty    = int(pos["quantity"])
+    entry  = float(pos["entry_price"])
+
+    sell_qty = int(qty * POSITIONAL_PARTIAL_FRACTION)
+    if sell_qty <= 0 or sell_qty >= qty:
+        return False
+
+    broker = get_broker()
+    result = broker.place_order(ticker, "SELL", sell_qty, current_price)
+    fill   = result.fill_price if result.success else current_price
+
+    costs   = compute_delivery_costs("SELL", fill, sell_qty)
+    pnl     = (fill - entry) * sell_qty - costs
+    ts      = datetime.now(IST).isoformat()
+    new_qty = qty - sell_qty
+    reason  = (f"PARTIAL_2R: sold {sell_qty}/{qty} at {fill:.2f} "
+               f"(+{(fill - entry) / entry * 100:.1f}%), stop moved to breakeven")
+
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                """UPDATE pos_positions
+                   SET quantity=?, partial_taken=1, hard_stop=?
+                   WHERE id=?""",
+                (new_qty, round(entry, 2), pos_id),
+            )
+            insert_returning_id(
+                conn,
+                """INSERT INTO pos_trades
+                   (ts, ticker, side, quantity, price, costs, pnl, reason, position_id)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (ts, ticker, "SELL", sell_qty, fill, costs, round(pnl, 2), reason, pos_id),
+            )
+    except Exception as e:
+        log.error("[pos_runner] partial close DB write failed for %s: %s", ticker, e)
+        return False
+
+    pos["quantity"] = new_qty
+    pos["partial_taken"] = 1
+    pos["hard_stop"] = round(entry, 2)
+    log.info("[pos_runner] PARTIAL: %s %s", ticker, reason)
+    try:
+        from positional.alerts import send_sell_alert
+        send_sell_alert(ticker, fill, reason, entry_price=entry)
+    except Exception:
+        pass
+    return True
+
+
 # ── EOD Exit Management ───────────────────────────────────────────────────────
 
 def _calendar_days_held(entry_date) -> int:
@@ -292,6 +380,7 @@ def run_exit_checks(force: bool = False) -> dict:
     from db.models import get_conn
 
     exited = 0
+    partials = 0
     sell_alerts_list: list[dict] = []
     reentry_alerts_list: list[dict] = []
     updated = 0
@@ -326,6 +415,17 @@ def run_exit_checks(force: bool = False) -> dict:
             # Set it on the pos dict too so check_time_stop sees the right value.
             days_held = _calendar_days_held(pos.get("entry_date"))
             pos["days_held"] = days_held
+
+            # Partial de-risk at +R-multiple (before exit checks: the partial
+            # mutates quantity and moves the stop to breakeven).
+            if not int(pos.get("partial_taken") or 0):
+                from positional.risk import compute_partial_trigger
+                entry_px = float(pos.get("entry_price") or 0)
+                stop_px  = float(pos.get("hard_stop") or 0)
+                trigger  = compute_partial_trigger(entry_px, stop_px)
+                if trigger and current_price >= trigger:
+                    if _partial_close_position(pos, current_price):
+                        partials += 1
 
             # Evaluate exit (technical first, then optional management-based exit)
             exit_reason = evaluate_exits(pos, df)
@@ -401,13 +501,14 @@ def run_exit_checks(force: bool = False) -> dict:
 
     summary = {
         "exited": exited,
+        "partials": partials,
         "sell_alerts": sell_alerts_list,
         "reentry_alerts": reentry_alerts_list,
         "updated": updated,
         "errors": errors,
     }
-    log.info("[pos_runner] === EXIT CHECK END: exited=%d updated=%d errors=%d ===",
-             exited, updated, errors)
+    log.info("[pos_runner] === EXIT CHECK END: exited=%d partials=%d updated=%d errors=%d ===",
+             exited, partials, updated, errors)
     return summary
 
 
@@ -634,6 +735,14 @@ def run_eod_scan(force: bool = False) -> dict:
 
     log.info("[pos_runner] === EOD SCAN START ===")
 
+    # Step 0: refresh the deterministic NSE event calendar (throttled inside;
+    # fail-open — a fetch failure never stops the scan).
+    try:
+        from data.nse_calendar import refresh_event_calendar
+        refresh_event_calendar()
+    except Exception as e:
+        log.debug("[pos_runner] event calendar refresh failed: %s", e)
+
     # Step 1: India VIX Check & Dynamic Score Threshold Adjustment
     import config
     import positional.scanner
@@ -716,6 +825,7 @@ def run_eod_scan(force: bool = False) -> dict:
                 regime_flag=regime_flag,
                 reason=reason,
                 reduce_size=reduce_size,
+                est_hold_days=result.get("est_hold_days"),
             )
             if opened:
                 buy_alerts_taken.append(result)
@@ -757,6 +867,19 @@ def run_eod_scan(force: bool = False) -> dict:
     except Exception as e:
         log.warning("[pos_runner] Telegram summary failed: %s", e)
 
+    # Step 9: feedback jobs (fail-open) — attach forward returns to past
+    # signals and reconcile the guidance ledger against new actuals.
+    try:
+        from analytics.outcomes import compute_outcomes
+        compute_outcomes()
+    except Exception as e:
+        log.debug("[pos_runner] outcomes job failed: %s", e)
+    try:
+        from positional.guidance import run_guidance_jobs
+        run_guidance_jobs()
+    except Exception as e:
+        log.debug("[pos_runner] guidance jobs failed: %s", e)
+
     summary = {
         "regime": regime_flag,
         "vix": vix_value,
@@ -764,6 +887,7 @@ def run_eod_scan(force: bool = False) -> dict:
         "positions_opened": len(buy_alerts_taken),
         "swaps_executed": len(swaps_executed),
         "positions_exited": exit_result.get("exited", 0),
+        "partials": exit_result.get("partials", 0),
         "reentry_alerts": len(reentry_alerts),
         "universe_size": len(scan_results),
     }

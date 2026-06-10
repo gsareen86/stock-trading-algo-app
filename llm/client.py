@@ -480,10 +480,34 @@ def _cache_path(key: str) -> Path:
     return _LLM_CACHE_DIR / f"{key}.json"
 
 
+def _cache_ttl_hours(key: str) -> float:
+    """TTL for a cache key, longest-matching prefix from LLM_CACHE_TTL_HOURS.
+    0 (or a negative value) means the entry never expires."""
+    try:
+        from config import LLM_CACHE_TTL_HOURS as ttls
+    except ImportError:
+        return 0.0
+    best = ttls.get("default", 0.0)
+    best_len = -1
+    for prefix, hours in ttls.items():
+        if prefix != "default" and key.startswith(prefix) and len(prefix) > best_len:
+            best, best_len = hours, len(prefix)
+    return float(best or 0.0)
+
+
 def _cache_get(key: str) -> Optional[dict]:
     p = _cache_path(key)
     if not p.exists():
         return None
+    ttl_h = _cache_ttl_hours(key)
+    if ttl_h > 0:
+        try:
+            age_h = (time.time() - p.stat().st_mtime) / 3600.0
+            if age_h > ttl_h:
+                p.unlink(missing_ok=True)  # stale — refetch
+                return None
+        except OSError:
+            pass
     try:
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception:

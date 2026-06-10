@@ -436,6 +436,15 @@ def _persist_research(ticker: str, material: dict, res: dict) -> None:
         )
     except Exception as e:
         log.debug("[research] persist failed for %s: %s", ticker, e)
+        return
+
+    # Guidance ledger: turn the restated guidance into structured, trackable
+    # rows (one extraction per concall; fail-open).
+    try:
+        from positional.guidance import extract_guidance_items
+        extract_guidance_items(ticker.replace(".NS", "").replace(".BO", ""))
+    except Exception as e:
+        log.debug("[research] guidance extraction failed for %s: %s", ticker, e)
 
 
 def _update_scan_row(ticker: str, management: float, composite: float,

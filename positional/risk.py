@@ -84,6 +84,46 @@ def positional_position_size(entry_price: float, size_multiplier: float = 1.0) -
     return max(1, int(final_alloc / entry_price))
 
 
+def positional_position_size_risk(
+    entry_price: float,
+    stop_price: float,
+    size_multiplier: float = 1.0,
+    cash_available: Optional[float] = None,
+) -> int:
+    """
+    Risk-based sizing: qty = risk_amount / (entry − stop).
+
+    A tight stop (e.g. a 3% VCP pivot) naturally earns a bigger position than
+    a loose 8% one for the same rupee risk — the Minervini logic the scanner
+    encodes, applied to sizing. Caps: POSITIONAL_MAX_POSITION_PCT of the pool
+    and available pool cash. Returns 0 when inputs are invalid.
+    """
+    from config import POSITIONAL_RISK_PCT_POOL
+
+    if entry_price <= 0 or stop_price <= 0 or stop_price >= entry_price:
+        return 0
+    risk_amount = POSITIONAL_CAPITAL * POSITIONAL_RISK_PCT_POOL * size_multiplier
+    per_share_risk = entry_price - stop_price
+    qty = int(risk_amount / per_share_risk)
+
+    max_alloc = POSITIONAL_CAPITAL * POSITIONAL_MAX_POSITION_PCT
+    if cash_available is not None:
+        max_alloc = min(max_alloc, cash_available)
+    qty = min(qty, int(max_alloc / entry_price))
+    return max(qty, 0)
+
+
+def compute_partial_trigger(entry_price: float, hard_stop: float) -> Optional[float]:
+    """Price at which the +R partial de-risk fires (entry + R × multiple).
+    R = entry − initial hard stop. None when the stop is invalid."""
+    from config import POSITIONAL_PARTIAL_AT_R
+
+    if entry_price <= 0 or hard_stop <= 0 or hard_stop >= entry_price:
+        return None
+    r = entry_price - hard_stop
+    return round(entry_price + POSITIONAL_PARTIAL_AT_R * r, 2)
+
+
 def compute_hard_stop(entry_price: float) -> float:
     """8% hard stop below entry price."""
     return round(entry_price * (1 - POSITIONAL_HARD_STOP_PCT), 2)
@@ -186,11 +226,26 @@ def check_ema_trailing_stop(pos: dict, df: pd.DataFrame) -> Optional[str]:
 
 def check_time_stop(pos: dict) -> Optional[str]:
     """
-    Time stop: if position moves < TIME_STOP_MIN_MOVE_PCT over TIME_STOP_DAYS
-    trading days, exit to free up capital.
+    Time stop: if position moves < TIME_STOP_MIN_MOVE_PCT over the stop window,
+    exit to free up capital.
+
+    The window is the entering strategy's expected hold (pos.time_stop_days,
+    set at entry from the scan's est_hold_days) when
+    POSITIONAL_TIME_STOP_USE_STRATEGY is on; else the flat config default.
     """
+    from config import POSITIONAL_TIME_STOP_USE_STRATEGY
+
+    stop_days = POSITIONAL_TIME_STOP_DAYS
+    if POSITIONAL_TIME_STOP_USE_STRATEGY:
+        try:
+            custom = int(pos.get("time_stop_days") or 0)
+            if custom > 0:
+                stop_days = custom
+        except (TypeError, ValueError):
+            pass
+
     days_held = int(pos.get("days_held", 0))
-    if days_held < POSITIONAL_TIME_STOP_DAYS:
+    if days_held < stop_days:
         return None
     entry = float(pos.get("entry_price", 1))
     peak  = float(pos.get("peak_price") or entry)

@@ -161,12 +161,16 @@ def _escape_like(value: str) -> str:
 
 def aggregated_sentiment(ticker: str, hours: int = 24) -> float:
     """
-    Rolling 24-hour weighted sentiment for a ticker.
-    Newer articles get more weight; clipped to [-1, 1].
+    Rolling time-decayed sentiment for a ticker, clipped to [-1, 1].
+
+    Each article's weight halves every SENTIMENT_HALF_LIFE_HOURS, so a fresh
+    headline dominates a stale one instead of averaging equally with it
+    (weight = 0.5 ** (age_hours / half_life)).
     """
     # Compute cutoff in Python so the WHERE clause is dialect-agnostic
     # (SQLite's datetime('now', '-X hours') is not valid Postgres).
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=hours)).isoformat()
     escaped = _escape_like(ticker)
     with get_conn() as conn:
         rows = conn.execute(
@@ -178,9 +182,31 @@ def aggregated_sentiment(ticker: str, hours: int = 24) -> float:
         ).fetchall()
     if not rows:
         return 0.0
-    # Simple mean — more sophisticated time-decay can come later.
-    scores = [r["sentiment"] for r in rows]
-    avg = sum(scores) / len(scores)
+
+    try:
+        from config import SENTIMENT_HALF_LIFE_HOURS as _half_life
+    except ImportError:
+        _half_life = 72.0
+
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for r in rows:
+        score = float(r["sentiment"])
+        weight = 1.0
+        try:
+            ts = datetime.fromisoformat(str(r["ts"]))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age_hours = max(0.0, (now - ts).total_seconds() / 3600.0)
+            weight = 0.5 ** (age_hours / max(_half_life, 1e-9))
+        except (ValueError, TypeError):
+            pass  # unparseable ts → full weight
+        weighted_sum += score * weight
+        weight_total += weight
+
+    if weight_total <= 0:
+        return 0.0
+    avg = weighted_sum / weight_total
     return max(-1.0, min(1.0, avg))
 
 

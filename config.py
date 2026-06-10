@@ -416,6 +416,52 @@ POS_MR_MIN_QUALITY_SCORE = 65
 POS_EARNINGS_WINDOW_DAYS = 3
 POS_EARNINGS_MAX_GAP_PCT = 8.0
 
+# ─── Conviction-engine upgrades (docs/INVESTMENT_ENGINE_DESIGN.md) ───────────
+
+# Swing-book mechanics (Phase 2)
+POSITIONAL_USE_RISK_SIZING  = True    # size by risk-to-stop instead of equal weight
+POSITIONAL_RISK_PCT_POOL    = 0.01    # fraction of the positional pool risked per trade
+POSITIONAL_PARTIAL_AT_R     = 2.0     # at +2R unrealised → partial de-risk
+POSITIONAL_PARTIAL_FRACTION = 0.50    # fraction of qty sold at the partial
+# Time stop scales with the entering strategy's expected hold (est_hold_days)
+# instead of one flat number; falls back to POSITIONAL_TIME_STOP_DAYS.
+POSITIONAL_TIME_STOP_USE_STRATEGY = True
+
+# Deterministic event guard (Phase 1) — NSE board-meeting/results calendar
+# replaces LLM-inferred earnings dates for positional entries. Fail-open:
+# an empty calendar never blocks a trade.
+POSITIONAL_EVENT_GUARD_ENABLED = True
+POSITIONAL_EVENT_GUARD_DAYS = 3       # no entry within N days of a results date
+EVENT_CALENDAR_REFRESH_HOURS = 12     # NSE calendar refresh throttle
+
+# Sentiment time decay (Phase 1) — newer articles weigh exponentially more in
+# aggregated_sentiment(); a 3-day half-life means a 6-day-old article counts 25%.
+SENTIMENT_HALF_LIFE_HOURS = 72.0
+
+# News-impact pipeline (Phase 1) — pass throttle lowered from 240 min; the
+# per-ticker new-article gate + LLM response cache keep token cost flat.
+NEWS_IMPACT_THROTTLE_MIN = 60
+
+# LLM disk-cache TTL in hours, by cache-key prefix (Phase 1). Entries older
+# than their TTL are refetched. "default" applies to unmatched prefixes.
+LLM_CACHE_TTL_HOURS = {
+    "events_":            24,        # corporate events move — refresh daily
+    "sent_":              7 * 24,    # sentiment of a fixed text is stable
+    "news_impact_assess": 24,        # impact verdicts should follow the tape
+    "news_impact_sector": 30 * 24,   # an article's sector never changes
+    "default":            7 * 24,
+}
+
+# Guidance ledger (Phase 3) — structured management guidance extracted from
+# concall research, reconciled against actuals next quarter.
+GUIDANCE_EXTRACTION_ENABLED = True
+GUIDANCE_MISS_STREAK_REVIEW = 2      # consecutive missed quarters → review alert
+
+# Outcome tracking (Phase 5) — forward returns attached to scans, research
+# verdicts and news alerts so thresholds can be tuned on evidence.
+OUTCOME_HORIZONS_DAYS = (5, 20, 60)
+OUTCOME_JOB_MAX_TICKERS = 25         # per daily run (price fetches are cached)
+
 # ----- Feature flags (Phase 2) -----
 ENABLE_ML_META_MODEL = False      # Phase 2
 ENABLE_ADAPTIVE_WEIGHTS = False   # Phase 2

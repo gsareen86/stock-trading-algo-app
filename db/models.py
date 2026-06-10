@@ -358,7 +358,10 @@ CREATE TABLE IF NOT EXISTS pos_positions (
     days_held       INTEGER DEFAULT 0,
     regime_at_entry TEXT,
     scan_id         INTEGER,
-    notes           TEXT
+    notes           TEXT,
+    initial_quantity INTEGER,
+    partial_taken   INTEGER DEFAULT 0,
+    time_stop_days  INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pos_trades (
@@ -399,7 +402,8 @@ CREATE TABLE IF NOT EXISTS pos_research (
     concall_summary  TEXT,
     fundamentals_summary TEXT,
     sources          TEXT,
-    confidence       REAL
+    confidence       REAL,
+    guidance_credibility REAL
 );
 
 CREATE TABLE IF NOT EXISTS fundamentals_pins (
@@ -407,6 +411,52 @@ CREATE TABLE IF NOT EXISTS fundamentals_pins (
     added_at   TEXT NOT NULL,
     notes      TEXT
 );
+
+-- ── Conviction engine: guidance ledger / outcomes / event calendar ───────────
+
+CREATE TABLE IF NOT EXISTS guidance_ledger (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker         TEXT NOT NULL,
+    source_quarter TEXT,
+    metric         TEXT NOT NULL,
+    guided_value   TEXT NOT NULL,
+    guided_low     REAL,
+    guided_high    REAL,
+    horizon        TEXT,
+    extracted_at   TEXT NOT NULL,
+    source_url     TEXT,
+    actual_value   REAL,
+    delivered      TEXT,
+    reconciled_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS signal_outcomes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_type TEXT NOT NULL,
+    signal_id   INTEGER,
+    ticker      TEXT NOT NULL,
+    signal_ts   TEXT NOT NULL,
+    ref_price   REAL,
+    fwd_ret_5d  REAL,
+    fwd_ret_20d REAL,
+    fwd_ret_60d REAL,
+    computed_at TEXT,
+    UNIQUE (signal_type, ticker, signal_ts)
+);
+
+CREATE TABLE IF NOT EXISTS event_calendar (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker      TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    event_date  TEXT NOT NULL,
+    source      TEXT,
+    fetched_at  TEXT NOT NULL,
+    UNIQUE (ticker, event_type, event_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_guidance_ticker        ON guidance_ledger(ticker);
+CREATE INDEX IF NOT EXISTS idx_signal_outcomes_ticker ON signal_outcomes(ticker);
+CREATE INDEX IF NOT EXISTS idx_event_calendar_ticker  ON event_calendar(ticker, event_date);
 
 CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
@@ -747,7 +797,10 @@ CREATE TABLE IF NOT EXISTS pos_positions (
     days_held             INTEGER DEFAULT 0,
     regime_at_entry       TEXT,
     scan_id               BIGINT,
-    notes                 TEXT
+    notes                 TEXT,
+    initial_quantity      INTEGER,
+    partial_taken         INTEGER DEFAULT 0,
+    time_stop_days        INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pos_trades (
@@ -788,7 +841,8 @@ CREATE TABLE IF NOT EXISTS pos_research (
     concall_summary  TEXT,
     fundamentals_summary TEXT,
     sources          TEXT,
-    confidence       DOUBLE PRECISION
+    confidence       DOUBLE PRECISION,
+    guidance_credibility DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS fundamentals_pins (
@@ -796,6 +850,52 @@ CREATE TABLE IF NOT EXISTS fundamentals_pins (
     added_at   TEXT NOT NULL,
     notes      TEXT
 );
+
+-- ── Conviction engine: guidance ledger / outcomes / event calendar ───────────
+
+CREATE TABLE IF NOT EXISTS guidance_ledger (
+    id             BIGSERIAL PRIMARY KEY,
+    ticker         TEXT NOT NULL,
+    source_quarter TEXT,
+    metric         TEXT NOT NULL,
+    guided_value   TEXT NOT NULL,
+    guided_low     DOUBLE PRECISION,
+    guided_high    DOUBLE PRECISION,
+    horizon        TEXT,
+    extracted_at   TEXT NOT NULL,
+    source_url     TEXT,
+    actual_value   DOUBLE PRECISION,
+    delivered      TEXT,
+    reconciled_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS signal_outcomes (
+    id          BIGSERIAL PRIMARY KEY,
+    signal_type TEXT NOT NULL,
+    signal_id   BIGINT,
+    ticker      TEXT NOT NULL,
+    signal_ts   TEXT NOT NULL,
+    ref_price   DOUBLE PRECISION,
+    fwd_ret_5d  DOUBLE PRECISION,
+    fwd_ret_20d DOUBLE PRECISION,
+    fwd_ret_60d DOUBLE PRECISION,
+    computed_at TEXT,
+    UNIQUE (signal_type, ticker, signal_ts)
+);
+
+CREATE TABLE IF NOT EXISTS event_calendar (
+    id          BIGSERIAL PRIMARY KEY,
+    ticker      TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    event_date  TEXT NOT NULL,
+    source      TEXT,
+    fetched_at  TEXT NOT NULL,
+    UNIQUE (ticker, event_type, event_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_guidance_ticker        ON guidance_ledger(ticker);
+CREATE INDEX IF NOT EXISTS idx_signal_outcomes_ticker ON signal_outcomes(ticker);
+CREATE INDEX IF NOT EXISTS idx_event_calendar_ticker  ON event_calendar(ticker, event_date);
 
 CREATE INDEX IF NOT EXISTS idx_pos_regime_ts      ON pos_market_regime(computed_at);
 CREATE INDEX IF NOT EXISTS idx_pos_scans_ts       ON pos_scans(scanned_at);
@@ -1091,6 +1191,7 @@ def _migrate_pos_research_columns(conn) -> None:
         ("recommendation_rationale", "TEXT", "TEXT"),
         ("concall_summary",          "TEXT", "TEXT"),
         ("fundamentals_summary",     "TEXT", "TEXT"),
+        ("guidance_credibility",     "REAL", "DOUBLE PRECISION"),
     )
     if BACKEND == "sqlite":
         existing = {r["name"] for r in conn.execute("PRAGMA table_info(pos_research)").fetchall()}
@@ -1204,6 +1305,31 @@ def _migrate_news_impact_columns(conn) -> None:
         cur.execute(sql)
 
 
+def _migrate_engine_columns(conn) -> None:
+    """Conviction-engine migration for legacy databases.
+
+    Adds the swing-book partial/time-stop columns to ``pos_positions``.
+    (The guidance_ledger / signal_outcomes / event_calendar tables are part
+    of the base schemas and use CREATE TABLE IF NOT EXISTS, so re-running
+    the schema script on an existing DB creates them; only ALTERs need
+    explicit handling here.)
+    """
+    cols = (
+        ("initial_quantity", "INTEGER", "INTEGER"),
+        ("partial_taken",    "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
+        ("time_stop_days",   "INTEGER", "INTEGER"),
+    )
+    if BACKEND == "sqlite":
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(pos_positions)").fetchall()}
+        for name, sqlite_type, _ in cols:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE pos_positions ADD COLUMN {name} {sqlite_type}")
+        return
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    for name, _, pg_type in cols:
+        cur.execute(f"ALTER TABLE pos_positions ADD COLUMN IF NOT EXISTS {name} {pg_type}")
+
+
 def init_db() -> None:
     """Create tables + seed bot_control row if absent."""
     if BACKEND == "sqlite":
@@ -1215,6 +1341,7 @@ def init_db() -> None:
             _migrate_pos_scans_scorecard_columns(conn)
             _migrate_pos_research_columns(conn)
             _migrate_news_impact_columns(conn)
+            _migrate_engine_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
                    VALUES (1, 'STOPPED', 'auto', ?)
@@ -1236,6 +1363,7 @@ def init_db() -> None:
                 _migrate_pos_scans_scorecard_columns(cur)
                 _migrate_pos_research_columns(cur)
                 _migrate_news_impact_columns(cur)
+                _migrate_engine_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
                        VALUES (1, 'STOPPED', 'auto', %s)

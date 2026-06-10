@@ -23,9 +23,15 @@ from typing import Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
-# Config (kept inline to avoid yet another config file).
+# Config. The pass throttle is configurable (NEWS_IMPACT_THROTTLE_MIN); the
+# per-ticker new-article gate below keeps the lower throttle cheap — tickers
+# with no fresh news since the previous pass are skipped entirely, and
+# re-analysed clusters resolve from the LLM disk cache anyway.
+try:
+    from config import NEWS_IMPACT_THROTTLE_MIN as DEFAULT_THROTTLE_MIN
+except ImportError:
+    DEFAULT_THROTTLE_MIN = 240
 DEFAULT_WINDOW_HOURS = 48
-DEFAULT_THROTTLE_MIN = 240
 DEFAULT_SECTOR_TAG_BATCH = 200
 DEFAULT_TELEGRAM_CAP = 5
 
@@ -364,12 +370,20 @@ def run_for_all(force: bool = False,
 
         # 3. Pull all candidate news once + bulk-load sector tags for it.
         news_rows = _fetch_recent_news(window_hours=window_hours)
-        from news_impact.store import fetch_sector_tags_bulk
+        from news_impact.store import fetch_sector_tags_bulk, get_last_run_at
         sector_tags = fetch_sector_tags_bulk([int(n["id"]) for n in news_rows])
+
+        # Per-ticker new-article gate: a ticker is only re-analysed when at
+        # least one of its candidate articles is newer than the previous
+        # completed pass. Manual runs bypass the gate (full re-pass).
+        prev_pass_iso = None if triggered_by == "manual" else (
+            _last_run_at_iso or get_last_run_at()
+        )
 
         # 4. Per ticker.
         alerts_created = 0
         telegram_sent = 0
+        tickers_skipped_no_new = 0
         for ticker in sorted(union):
             try:
                 sector = sector_map.get(ticker)
@@ -377,6 +391,11 @@ def run_for_all(force: bool = False,
                     ticker, sector, news_rows, sector_tags
                 )
                 if not candidates:
+                    continue
+                if prev_pass_iso and not any(
+                    str(a.get("ts") or "") > prev_pass_iso for a in candidates
+                ):
+                    tickers_skipped_no_new += 1
                     continue
                 scope = "HOLDING" if ticker in holdings else "LT_WATCH"
                 pos_ctx = _position_context(ticker) if scope == "HOLDING" else None
@@ -398,11 +417,13 @@ def run_for_all(force: bool = False,
                 log.warning("[news_impact] ticker %s failed: %s", ticker, e)
 
         _mark_complete()
-        log.info("[news_impact] done: %d new alerts, %d telegram", alerts_created, telegram_sent)
+        log.info("[news_impact] done: %d new alerts, %d telegram, %d tickers skipped (no new articles)",
+                 alerts_created, telegram_sent, tickers_skipped_no_new)
         return {
             "ran": True,
             "alerts_created": alerts_created,
             "tickers_scanned": len(union),
+            "tickers_skipped_no_new": tickers_skipped_no_new,
             "telegram_sent": telegram_sent,
             "tagged": tagged_count,
             "reason": "ok",
