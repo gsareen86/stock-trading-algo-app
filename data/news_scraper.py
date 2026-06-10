@@ -105,6 +105,60 @@ TICKER_NAME_ALIASES: dict[str, list[str]] = {
     "POLICYBZR":  ["POLICYBAZAAR", "PB FINTECH"],
     "NYKAA":      ["NYKAA", "FSN E-COMMERCE"],
     "BALRAMCHIN": ["BALRAMPUR CHINI", "BALRAMPUR SUGAR"],
+    # Qualified aliases for AMBIGUOUS_SYMBOLS below — these are the ONLY way
+    # those tickers can match, so the names must be distinctive multi-word
+    # company names, never bare dictionary words.
+    "OIL":        ["OIL INDIA"],
+    "PERSISTENT": ["PERSISTENT SYSTEMS"],
+    "IDEA":       ["VODAFONE IDEA"],
+    "SAIL":       ["STEEL AUTHORITY OF INDIA", "STEEL AUTHORITY"],
+    "TITAN":      ["TITAN COMPANY"],
+    "GLAND":      ["GLAND PHARMA"],
+    "RITES":      ["RITES LTD", "RITES LIMITED"],
+    "BSE":        ["BSE LTD", "BSE LIMITED"],
+    "NCC":        ["NCC LTD", "NCC LIMITED", "NAGARJUNA CONSTRUCTION"],
+    "REC":        ["REC LTD", "REC LIMITED", "RURAL ELECTRIFICATION CORPORATION"],
+    "PRESTIGE":   ["PRESTIGE ESTATES"],
+    "ESCORTS":    ["ESCORTS KUBOTA"],
+    "ASTRAL":     ["ASTRAL LTD", "ASTRAL LIMITED", "ASTRAL PIPES"],
+    "CAMS":       ["COMPUTER AGE MANAGEMENT"],
+    "ATUL":       ["ATUL LTD", "ATUL LIMITED"],
+    "GRANULES":   ["GRANULES INDIA"],
+    "ROUTE":      ["ROUTE MOBILE"],
+    "FACT":       ["FERTILISERS AND CHEMICALS TRAVANCORE",
+                   "FERTILIZERS AND CHEMICALS TRAVANCORE"],
+}
+
+# Symbols that double as common English words or generic market acronyms.
+# A bare whole-word match on these tags a huge amount of unrelated news:
+# every crude-oil headline became Oil India ("OIL"), every "persistent
+# inflation" story became Persistent Systems, every Sensex wrap became
+# BSE Ltd, and so on. That noise then leaks into sentiment scores, the
+# sentiment pillar and the news-impact alerts — i.e. incorrect guidance.
+#
+# For these symbols the bare-symbol pass in _match_tickers() is skipped
+# entirely; they can only match through their qualified TICKER_NAME_ALIASES
+# entries above. Precision over recall: a missed headline is recoverable,
+# a wrongly-attributed one silently poisons downstream signals.
+AMBIGUOUS_SYMBOLS: set[str] = {
+    "OIL",         # Oil India — "oil prices", "crude oil"
+    "PERSISTENT",  # Persistent Systems — "persistent inflation/rally/selling"
+    "IDEA",        # Vodafone Idea — "no idea", "good idea"
+    "SAIL",        # Steel Authority — "sail through"
+    "TITAN",       # Titan Company — "industry titan"
+    "FACT",        # FACT (Fertilisers & Chemicals Travancore) — "the fact that"
+    "GLAND",       # Gland Pharma — medical contexts
+    "RITES",       # RITES Ltd — "last rites"
+    "BSE",         # BSE Ltd — "BSE Sensex" market wraps are index news
+    "NCC",         # NCC Ltd — cadet-corps / defence news
+    "REC",         # REC Ltd — abbreviation collisions
+    "PRESTIGE",    # Prestige Estates — "prestige" as a noun
+    "ESCORTS",     # Escorts Kubota — "police escorts"
+    "ASTRAL",      # Astral Ltd — "astral" as adjective
+    "CAMS",        # Computer Age Management Services — "cams"/CAM collisions
+    "ATUL",        # Atul Ltd — common Indian first name in bylines/quotes
+    "GRANULES",    # Granules India — "granules" as a noun
+    "ROUTE",       # Route Mobile — "route" as a noun/verb
 }
 
 
@@ -116,8 +170,9 @@ def _match_tickers(text: str, universe: Iterable[str]) -> List[str]:
     """Case-insensitive match of tickers against article text.
 
     Two passes:
-      1. Whole-word match on the NSE symbol itself (RELIANCE, TCS, ...).
-      2. Substring match on curated company-name aliases
+      1. Whole-word match on the NSE symbol itself (RELIANCE, TCS, ...),
+         skipped for AMBIGUOUS_SYMBOLS that double as English words.
+      2. Whole-word match on curated company-name aliases
          ("Balrampur Chini" -> BALRAMCHIN). News writers use company names,
          not ticker codes, so this pass is where most hits actually come from.
     """
@@ -125,16 +180,24 @@ def _match_tickers(text: str, universe: Iterable[str]) -> List[str]:
     hits: set[str] = set()
 
     for sym in universe:
-        # Pass 1: symbol match (whole-word, skip very short noisy symbols).
-        if len(sym) >= 3 and re.search(rf"\b{re.escape(sym)}\b", text_upper):
+        # Pass 1: symbol match (whole-word, skip very short noisy symbols and
+        # symbols that collide with ordinary English words — those may only
+        # match via their qualified aliases in pass 2).
+        if (
+            len(sym) >= 3
+            and sym not in AMBIGUOUS_SYMBOLS
+            and re.search(rf"\b{re.escape(sym)}\b", text_upper)
+        ):
             hits.add(sym)
             continue
 
-        # Pass 2: alias match (plain substring — names are distinctive).
+        # Pass 2: alias match. Word-boundary (not plain substring) so e.g.
+        # "HUL" can't fire inside "HULL" and "TITAN COMPANY" can't fire
+        # inside an unrelated longer phrase fragment.
         aliases = TICKER_NAME_ALIASES.get(sym)
         if aliases:
             for alias in aliases:
-                if alias in text_upper:
+                if re.search(rf"\b{re.escape(alias)}\b", text_upper):
                     hits.add(sym)
                     break
     return sorted(hits)
