@@ -4,7 +4,7 @@ import { Panel, useApi, Badge, DataTable, EmptyState, Help, RefreshBtn } from ".
 export default function Intraday() {
   const open = useApi<any[]>("/api/positions/open");
   const closed = useApi<any[]>("/api/positions/closed");
-  const signals = useApi<any[]>("/api/signals?limit=100");
+  const signals = useApi<any[]>("/api/signals?limit=500");
 
   return (
     <div className="space-y-6">
@@ -27,7 +27,7 @@ export default function Intraday() {
             { key: "t1_target", label: "T1", align: "right", render: (r) => <span>{fmtINR(r.t1_target)} {r.t1_taken ? <Badge text="TAKEN" tone="OK" /> : null}</span> },
             { key: "take_profit", label: "Target", align: "right", render: (r) => fmtINR(r.take_profit) },
             { key: "strategy", label: "Strategy" },
-            { key: "entry_ts", label: "Opened", render: (r) => fmtIST(r.entry_ts) },
+            { key: "entered_at", label: "Opened", render: (r) => r.entered_at ?? "—" },
           ]}
         />
       </Panel>
@@ -37,7 +37,7 @@ export default function Intraday() {
         <DataTable
           rows={closed.data ?? []}
           searchKeys={["ticker", "strategy", "exit_reason"]}
-          defaultSort={{ key: "exit_ts", dir: "desc" }}
+          defaultSort={{ key: "closed_at", dir: "desc" }}
           cols={[
             { key: "ticker", label: "Ticker", render: (r) => <span className="font-bold text-slate-100">{r.ticker}</span> },
             { key: "side", label: "Side", render: (r) => <Badge text={r.side} /> },
@@ -46,17 +46,20 @@ export default function Intraday() {
             { key: "exit_price", label: "Exit", align: "right", render: (r) => fmtINR(r.exit_price) },
             { key: "pnl", label: "P&L", align: "right", render: (r) => <span className={pnlClass(r.pnl)}>{fmtINR(r.pnl)} ({fmtPct(r.pnl_pct)})</span> },
             { key: "strategy", label: "Strategy" },
-            { key: "exit_ts", label: "Closed", render: (r) => fmtIST(r.exit_ts) },
+            { key: "opened_at", label: "Opened", render: (r) => r.opened_at ?? "—" },
+            { key: "closed_at", label: "Closed", render: (r) => r.closed_at ?? "—" },
+            { key: "exit_reason", label: "Exit Reason", render: (r) => <span className="text-[10px] text-slate-400">{r.exit_reason ?? "—"}</span> },
           ]}
           empty={<EmptyState>No closed trades yet.</EmptyState>}
         />
       </Panel>
 
-      <Panel title="Signal History" subtitle="Every signal the strategies produced, with the three score pillars. 'Taken' means it became a position or approval."
+      <Panel title="Signal History" subtitle="Last 500 signals with the three score pillars. 'Taken' means it became a position or approval."
         actions={<RefreshBtn onClick={signals.reload} loading={signals.loading} />}>
         <DataTable
           rows={signals.data ?? []}
           searchKeys={["ticker", "strategy", "action"]}
+          maxHeight="500px"
           cols={[
             { key: "ts", label: "Time", render: (r) => fmtIST(r.ts) },
             { key: "ticker", label: "Ticker", render: (r) => <span className="font-bold text-slate-100">{r.ticker}</span> },

@@ -124,8 +124,56 @@ def _utc_cutoff_days(days: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
-def _utc_today_prefix() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def _today_cutoff_utc_iso() -> str:
+    """Start of "today" in IST, expressed as a UTC ISO timestamp.
+
+    Rows are logged with UTC timestamps; the user lives in IST. Comparing
+    on the UTC *date* made every call between 00:00-05:30 IST (and any call
+    logged the previous UTC day) vanish from "today" — the dashboard showed
+    zeros all evening. Compare against the IST midnight instant instead.
+    """
+    from datetime import timedelta
+    ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    ist_midnight_utc = (ist_now.replace(hour=0, minute=0, second=0, microsecond=0)
+                        - timedelta(hours=5, minutes=30))
+    return ist_midnight_utc.isoformat()
+
+
+# ── Cost estimation ──────────────────────────────────────────────────
+
+def pricing_for(provider: str, model: str):
+    """(input_usd_per_mtok, output_usd_per_mtok) or None when unknown.
+    Local providers are free; unknown models return None so the UI can say
+    "add pricing in config.py" instead of showing a silently wrong number."""
+    try:
+        from config import LLM_PRICING_USD_PER_MTOK as table
+    except ImportError:
+        return None
+    provider = (provider or "").lower()
+    model = (model or "").lower()
+    exact = table.get(f"{provider}:{model}")
+    if exact is not None:
+        return exact
+    best, best_len = None, -1
+    for pattern, price in table.items():
+        if ":" in pattern and not pattern.startswith(":"):
+            continue  # provider-scoped patterns handled below
+        if pattern and pattern in model and len(pattern) > best_len:
+            best, best_len = price, len(pattern)
+    if best is not None:
+        return best
+    return table.get(f"{provider}:*")
+
+
+def estimate_cost_usd(provider: str, model: str,
+                      prompt_tokens, completion_tokens):
+    """Estimated USD cost of one call, or None when pricing is unknown."""
+    price = pricing_for(provider, model)
+    if price is None:
+        return None
+    pt = float(prompt_tokens or 0)
+    ct = float(completion_tokens or 0)
+    return (pt * price[0] + ct * price[1]) / 1_000_000.0
 
 
 def daily_summary(days: int = 7) -> list[dict]:
@@ -170,10 +218,10 @@ def today_by_caller() -> list[dict]:
                        COALESCE(SUM(total_tokens),0) AS total_tokens,
                        COALESCE(AVG(CASE WHEN status='ok' THEN latency_ms END),0) AS avg_latency_ms
                    FROM llm_call_log
-                   WHERE substr(ts,1,10) = ?
+                   WHERE ts >= ?
                    GROUP BY caller
                    ORDER BY calls DESC""",
-                (_utc_today_prefix(),),
+                (_today_cutoff_utc_iso(),),
             ).fetchall()
         return [dict(r) for r in rows]
     except Exception:
@@ -236,6 +284,63 @@ def recent_calls(limit: int = 100) -> list[dict]:
         return []
 
 
+def alltime_totals() -> dict:
+    """All-time calls/tokens + estimated USD cost (sums per provider+model
+    so each row prices under its own rate)."""
+    _ensure_table()
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT provider, model,
+                          COUNT(*) AS calls,
+                          COALESCE(SUM(prompt_tokens),0)     AS pt,
+                          COALESCE(SUM(completion_tokens),0) AS ct
+                   FROM llm_call_log GROUP BY provider, model"""
+            ).fetchall()
+        calls = tokens = 0
+        cost = 0.0
+        unknown = False
+        for r in rows:
+            calls += int(r["calls"] or 0)
+            tokens += int(r["pt"] or 0) + int(r["ct"] or 0)
+            c = estimate_cost_usd(r["provider"], r["model"], r["pt"], r["ct"])
+            if c is None:
+                unknown = True
+            else:
+                cost += c
+        return {"calls": calls, "tokens": tokens,
+                "est_cost_usd": round(cost, 4), "pricing_incomplete": unknown}
+    except Exception:
+        return {"calls": 0, "tokens": 0, "est_cost_usd": 0.0, "pricing_incomplete": False}
+
+
+def today_cost_usd() -> tuple:
+    """(est_cost_usd, pricing_incomplete) for today (IST)."""
+    _ensure_table()
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT provider, model,
+                          COALESCE(SUM(prompt_tokens),0)     AS pt,
+                          COALESCE(SUM(completion_tokens),0) AS ct
+                   FROM llm_call_log WHERE ts >= ?
+                   GROUP BY provider, model""",
+                (_today_cutoff_utc_iso(),),
+            ).fetchall()
+        cost, unknown = 0.0, False
+        for r in rows:
+            c = estimate_cost_usd(r["provider"], r["model"], r["pt"], r["ct"])
+            if c is None:
+                unknown = True
+            else:
+                cost += c
+        return round(cost, 4), unknown
+    except Exception:
+        return 0.0, False
+
+
 def today_totals() -> dict:
     """Quick summary dict for the sidebar / header badges (today, UTC)."""
     _ensure_table()
@@ -252,8 +357,8 @@ def today_totals() -> dict:
                        COALESCE(SUM(completion_tokens),0)    AS completion_tokens,
                        COALESCE(SUM(total_tokens),0)         AS tokens
                    FROM llm_call_log
-                   WHERE substr(ts,1,10) = ?""",
-                (_utc_today_prefix(),),
+                   WHERE ts >= ?""",
+                (_today_cutoff_utc_iso(),),
             ).fetchone()
         return dict(row) if row else {}
     except Exception:

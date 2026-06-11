@@ -419,6 +419,33 @@ def evaluate_exits(prices: dict) -> dict:
 # ---------- Main cycle ----------
 
 
+def _square_off_leftovers() -> int:
+    """Close any intraday positions still OPEN after market close at the last
+    known price (yesterday's close when fresh data is unavailable). Returns
+    the number of positions closed."""
+    from engine.portfolio import close_position
+    from db.models import get_conn
+    from data.fetcher import latest_price
+
+    with get_conn() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, ticker, entry_price FROM positions WHERE status='OPEN'"
+        ).fetchall()]
+    closed = 0
+    for p in rows:
+        try:
+            px = latest_price(p["ticker"]) or float(p["entry_price"])
+            if close_position(p["id"], float(px),
+                              reason="EOD square-off (recovered after close)",
+                              mode="auto") is not None:
+                closed += 1
+                log.warning("recovered square-off: %s closed at %.2f "
+                            "(missed the 15:10 window)", p["ticker"], float(px))
+        except Exception as e:
+            log.warning("recovered square-off failed for %s: %s", p["ticker"], e)
+    return closed
+
+
 def run_cycle(universe: List[str] | None = None, *, force: bool = False,
               triggered_by: str = "scheduler") -> dict:
     """
@@ -459,12 +486,24 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
             except Exception as e:
                 log.warning("expire_stale_approvals failed: %s", e)
                 expired = 0
+            # RECOVERY SQUARE-OFF: the 15:10 square-off only fires inside a
+            # cycle while the bot is RUNNING. If the process was down / the
+            # bot stopped at that moment, intraday positions survived the
+            # close — and this market-closed branch then skipped exits
+            # forever. Force-close any leftovers at the last available price
+            # so no "intraday" position ever outlives its day.
+            forced = 0
+            try:
+                forced = _square_off_leftovers()
+            except Exception as e:
+                log.warning("leftover square-off failed: %s", e)
             out = {
                 "ts": datetime.utcnow().isoformat(),
                 "market_open": False,
                 "skipped": True,
                 "reason": "market closed",
                 "expired": expired,
+                "forced_squareoff": forced,
             }
             LAST_CYCLE, LAST_CYCLE_TS = out, datetime.utcnow()
             _cycle_end(cycle_id, "SKIPPED", out)

@@ -16,14 +16,19 @@ export default function LlmUsage() {
     <div className="space-y-6">
       <Help text="Every LLM call the system makes is logged here live: which provider and exact model, how many tokens, how long it took, and whether it hit the cache. Use 'Usage by Model' to verify cheap models handle the high-frequency work (sentiment, veto, tagging) while strong models do the low-frequency research." />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard label="Active Provider / Model" tone="accent"
           value={<span className="capitalize text-base">{t?.provider ?? "—"}</span>}
           sub={<span className="font-mono">{t?.model ?? ""}</span>} />
-        <StatCard label="Tokens Today" value={(t?.tokens_today ?? 0).toLocaleString()}
-          sub={`${(t?.prompt_tokens_today ?? 0).toLocaleString()} prompt / ${(t?.completion_tokens_today ?? 0).toLocaleString()} completion`} />
-        <StatCard label="Calls Today" value={t?.calls_today ?? 0}
+        <StatCard label="Calls Today (IST)" value={t?.calls_today ?? 0}
           sub={`${t?.ok_today ?? 0} ok · ${t?.cached_today ?? 0} cached · ${t?.errors_today ?? 0} failed`} />
+        <StatCard label="Tokens Today (IST)" value={(t?.tokens_today ?? 0).toLocaleString()}
+          sub={`${(t?.prompt_tokens_today ?? 0).toLocaleString()} prompt / ${(t?.completion_tokens_today ?? 0).toLocaleString()} completion`} />
+        <StatCard label="Est. Cost Today" value={`$${(t?.est_cost_today_usd ?? 0).toFixed(4)}`}
+          tone={(t?.est_cost_today_usd ?? 0) > 0 ? "bad" : "good"}
+          sub={t?.provider === "ollama" ? "Local model — always $0" : (t?.pricing_incomplete ? "some models lack pricing — add to LLM_PRICING in config.py" : "from per-model rates in config.py")} />
+        <StatCard label="All-Time Totals" value={(t?.calls_total ?? 0).toLocaleString()}
+          sub={`calls · ${(t?.tokens_total ?? 0).toLocaleString()} tokens · est. $${(t?.est_cost_total_usd ?? 0).toFixed(2)}`} />
         <StatCard label="Success Rate" value={`${t?.success_rate_pct ?? 100}%`}
           tone={(t?.success_rate_pct ?? 100) >= 90 ? "good" : "bad"} sub="API calls only — cache hits excluded" />
       </div>
@@ -44,6 +49,12 @@ export default function LlmUsage() {
             { key: "completion_tokens", label: "Compl Tok", align: "right", render: (r) => (r.completion_tokens ?? 0).toLocaleString() },
             { key: "total_tokens", label: "Total Tok", align: "right", render: (r) => <b>{(r.total_tokens ?? 0).toLocaleString()}</b> },
             { key: "avg_latency_ms", label: "Avg Latency", align: "right", render: (r) => r.avg_latency_ms ? `${Math.round(r.avg_latency_ms)} ms` : "—" },
+            {
+              key: "est_cost_usd", label: "Est. Cost", align: "right",
+              render: (r) => r.est_cost_usd == null
+                ? <span className="text-amber-400/70" title="No pricing for this model — add a row to LLM_PRICING_USD_PER_MTOK in config.py">unknown</span>
+                : <span className={r.est_cost_usd > 0 ? "text-rose-300" : "text-emerald-400"}>${"" + r.est_cost_usd.toFixed(4)}</span>,
+            },
             { key: "last_used", label: "Last Used", render: (r) => fmtIST(r.last_used) },
           ]}
         />

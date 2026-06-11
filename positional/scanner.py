@@ -443,6 +443,17 @@ def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
     results: list[dict] = []
     errors = 0
 
+    # Retention: the UI shows only the latest row per ticker; older rows are
+    # kept 90 days for forward-return (outcome) tracking, then purged.
+    try:
+        from datetime import timedelta as _td
+        from db.models import get_conn as _gc
+        _cutoff = (datetime.now(IST) - _td(days=90)).isoformat()
+        with _gc() as _conn:
+            _conn.execute("DELETE FROM pos_scans WHERE scanned_at < ?", (_cutoff,))
+    except Exception as _e:
+        log.debug("[scan] retention purge failed: %s", _e)
+
     try:
         import yfinance as yf
         tickers_yf = [t if t.endswith((".NS", ".BO")) else t + ".NS" for t in tickers]

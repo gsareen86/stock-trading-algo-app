@@ -356,9 +356,9 @@ def run_for_all(force: bool = False,
             tagged_count = 0
 
         # 2. Build universe.
-        from news_impact.linkage import holdings_set, lt_set, build_ticker_sector_map
+        from news_impact.linkage import holdings_set, lt_set, scan_set, build_ticker_sector_map
         holdings = holdings_set()
-        lt = lt_set()
+        lt = lt_set() | scan_set()   # scan candidates count as watch coverage
         union = holdings | lt
         sector_map = build_ticker_sector_map()
 

@@ -164,12 +164,12 @@ export interface Col<T = any> {
   sortValue?: (row: T) => any;
 }
 
-export function DataTable<T = any>({ rows, cols, searchKeys, defaultSort, maxHeight = "420px", empty }: {
+export function DataTable<T = any>({ rows, cols, searchKeys, defaultSort, maxHeight = "420px", empty, initialQuery }: {
   rows: T[]; cols: Col<T>[]; searchKeys?: string[];
   defaultSort?: { key: string; dir: "asc" | "desc" };
-  maxHeight?: string; empty?: React.ReactNode;
+  maxHeight?: string; empty?: React.ReactNode; initialQuery?: string;
 }) {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery ?? "");
   const [sort, setSort] = useState(defaultSort ?? null as null | { key: string; dir: "asc" | "desc" });
 
   const view = useMemo(() => {

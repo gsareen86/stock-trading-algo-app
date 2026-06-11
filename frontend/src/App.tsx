@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { getJSON, fmtINR } from "./api";
 import { Badge, ToastHost } from "./components/ui";
+import { bindNavigator } from "./nav";
 
 import Overview from "./pages/Overview";
 import Control from "./pages/Control";
@@ -74,6 +75,7 @@ const NAV: { label: string; items: { key: string; label: string; icon: React.Rea
 
 export default function App() {
   const [page, setPage] = useState("overview");
+  useEffect(() => { bindNavigator(setPage); }, []);
   const [bot, setBot] = useState<any>(null);
   const [pf, setPf] = useState<any>(null);
   const [pendingCount, setPendingCount] = useState(0);

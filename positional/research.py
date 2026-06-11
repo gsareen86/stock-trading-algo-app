@@ -703,19 +703,16 @@ def _refresh_universe() -> tuple[list[str], set[str]]:
                 held.add(r["ticker"]); _add(r["ticker"])
             for r in conn.execute("SELECT ticker FROM pos_watchlist").fetchall():
                 _add(r["ticker"])
-            latest = conn.execute(
-                "SELECT substr(scanned_at,1,10) AS d FROM pos_scans ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            if latest:
-                rows = conn.execute(
-                    """SELECT ticker FROM pos_scans
-                       WHERE id IN (SELECT MAX(id) FROM pos_scans
-                                    WHERE substr(scanned_at,1,10) = ? GROUP BY ticker)
-                       ORDER BY composite_score DESC LIMIT ?""",
-                    (latest["d"], POSITIONAL_RESEARCH_LIMIT),
-                ).fetchall()
-                for r in rows:
-                    _add(r["ticker"])
+            # Latest scan row per ticker, regardless of scan day — every
+            # current Swing/Long-Term candidate gets research coverage.
+            rows = conn.execute(
+                """SELECT ticker FROM pos_scans
+                   WHERE id IN (SELECT MAX(id) FROM pos_scans GROUP BY ticker)
+                   ORDER BY COALESCE(composite_score, score, 0) DESC LIMIT ?""",
+                (POSITIONAL_RESEARCH_LIMIT,),
+            ).fetchall()
+            for r in rows:
+                _add(r["ticker"])
     except Exception as e:
         log.warning("[research] refresh universe build failed: %s", e)
     return ordered, held

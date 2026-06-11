@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Zap } from "lucide-react";
+import { Zap, Microscope } from "lucide-react";
 import { fmtINR, fmtPct, pnlClass, fmtIST, fmtNum, postJSON } from "../api";
 import { Panel, StatCard, useApi, Badge, DataTable, EmptyState, Help, toast, Btn, RefreshBtn } from "../components/ui";
+import ScanInspector from "../components/ScanInspector";
 
 export default function LongTermBook() {
   const status = useApi<any>("/api/longterm/book/status");
@@ -9,6 +10,7 @@ export default function LongTermBook() {
   const trades = useApi<any[]>("/api/longterm/book/trades");
   const scans = useApi<any[]>("/api/positional/scan-results");
   const [busy, setBusy] = useState(false);
+  const [inspected, setInspected] = useState<any | null>(null);
 
   const s = status.data;
   const candidates = (scans.data ?? []).filter(
@@ -50,7 +52,7 @@ export default function LongTermBook() {
         <span className="text-[10px] text-slate-500 self-center">Runs automatically after every EOD scan when enabled.</span>
       </div>
 
-      <Panel title="Holdings" subtitle="avg entry across tranches; 'Tranches' shows accumulation progress (max 3)"
+      <Panel title="Holdings" subtitle="avg entry across tranches; 'Tranches' shows accumulation progress (max 3); 'Why Held' is the tranche-1 rationale recorded at entry"
         actions={<RefreshBtn onClick={positions.reload} loading={positions.loading} />}>
         <DataTable
           rows={(positions.data ?? []).filter((p) => p.status === "OPEN")}
@@ -65,19 +67,34 @@ export default function LongTermBook() {
             { key: "unrealized_pnl", label: "Unrealized", align: "right", render: (r) => <span className={pnlClass(r.unrealized_pnl)}>{fmtINR(r.unrealized_pnl)} ({fmtPct(r.unrealized_pnl_pct)})</span> },
             { key: "tranches_taken", label: "Tranches", render: (r) => `${r.tranches_taken}/3${r.halved ? " · halved" : ""}` },
             { key: "source", label: "Source", render: (r) => <Badge text={r.source === "conversion" ? "FROM SWING" : "CLASSIFIED"} tone="INFO" /> },
+            {
+              key: "entry_reason", label: "Why Held", render: (r) => (
+                <span className="text-[10px] text-slate-400 whitespace-normal max-w-[260px] inline-block leading-snug"
+                  title={r.entry_reason}>{r.entry_reason ?? "—"}</span>
+              ),
+            },
             { key: "opened_at", label: "Opened", render: (r) => fmtIST(r.opened_at) },
           ]}
         />
       </Panel>
 
-      <Panel title="Candidates" subtitle="Names from the latest scans with durability ≥ 70 and LONG_TERM/BOTH horizon — what the book buys (T1) when enabled and capacity allows."
+      <Panel title="Candidates" subtitle="Names from the latest scan (one row per stock) with durability ≥ 70 and LONG_TERM/BOTH horizon — what the book buys (T1) when enabled. Click 🔬 Inspect for the full rationale: strategies, pillar breakdown, scan reading and chart, plus jumps to Research / News / Fundamentals."
         actions={<RefreshBtn onClick={scans.reload} loading={scans.loading} />}>
+        {inspected && <div className="mb-4"><ScanInspector row={inspected} onClose={() => setInspected(null)} /></div>}
         <DataTable
           rows={candidates}
           searchKeys={["ticker", "horizon"]}
           defaultSort={{ key: "durability_score", dir: "desc" }}
           empty={<EmptyState>No qualifying candidates in the latest scans. Run an EOD scan from the Swing Book page — names classified LONG_TERM with durability ≥ 70 land here.</EmptyState>}
           cols={[
+            {
+              key: "inspect", label: "", render: (r) => (
+                <button onClick={() => setInspected(r)} title="Why is this a candidate? Strategies, pillars and chart"
+                  className="p-1 rounded-md bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/25 border border-indigo-500/20">
+                  <Microscope size={12} />
+                </button>
+              ),
+            },
             { key: "ticker", label: "Ticker", render: (r) => <span className="font-bold text-slate-100">{r.ticker}</span> },
             { key: "durability_score", label: "Durability", align: "right", render: (r) => <span className="font-bold text-emerald-400">{fmtNum(r.durability_score, 0)}</span> },
             { key: "timing_score", label: "Timing", align: "right", render: (r) => fmtNum(r.timing_score, 0) },

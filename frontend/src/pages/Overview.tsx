@@ -1,5 +1,5 @@
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { fmtINR, fmtPct, pnlClass, fmtIST } from "../api";
+import { fmtINR, fmtPct, pnlClass } from "../api";
 import { Panel, StatCard, useApi, Spinner, ErrorState, EmptyState, Badge, DataTable, Help } from "../components/ui";
 
 export default function Overview({ go }: { go: (page: string) => void }) {
@@ -121,7 +121,7 @@ export default function Overview({ go }: { go: (page: string) => void }) {
               { key: "unrealized_pnl", label: "Unrealized", align: "right", render: (r) => <span className={pnlClass(r.unrealized_pnl)}>{fmtINR(r.unrealized_pnl)} ({fmtPct(r.unrealized_pnl_pct)})</span> },
               { key: "stop_loss", label: "Stop", align: "right", render: (r) => fmtINR(r.stop_loss) },
               { key: "strategy", label: "Strategy" },
-              { key: "entry_ts", label: "Opened", render: (r) => fmtIST(r.entry_ts) },
+              { key: "entered_at", label: "Opened", render: (r) => r.entered_at ?? "—" },
             ]}
           />
         )}

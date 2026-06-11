@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Zap, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { fmtIST, fmtNum, getJSON, postJSON } from "../api";
 import { Panel, StatCard, useApi, Badge, EmptyState, Help, toast, Btn, RefreshBtn, SearchBox } from "../components/ui";
+import { takeTicker } from "../nav";
 
 function sentClass(v: number | null | undefined) {
   if (v === null || v === undefined) return "text-slate-500";
@@ -68,6 +69,55 @@ function LeaderRow({ r }: { r: any }) {
   );
 }
 
+/* The raw scraped feed — every article the pipeline ingested, newest first */
+function LatestHeadlines() {
+  const [taggedOnly, setTaggedOnly] = useState(false);
+  const feed = useApi<any[]>(`/api/news/recent?hours=48&limit=120&tagged_only=${taggedOnly}`, [taggedOnly]);
+  const [q, setQ] = useState("");
+  const rows = (feed.data ?? []).filter((a) =>
+    !q || a.title.toLowerCase().includes(q.toLowerCase())
+      || (a.tickers ?? []).some((t: string) => t.toLowerCase().includes(q.toLowerCase())));
+  return (
+    <Panel title="Latest Scraped Headlines"
+      subtitle="The raw feed everything downstream runs on — every article pulled from the 7 RSS sources in the last 48h, with the tickers the matcher attached and the sentiment score. If a story is missing here, it never reached the engine."
+      actions={
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <input type="checkbox" checked={taggedOnly} onChange={(e) => setTaggedOnly(e.target.checked)} />
+            tagged only
+          </label>
+          <SearchBox value={q} onChange={setQ} placeholder="Filter title/ticker…" />
+          <RefreshBtn onClick={feed.reload} loading={feed.loading} />
+        </div>
+      }>
+      <div className="space-y-1.5 max-h-[380px] overflow-auto pr-1">
+        {rows.length === 0
+          ? <EmptyState>No articles in the window. Press "Scrape News Now" below — the feed refreshes automatically every 30 minutes while the bot runs.</EmptyState>
+          : rows.map((a) => (
+            <div key={a.id} className="flex items-start gap-2 bg-slate-900/40 border border-slate-800/60 rounded-lg px-3 py-2 text-[11px]">
+              <span className={`font-mono font-bold w-12 text-right flex-shrink-0 ${sentClass(a.sentiment)}`}>
+                {a.sentiment != null ? fmtNumLocal(a.sentiment) : "—"}
+              </span>
+              <div className="min-w-0 flex-1">
+                <a href={a.url} target="_blank" rel="noreferrer" className="text-slate-200 hover:text-indigo-300 inline-flex items-start gap-1">
+                  <span className="whitespace-normal">{a.title}</span>
+                  <ExternalLink size={10} className="flex-shrink-0 mt-0.5 text-slate-500" />
+                </a>
+                <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                  <span className="text-[9px] text-slate-600">{a.source} · {a.ts}</span>
+                  {(a.tickers ?? []).map((t: string) => <Badge key={t} text={t} tone="INFO" />)}
+                  {(a.tickers ?? []).length === 0 && <span className="text-[9px] text-slate-700">no ticker matched</span>}
+                </div>
+              </div>
+            </div>
+          ))}
+      </div>
+    </Panel>
+  );
+}
+
+function fmtNumLocal(v: number) { return Number(v).toFixed(2); }
+
 export default function NewsAlerts() {
   const [sev, setSev] = useState("");
   const [scope, setScope] = useState("BOTH");
@@ -75,7 +125,7 @@ export default function NewsAlerts() {
   const stats = useApi<any>("/api/news/stats");
   const [lbSort, setLbSort] = useState("n_desc");
   const leaderboard = useApi<any[]>(`/api/news/leaderboard?hours=48&scope=universe_with_news&sort_by=${lbSort}`, [lbSort]);
-  const [lbQuery, setLbQuery] = useState("");
+  const [lbQuery, setLbQuery] = useState(() => takeTicker());
   const [busy, setBusy] = useState<string | null>(null);
 
   const run = async (label: string, path: string, after?: () => void) => {
@@ -159,6 +209,8 @@ export default function NewsAlerts() {
             ))}
         </div>
       </Panel>
+
+      <LatestHeadlines />
 
       <Panel title="Sentiment Leaderboard (48h)"
         subtitle="Recency-weighted news sentiment per stock — click any row to see the tagged articles and open the original sources. Breakdown = positive / neutral / negative article counts."

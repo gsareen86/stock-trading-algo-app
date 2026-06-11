@@ -2,12 +2,14 @@ import { useState } from "react";
 import { ExternalLink, Pin } from "lucide-react";
 import { fmtNum, postJSON } from "../api";
 import { Panel, useApi, Badge, DataTable, EmptyState, Help, toast, Btn, RefreshBtn } from "../components/ui";
+import { takeTicker } from "../nav";
 
 export default function Fundamentals() {
   const [scope, setScope] = useState("universe");
   const table = useApi<any[]>(`/api/fundamentals?scope=${scope}`, [scope]);
   const pins = useApi<any[]>("/api/fundamentals/pins");
   const [pinTicker, setPinTicker] = useState("");
+  const navTicker = useState(() => takeTicker())[0];
 
   const addPin = async () => {
     if (!pinTicker.trim()) return;
@@ -38,6 +40,7 @@ export default function Fundamentals() {
         }>
         <DataTable
           rows={rows}
+          initialQuery={navTicker}
           searchKeys={["ticker", "sector", "industry"]}
           defaultSort={{ key: "fundamental_score", dir: "desc" }}
           maxHeight="480px"

@@ -444,7 +444,7 @@ def get_raw_trades():
 # SIGNALS & APPROVAL QUEUES
 # -------------------------------------------------------------
 @app.get("/api/signals")
-def get_signals(limit: int = Query(50)):
+def get_signals(limit: int = Query(50, le=500)):
     """Fetch history of scans and signal generation metrics."""
     try:
         df = query_df(f"SELECT * FROM signals ORDER BY ts DESC LIMIT {limit}")
@@ -721,6 +721,36 @@ def get_news_leaderboard(
         log.error("Error in get_news_leaderboard: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/news/recent")
+def get_recent_news(hours: int = Query(24), limit: int = Query(100),
+                    tagged_only: bool = Query(False)):
+    """Latest scraped articles (newest first) with tickers + sentiment —
+    the raw feed the whole news pipeline runs on."""
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=min(hours, 24 * 14))).isoformat()
+        where = "WHERE ts >= ?" + (" AND tickers <> ''" if tagged_only else "")
+        with get_conn() as conn:
+            rows = conn.execute(
+                f"""SELECT id, ts, source, title, summary, url, tickers, sentiment
+                    FROM news {where}
+                    ORDER BY ts DESC LIMIT ?""",
+                (cutoff, min(limit, 300)),
+            ).fetchall()
+        return [{
+            "id": r["id"],
+            "ts": to_ist_str(r["ts"]),
+            "source": r["source"],
+            "title": r["title"],
+            "summary": (r["summary"] or "")[:280],
+            "url": r["url"],
+            "tickers": [t for t in (r["tickers"] or "").split(",") if t],
+            "sentiment": round(float(r["sentiment"]), 3) if r["sentiment"] is not None else None,
+        } for r in rows]
+    except Exception as e:
+        log.error("Error in get_recent_news: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/news/ticker/{ticker}")
 def get_ticker_news(ticker: str, hours: int = Query(24), limit: int = Query(20)):
     """Recent tagged articles for one ticker (window/limit configurable)."""
@@ -808,15 +838,17 @@ def _build_fundamentals_universe(top_scans: int = _FUNDAMENTALS_TOP_SCANS) -> Di
             sources[_bare(r["ticker"])].add("lt_universe")
         # Top N from the most recent scan — composite_score may be NULL on
         # pre-migration rows, so COALESCE keeps the ordering stable.
+        # Every scan candidate (latest row per ticker) — the user analyses
+        # Swing + Long-Term candidates from here, so all of them get
+        # fundamentals coverage, not just a top-N slice.
         for r in conn.execute(
             """SELECT ticker FROM pos_scans
-                ORDER BY scanned_at DESC,
-                         COALESCE(composite_score, 0) DESC,
-                         COALESCE(score, 0) DESC
+                WHERE id IN (SELECT MAX(id) FROM pos_scans GROUP BY ticker)
+                ORDER BY COALESCE(composite_score, score, 0) DESC
                 LIMIT ?""",
-            (top_scans,),
+            (max(top_scans, 500),),
         ).fetchall():
-            sources[_bare(r["ticker"])].add("pos_scan_top")
+            sources[_bare(r["ticker"])].add("pos_scan")
         for r in conn.execute("SELECT ticker FROM fundamentals_pins").fetchall():
             sources[_bare(r["ticker"])].add("pinned")
     return {t: sorted(s) for t, s in sources.items() if t}
@@ -1455,12 +1487,16 @@ def get_llm_observability_totals():
     from llm.observability import today_totals
     from config import LLM_PROVIDER, LLM_DEFAULT_MODEL
 
+    from llm.observability import alltime_totals, today_cost_usd
+
     t = today_totals() or {}
     calls = int(t.get("calls") or 0)
     ok = int(t.get("ok") or 0)
     cached = int(t.get("cached") or 0)
     errors = int(t.get("errors") or 0)
     attempted = max(calls - cached, 0)  # cache hits never fail
+    cost_today, cost_today_incomplete = today_cost_usd()
+    at = alltime_totals()
     return {
         "provider": LLM_PROVIDER,
         "model": LLM_DEFAULT_MODEL,
@@ -1472,6 +1508,12 @@ def get_llm_observability_totals():
         "completion_tokens_today": int(t.get("completion_tokens") or 0),
         "tokens_today": int(t.get("tokens") or 0),
         "success_rate_pct": round(100.0 * ok / attempted, 1) if attempted else 100.0,
+        # cost (USD; 0 for local ollama models, None-safe for unknown pricing)
+        "est_cost_today_usd": cost_today,
+        "calls_total": at.get("calls", 0),
+        "tokens_total": at.get("tokens", 0),
+        "est_cost_total_usd": at.get("est_cost_usd", 0.0),
+        "pricing_incomplete": bool(cost_today_incomplete or at.get("pricing_incomplete")),
     }
 
 
@@ -1499,10 +1541,15 @@ def get_llm_observability_callers():
 
 @app.get("/api/llm/observability/models")
 def get_llm_observability_models(days: int = 7):
-    """Provider/model usage breakdown (calls, tokens, latency) for last N days."""
-    from llm.observability import by_model
+    """Provider/model usage breakdown (calls, tokens, latency, est. cost)."""
+    from llm.observability import by_model, estimate_cost_usd
 
-    return by_model(days=days)
+    rows = by_model(days=days)
+    for r in rows:
+        c = estimate_cost_usd(r.get("provider"), r.get("model"),
+                              r.get("prompt_tokens"), r.get("completion_tokens"))
+        r["est_cost_usd"] = round(c, 4) if c is not None else None
+    return rows
 
 
 @app.get("/api/llm/observability/daily")
@@ -1730,7 +1777,14 @@ async def upload_positional_universe(
 def get_positional_scan_results():
     """Retrieve EOD Scan results (VCP/Minervini buy setups) from database."""
     try:
-        df = query_df("SELECT * FROM pos_scans ORDER BY scanned_at DESC, score DESC LIMIT 100")
+        # Latest scan row PER TICKER — older rows are retained briefly for
+        # outcome tracking but never shown (they were pure duplication).
+        df = query_df(
+            """SELECT * FROM pos_scans
+               WHERE id IN (SELECT MAX(id) FROM pos_scans GROUP BY ticker)
+               ORDER BY COALESCE(composite_score, score, 0) DESC
+               LIMIT 200"""
+        )
         if df.empty:
             return []
         
@@ -1871,6 +1925,9 @@ def get_positional_positions():
                 "partial_taken": int(r["partial_taken"]) if "partial_taken" in r and pd.notna(r["partial_taken"]) else 0,
                 "initial_quantity": int(r["initial_quantity"]) if "initial_quantity" in r and pd.notna(r["initial_quantity"]) else None,
                 "time_stop_days": int(r["time_stop_days"]) if "time_stop_days" in r and pd.notna(r["time_stop_days"]) else None,
+                # WHY this stock is held: scan score / LLM veto verdict / swap
+                # rationale captured on the BUY trade at entry time.
+                "entry_reason": trade_reason or "—",
                 "notes": r["notes"] or "—"
             })
         return results
@@ -2406,14 +2463,17 @@ def longterm_book_status():
 def longterm_book_positions(status: Optional[str] = None):
     try:
         with get_conn() as conn:
+            entry_reason_sql = """(SELECT reason FROM lt_trades t
+                                   WHERE t.position_id = lt_positions.id AND t.side='BUY'
+                                   ORDER BY t.id LIMIT 1) AS entry_reason"""
             if status:
                 rows = conn.execute(
-                    "SELECT * FROM lt_positions WHERE status=? ORDER BY id DESC",
+                    f"SELECT lt_positions.*, {entry_reason_sql} FROM lt_positions WHERE status=? ORDER BY id DESC",
                     (status.upper(),),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM lt_positions ORDER BY status, id DESC"
+                    f"SELECT lt_positions.*, {entry_reason_sql} FROM lt_positions ORDER BY status, id DESC"
                 ).fetchall()
         out = []
         for r in rows:

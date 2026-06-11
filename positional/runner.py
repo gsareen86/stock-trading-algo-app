@@ -991,6 +991,18 @@ def run_eod_scan(force: bool = False) -> dict:
         run_longterm_book()   # no-op unless LT_BOOK_ENABLED
     except Exception as e:
         log.debug("[pos_runner] LT book pass failed: %s", e)
+    # Fundamentals coverage for every scan candidate (fetch_and_store caches
+    # 24h, so reruns are nearly free). Keeps the Fundamentals page populated
+    # for the same names that show up in Swing/Long-Term candidates.
+    try:
+        from data.fundamentals import fetch_and_store
+        for r in scan_results[:60]:
+            try:
+                fetch_and_store(r["ticker"])
+            except Exception:
+                continue
+    except Exception as e:
+        log.debug("[pos_runner] candidate fundamentals fetch failed: %s", e)
 
     summary = {
         "regime": regime_flag,

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp, Zap } from "lucide-react";
 import { fmtIST, fmtNum, postJSON } from "../api";
 import { Panel, useApi, Badge, DataTable, EmptyState, Help, toast, Btn, RefreshBtn, SearchBox } from "../components/ui";
+import { takeTicker } from "../nav";
 
 function VerdictRow({ r }: { r: any }) {
   const [open, setOpen] = useState(false);
@@ -66,9 +67,10 @@ function VerdictRow({ r }: { r: any }) {
 
 export default function Research() {
   const research = useApi<any[]>("/api/positional/research");
-  const [gTicker, setGTicker] = useState("");
+  const navTicker = useState(() => takeTicker())[0];
+  const [gTicker, setGTicker] = useState(navTicker);
   const guidance = useApi<any>(`/api/engine/guidance${gTicker ? `?ticker=${encodeURIComponent(gTicker)}` : ""}`, [gTicker]);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(navTicker);
   const [reTicker, setReTicker] = useState("");
   const [busy, setBusy] = useState(false);
 

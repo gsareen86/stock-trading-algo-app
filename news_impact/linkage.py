@@ -94,6 +94,23 @@ def holdings_set() -> Set[str]:
     return out
 
 
+def scan_set() -> Set[str]:
+    """Latest scan candidates (one row per ticker) — Swing + Long-Term
+    candidates get news-impact coverage even before they are held."""
+    out: Set[str] = set()
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT ticker FROM pos_scans
+                   WHERE id IN (SELECT MAX(id) FROM pos_scans GROUP BY ticker)"""
+            ).fetchall()
+        out = {bare(r["ticker"]) for r in rows if r["ticker"]}
+    except Exception:
+        pass
+    return out
+
+
 def lt_set() -> Set[str]:
     """Bare tickers currently in the long-term watchlist."""
     from db.models import get_conn
