@@ -196,8 +196,8 @@ def _open_position(ticker: str, price: float, score: float,
                 _recent_news = [
                     dict(r) for r in conn.execute(
                         """SELECT title, ts, sentiment FROM news
-                           WHERE tickers LIKE ? ORDER BY ts DESC LIMIT 5""",
-                        (f"%{ticker}%",),
+                           WHERE (',' || tickers || ',') LIKE ? ORDER BY ts DESC LIMIT 5""",
+                        (f"%,{ticker.upper()},%",),
                     ).fetchall()
                 ]
                 row_sector = conn.execute(

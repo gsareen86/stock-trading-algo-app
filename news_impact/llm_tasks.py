@@ -65,6 +65,7 @@ def analyse_impact(
     linkage: str,
     cluster_topic: str,
     articles: List[Dict],
+    stats_out: Optional[Dict] = None,
 ) -> Optional[Dict]:
     """LLM impact assessment for one (ticker, cluster). Returns the parsed
     dict or ``None`` on failure."""
@@ -88,7 +89,7 @@ def analyse_impact(
     )
 
     # Cache key bundles ticker + the sorted news ids so identical inputs cache.
-    ids = sorted(int(a.get("news_id") or 0) for a in articles)
+    ids = sorted(int(a.get("news_id") or a.get("id") or 0) for a in articles)
     key = f"news_impact_assess::{ticker.upper()}::{linkage}::" + ",".join(str(i) for i in ids)
 
     result = call_json(
@@ -99,6 +100,7 @@ def analyse_impact(
         max_tokens=768,
         cache_key=key,
         caller="news_impact_assess",
+        stats_out=stats_out,
     )
     if result is None or not isinstance(result, dict):
         return None
@@ -121,3 +123,55 @@ def analyse_impact(
         "cited_news_ids": cited_ids,
         "confidence": result.get("confidence"),
     }
+
+
+def cluster_articles_llm(
+    ticker: str,
+    articles: List[Dict],
+    stats_out: Optional[Dict] = None,
+) -> Optional[List[Tuple[str, List[Dict]]]]:
+    """Cluster candidate articles for a ticker using LLM.
+    Returns ``[(topic_label, [articles])]`` or ``None`` on any failure.
+    """
+    from llm.client import call_json
+    from config import LLM_DEFAULT_MODEL
+    from news_impact.schemas import build_cluster_prompt, CLUSTER_SCHEMA
+
+    if not articles:
+        return []
+
+    system, prompt = build_cluster_prompt(ticker, articles)
+
+    # Stable cache key based on ticker + sorted news ids
+    ids = sorted(int(a.get("news_id") or a.get("id") or 0) for a in articles)
+    key = f"news_impact_cluster::{ticker.upper()}::" + ",".join(str(i) for i in ids)
+
+    result = call_json(
+        prompt=prompt,
+        schema=CLUSTER_SCHEMA,
+        system=system,
+        model=LLM_DEFAULT_MODEL,
+        max_tokens=1024,
+        cache_key=key,
+        caller="news_impact_cluster",
+        stats_out=stats_out,
+    )
+
+    if result is None or not isinstance(result, dict) or "clusters" not in result:
+        return None
+
+    # Map returned article IDs back to actual article dictionaries
+    articles_by_id = {int(a.get("news_id") or a.get("id") or 0): a for a in articles}
+    out_clusters = []
+
+    for c in result["clusters"]:
+        topic = c.get("topic_label") or "Untitled cluster"
+        cluster_article_ids = c.get("article_ids") or []
+        cluster_articles_list = []
+        for aid in cluster_article_ids:
+            if int(aid) in articles_by_id:
+                cluster_articles_list.append(articles_by_id[int(aid)])
+        if cluster_articles_list:
+            out_clusters.append((topic, cluster_articles_list))
+
+    return out_clusters

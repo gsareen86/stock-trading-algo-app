@@ -222,3 +222,73 @@ def build_impact_prompt(
         "  * If articles are weak / off-topic, return severity='info', action='HOLD'.\n"
     )
     return _IMPACT_SYSTEM, prompt
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Clustering Schemas
+# ─────────────────────────────────────────────────────────────────────────────
+
+CLUSTER_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["clusters"],
+    "properties": {
+        "clusters": {
+            "type": "array",
+            "description": "List of logical news clusters found in the articles.",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["topic_label", "article_ids"],
+                "properties": {
+                    "topic_label": {
+                        "type": "string",
+                        "maxLength": 80,
+                        "description": "A concise title (3-6 words, Capitalised) representing the main event or theme of this cluster.",
+                    },
+                    "article_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of article IDs that belong to this cluster.",
+                    },
+                },
+            },
+        }
+    },
+}
+
+_CLUSTER_SYSTEM = (
+    "You group financial news articles for a specific stock ticker into thematic "
+    "clusters. Articles that discuss the same event, announcement, or report "
+    "must be grouped together to avoid duplicate evaluations. Output strict JSON only."
+)
+
+
+def build_cluster_prompt(ticker: str, articles: Iterable[dict]) -> tuple[str, str]:
+    """Return (system, prompt) for the cluster-tagger call.
+
+    `articles` is a list of dicts with keys `news_id` (or `id`), `title`, and `summary`.
+    """
+    art_lines = []
+    for a in articles:
+        aid = a.get("news_id") or a.get("id") or 0
+        title = (a.get("title") or "").strip()
+        summary = (a.get("summary") or "").strip()
+        art_lines.append(
+            f"- ID: {aid}\n"
+            f"  Title: {title}\n"
+            f"  Summary: {summary[:400]}"
+        )
+    articles_block = "\n\n".join(art_lines) if art_lines else "(no articles)"
+
+    prompt = (
+        f"Ticker: {ticker}\n\n"
+        "Group the following articles into logical clusters based on the event, announcement, or theme they discuss. "
+        "Each cluster should represent a single news story or development. "
+        "If an article does not relate to any other article, place it in its own single-article cluster.\n\n"
+        f"Articles:\n{articles_block}\n\n"
+        "Return a JSON object containing a 'clusters' array where each item has:\n"
+        "  topic_label  — concise title (3-6 words, Capitalised) representing the cluster's topic.\n"
+        "  article_ids  — list of article IDs that belong to this cluster.\n"
+    )
+    return _CLUSTER_SYSTEM, prompt

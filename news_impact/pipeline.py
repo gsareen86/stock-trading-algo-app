@@ -402,7 +402,20 @@ def run_for_all(force: bool = False,
                 res_ctx = _research_context(ticker)
                 last_px = _last_close(ticker)
 
-                clusters = cluster_articles(candidates)
+                # Try LLM clustering first
+                cluster_stats = {}
+                from news_impact.llm_tasks import cluster_articles_llm
+                clusters = cluster_articles_llm(ticker, candidates, stats_out=cluster_stats)
+
+                # Fallback to deterministic clustering if LLM fails or is not applicable
+                if clusters is None:
+                    log.warning("[news_impact] LLM clustering failed for %s — falling back to deterministic", ticker)
+                    clusters = cluster_articles(candidates)
+                    cluster_stats = {
+                        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                        "cached": False, "model": "fallback", "provider": "local"
+                    }
+
                 for cluster_topic, cluster_articles_list in clusters:
                     n_new, n_telegram = _process_cluster(
                         ticker=ticker, scope=scope, sector=sector,
@@ -410,6 +423,7 @@ def run_for_all(force: bool = False,
                         position_ctx=pos_ctx, research_ctx=res_ctx,
                         last_close=last_px, window_hours=window_hours,
                         telegram_budget_left=DEFAULT_TELEGRAM_CAP - telegram_sent,
+                        clustering_stats=cluster_stats,
                     )
                     alerts_created += n_new
                     telegram_sent += n_telegram
@@ -451,23 +465,45 @@ def _process_cluster(
     last_close: Optional[float],
     window_hours: int,
     telegram_budget_left: int,
+    clustering_stats: dict,
 ) -> Tuple[int, int]:
     """Run the LLM on one cluster, persist (de-duped), notify if critical.
     Returns ``(alerts_created, telegram_sent)``."""
     from news_impact.llm_tasks import analyse_impact
     from news_impact.store import (
         content_hash, insert_alert, recent_hash_exists, mark_telegram_sent,
+        fetch_recent_active_alerts, supersede_alert,
     )
     from config import LLM_DEFAULT_MODEL
 
     linkage, linkage_sector = _dominant_linkage(articles)
+    
+    impact_stats = {}
     result = analyse_impact(
         ticker=ticker, sector=sector, last_close=last_close,
         position_ctx=position_ctx, research_ctx=research_ctx,
         linkage=linkage, cluster_topic=cluster_topic, articles=articles,
+        stats_out=impact_stats,
     )
     if not result:
         return (0, 0)
+
+    # Cost Estimation & Token Usage
+    c_pt = clustering_stats.get("prompt_tokens", 0)
+    c_ct = clustering_stats.get("completion_tokens", 0)
+    i_pt = impact_stats.get("prompt_tokens", 0)
+    i_ct = impact_stats.get("completion_tokens", 0)
+    
+    c_provider = clustering_stats.get("provider", "ollama")
+    c_model = clustering_stats.get("model", "")
+    i_provider = impact_stats.get("provider", "ollama")
+    i_model = impact_stats.get("model", "")
+    
+    c_cost = _estimate_llm_cost(c_provider, c_model, c_pt, c_ct)
+    i_cost = _estimate_llm_cost(i_provider, i_model, i_pt, i_ct)
+    
+    total_tokens = c_pt + c_ct + i_pt + i_ct
+    total_cost = c_cost + i_cost
 
     citations = [{
         "news_id": a["news_id"], "title": a.get("title"), "url": a.get("url"),
@@ -493,7 +529,61 @@ def _process_cluster(
         "cluster_topic": cluster_topic,
         "confidence": result.get("confidence"),
         "window_hours": window_hours,
+        "llm_usage": {
+            "clustering": {
+                "provider": c_provider,
+                "model": c_model,
+                "prompt_tokens": c_pt,
+                "completion_tokens": c_ct,
+                "cached": clustering_stats.get("cached", False),
+                "cost_usd": c_cost,
+            },
+            "impact_analysis": {
+                "provider": i_provider,
+                "model": i_model,
+                "prompt_tokens": i_pt,
+                "completion_tokens": i_ct,
+                "cached": impact_stats.get("cached", False),
+                "cost_usd": i_cost,
+            },
+            "total_tokens": total_tokens,
+            "total_cost_usd": total_cost,
+        }
     }
+
+    # Same-story alert deduplication/supersede check
+    active_alerts = fetch_recent_active_alerts(ticker, hours=48)
+    old_alert_to_supersede = None
+    new_news_ids_set = set(news_ids)
+    
+    for old_alert in active_alerts:
+        old_news_ids = set(old_alert.get("meta", {}).get("news_ids") or [])
+        if _is_same_story(old_alert.get("cluster_topic"), cluster_topic, old_news_ids, new_news_ids_set):
+            old_alert_to_supersede = old_alert
+            break
+
+    # Determine Telegram notification routing
+    should_notify_telegram = (
+        result["severity"] == "critical"
+        and scope == "HOLDING"
+        and telegram_budget_left > 0
+    )
+
+    if should_notify_telegram and old_alert_to_supersede:
+        was_delivered = old_alert_to_supersede.get("delivered_telegram")
+        if was_delivered:
+            # Check for escalation of severity or change in recommended action
+            sev_rank = {"critical": 3, "watch": 2, "info": 1}
+            old_sev = old_alert_to_supersede.get("severity")
+            old_action = old_alert_to_supersede.get("recommended_action")
+            
+            new_sev_val = sev_rank.get(result["severity"], 0)
+            old_sev_val = sev_rank.get(old_sev, 0)
+            
+            is_escalation = (new_sev_val > old_sev_val) or (result["recommended_action"] != old_action)
+            if not is_escalation:
+                should_notify_telegram = False
+
     alert_id = insert_alert(
         ticker=ticker, scope=scope, sector=sector,
         severity=result["severity"],
@@ -501,14 +591,17 @@ def _process_cluster(
         linkage=linkage, linkage_sector=linkage_sector,
         impact_summary=result["impact_summary"],
         content_hash_value=h,
-        model=LLM_DEFAULT_MODEL,
+        model=i_model or LLM_DEFAULT_MODEL,
         meta=meta,
     )
 
+    if old_alert_to_supersede:
+        supersede_alert(old_alert_to_supersede["id"], alert_id)
+        log.info("[news_impact] Alert %d superseded by new alert %d for ticker %s (same story)",
+                 old_alert_to_supersede["id"], alert_id, ticker)
+
     telegram_sent = 0
-    if (result["severity"] == "critical"
-            and scope == "HOLDING"
-            and telegram_budget_left > 0):
+    if should_notify_telegram:
         try:
             from positional.alerts import send_news_impact_alert
             sent = send_news_impact_alert({
@@ -528,3 +621,60 @@ def _process_cluster(
             log.warning("[news_impact] telegram failed for %s: %s", ticker, e)
 
     return (1, telegram_sent)
+
+
+def _estimate_llm_cost(provider: str, model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Estimate the cost of an LLM call in USD."""
+    prov = (provider or "").lower()
+    mod = (model or "").lower()
+    if prov == "ollama" or "free" in mod:
+        return 0.0
+        
+    # Standard rates per million tokens: (input, output)
+    rates = (0.80, 4.00) # default to Haiku level pricing
+    
+    if prov == "anthropic":
+        if "sonnet" in mod:
+            rates = (3.00, 15.00)
+        elif "haiku" in mod:
+            rates = (0.80, 4.00)
+        elif "opus" in mod:
+            rates = (15.00, 75.00)
+    elif prov == "openrouter":
+        if "gemma-3-27b" in mod:
+            rates = (0.0, 0.0)
+        elif "gpt-4o-mini" in mod:
+            rates = (0.15, 0.60)
+        elif "gpt-4o" in mod:
+            rates = (5.00, 15.00)
+            
+    return (prompt_tokens * rates[0] + completion_tokens * rates[1]) / 1_000_000.0
+
+
+def _is_same_story(old_topic: Optional[str], new_topic: Optional[str], old_news_ids: set, new_news_ids: set) -> bool:
+    """Check if two alerts represent the same news story.
+    Returns True if they share at least one news ID, or if the topics have significant word overlap.
+    """
+    # 1. Overlapping news articles
+    if old_news_ids & new_news_ids:
+        return True
+        
+    # 2. Case-insensitive exact topic match
+    ot = (old_topic or "").strip().lower()
+    nt = (new_topic or "").strip().lower()
+    if not ot or not nt:
+        return False
+    if ot == nt:
+        return True
+        
+    # 3. Fuzzy topic overlap: if they share at least 3 significant words of length >= 4
+    def get_sig_words(s):
+        words = re.findall(r"[a-z0-9]+", s.lower())
+        return {w for w in words if len(w) >= 4}
+        
+    ot_words = get_sig_words(ot)
+    nt_words = get_sig_words(nt)
+    if len(ot_words & nt_words) >= 3:
+        return True
+        
+    return False

@@ -197,7 +197,7 @@ SIGNAL_POLL_INTERVAL_SEC = 900    # 15 min - matches candle interval
 #   50  tickers ≈ 10-15 s per cycle
 #   100 tickers ≈ 20-30 s
 #   500 tickers ≈ 100-180 s   (use a longer poll interval if you do this)
-CYCLE_SAMPLE_SIZE = 50
+CYCLE_SAMPLE_SIZE = 500
 
 # ----- News sources (free RSS) -----
 NEWS_SOURCES = {
@@ -357,7 +357,7 @@ POSITIONAL_CONFLUENCE_BONUS  = 8.0
 # latest concall transcript / investor presentation PDFs, then have the local
 # LLM judge management outlook (feeds the "management" pillar) and a verdict.
 POSITIONAL_CONCALL_RESEARCH_ENABLED = os.environ.get("POSITIONAL_CONCALL_RESEARCH_ENABLED", "True").lower() == "true"
-POSITIONAL_RESEARCH_LIMIT     = int(os.environ.get("POSITIONAL_RESEARCH_LIMIT", "25"))   # candidates researched per run
+POSITIONAL_RESEARCH_LIMIT     = int(os.environ.get("POSITIONAL_RESEARCH_LIMIT", "100"))   # candidates researched per run
 POSITIONAL_CONCALL_MAX_PAGES  = int(os.environ.get("POSITIONAL_CONCALL_MAX_PAGES", "40")) # cap PDF pages extracted
 POSITIONAL_RESEARCH_CHUNK_CHARS = int(os.environ.get("POSITIONAL_RESEARCH_CHUNK_CHARS", "80000"))  # map-reduce threshold
 POSITIONAL_CONCALL_CACHE_DAYS = int(os.environ.get("POSITIONAL_CONCALL_CACHE_DAYS", "25"))  # reuse research within this window
@@ -575,8 +575,8 @@ if LLM_PROVIDER == "anthropic":
     LLM_META_MODEL       = "claude-haiku-4-5"
 elif LLM_PROVIDER == "ollama":
     # Local Ollama model. Override via OLLAMA_MODEL in .env
-    _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
-    # _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "granite4.1:8b")
+    # _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
+    _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL")
     LLM_DEFAULT_MODEL    = _OLLAMA_MODEL
     LLM_SENTIMENT_MODEL  = _OLLAMA_MODEL
     LLM_VETO_MODEL       = _OLLAMA_MODEL

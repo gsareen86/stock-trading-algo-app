@@ -165,6 +165,7 @@ def call_json(
     max_tokens: int = 512,
     cache_key: Optional[str] = None,
     caller: str = "",               # feature name for observability (e.g. "sentiment")
+    stats_out: Optional[dict] = None,
 ) -> Optional[dict]:
     """One-shot LLM call constrained to a JSON schema.
 
@@ -183,6 +184,16 @@ def call_json(
         if cached is not None:
             _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
                         status="cached", latency_ms=0)
+            if stats_out is not None:
+                stats_out.update({
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "cached": True,
+                    "latency_ms": 0,
+                    "model": model,
+                    "provider": LLM_PROVIDER,
+                })
             return cached
 
     # Circuit breaker: skip API call entirely when in cooldown
@@ -190,10 +201,30 @@ def call_json(
         _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
                     status="circuit_open", latency_ms=0,
                     error_msg="circuit breaker open — skipping API call")
+        if stats_out is not None:
+            stats_out.update({
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cached": False,
+                "latency_ms": 0,
+                "model": model,
+                "provider": LLM_PROVIDER,
+            })
         return None
 
     client = get_client()
     if client is None:
+        if stats_out is not None:
+            stats_out.update({
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cached": False,
+                "latency_ms": 0,
+                "model": model,
+                "provider": LLM_PROVIDER,
+            })
         return None
 
     t0 = time.monotonic()
@@ -229,6 +260,16 @@ def call_json(
                     status=status, prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     latency_ms=latency_ms, error_msg=error_msg)
+        if stats_out is not None:
+            stats_out.update({
+                "prompt_tokens": prompt_tokens or 0,
+                "completion_tokens": completion_tokens or 0,
+                "total_tokens": (prompt_tokens or 0) + (completion_tokens or 0),
+                "cached": False,
+                "latency_ms": latency_ms,
+                "model": model,
+                "provider": LLM_PROVIDER,
+            })
         return None
 
     _cb_record_success()
@@ -237,6 +278,17 @@ def call_json(
     _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
                 status="ok", prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens, latency_ms=latency_ms)
+
+    if stats_out is not None:
+        stats_out.update({
+            "prompt_tokens": prompt_tokens or 0,
+            "completion_tokens": completion_tokens or 0,
+            "total_tokens": (prompt_tokens or 0) + (completion_tokens or 0),
+            "cached": False,
+            "latency_ms": latency_ms,
+            "model": model,
+            "provider": LLM_PROVIDER,
+        })
 
     if cache_key:
         _cache_put(cache_key, result)
@@ -250,6 +302,7 @@ def call_text(
     model: Optional[str] = None,
     max_tokens: int = 512,
     caller: str = "",
+    stats_out: Optional[dict] = None,
 ) -> Optional[str]:
     """Free-form text completion (no JSON, no schema). Returns the string or None.
 
@@ -265,9 +318,29 @@ def call_text(
         _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
                     status="circuit_open", latency_ms=0,
                     error_msg="circuit breaker open — skipping API call")
+        if stats_out is not None:
+            stats_out.update({
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cached": False,
+                "latency_ms": 0,
+                "model": model,
+                "provider": LLM_PROVIDER,
+            })
         return None
     client = get_client()
     if client is None and LLM_PROVIDER != "ollama":
+        if stats_out is not None:
+            stats_out.update({
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cached": False,
+                "latency_ms": 0,
+                "model": model,
+                "provider": LLM_PROVIDER,
+            })
         return None
 
     t0 = time.monotonic()
@@ -293,10 +366,30 @@ def call_text(
         _obs_record(provider=LLM_PROVIDER, model=model, caller=caller,
                     status="rate_limited" if is_429 else "error",
                     latency_ms=latency_ms, error_msg=error_msg)
+        if stats_out is not None:
+            stats_out.update({
+                "prompt_tokens": pt or 0,
+                "completion_tokens": ct or 0,
+                "total_tokens": (pt or 0) + (ct or 0),
+                "cached": False,
+                "latency_ms": latency_ms,
+                "model": model,
+                "provider": LLM_PROVIDER,
+            })
         return None
     _cb_record_success()
     _obs_record(provider=LLM_PROVIDER, model=model, caller=caller, status="ok",
                 prompt_tokens=pt, completion_tokens=ct, latency_ms=latency_ms)
+    if stats_out is not None:
+        stats_out.update({
+            "prompt_tokens": pt or 0,
+            "completion_tokens": ct or 0,
+            "total_tokens": (pt or 0) + (ct or 0),
+            "cached": False,
+            "latency_ms": latency_ms,
+            "model": model,
+            "provider": LLM_PROVIDER,
+        })
     return text
 
 

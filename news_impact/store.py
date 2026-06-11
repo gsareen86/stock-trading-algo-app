@@ -350,6 +350,7 @@ def _row_to_alert(r: Any) -> Dict[str, Any]:
         "model": r["model"],
         "window_hours": meta.get("window_hours"),
         "delivered_telegram": bool(r["delivered_telegram"]),
+        "meta": meta,
     }
 
 
@@ -361,6 +362,32 @@ def _format_linkage_label(linkage: Optional[str], linkage_sector: Optional[str])
     if linkage == "ANCILLARY":
         return f"Ancillary: {linkage_sector}" if linkage_sector else "Ancillary"
     return linkage or "—"
+
+
+def fetch_recent_active_alerts(ticker: str, hours: int = 48) -> List[Dict[str, Any]]:
+    """Fetch active (non-superseded) alerts for a ticker in the last window."""
+    from datetime import timedelta
+    from db.models import get_conn
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=int(hours))).isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM news_impact_alerts
+                WHERE ticker = ?
+                  AND created_at >= ?
+                  AND superseded_by IS NULL""",
+            ((ticker or "").upper(), cutoff),
+        ).fetchall()
+    return [_row_to_alert(r) for r in rows]
+
+
+def supersede_alert(old_id: int, new_id: int) -> None:
+    """Mark an old alert as superseded by a new alert ID."""
+    from db.models import get_conn
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE news_impact_alerts SET superseded_by = ? WHERE id = ?",
+            (int(new_id), int(old_id)),
+        )
 
 
 # ---------------------------------------------------------------------------

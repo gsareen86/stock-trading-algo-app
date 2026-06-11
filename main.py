@@ -59,7 +59,7 @@ def start_api_server():
     port = int(os.environ.get("PORT", "8000"))
     host = os.environ.get("HOST", "127.0.0.1")
     print(f"[startup] Starting Unified FastAPI + React Dashboard on http://{host}:{port} ...", flush=True)
-    uvicorn.run("api.server:app", host=host, port=port, log_level="info")
+    uvicorn.run("api.server:app", host=host, port=port, log_level="info", access_log=False)
 
 
 def main():

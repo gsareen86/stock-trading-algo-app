@@ -159,24 +159,82 @@ def classify_linkage(
     return (None, None)
 
 
+# Normalized sector mapping dictionary (extensible)
+SECTOR_NORMALIZATION_MAP: Dict[str, List[str]] = {
+    "Auto OEM": [
+        "auto oem", "auto", "automobile", "automobiles", "automotive", 
+        "ev", "electric vehicle", "electric vehicles"
+    ],
+    "Banks": [
+        "banks", "banking", "banks - private", "banks - public", 
+        "financial services", "financial"
+    ],
+    "Finance & NBFC": [
+        "nbfc", "finance", "non-banking financial company", "housing finance"
+    ],
+    "IT Services": [
+        "it services", "software", "information technology", "technology", 
+        "consumer technology"
+    ],
+    "Renewable Energy": [
+        "renewable energy", "green energy", "solar", "wind energy", 
+        "renewables", "clean energy"
+    ],
+    "Battery & Storage": [
+        "battery and storage systems", "bass", "battery & storage", 
+        "battery", "batteries", "energy storage"
+    ],
+    "FMCG": [
+        "fmcg", "consumer defensive", "consumer staples", "staples"
+    ],
+    "Pharma": [
+        "pharma", "pharmaceuticals", "healthcare", "medicine"
+    ],
+    "Metals & Mining": [
+        "metals & mining", "metals", "metal", "mining", "steel", 
+        "basic materials", "aluminum"
+    ],
+    "Energy": [
+        "energy", "oil & gas", "power", "electricity"
+    ],
+    "Realty": [
+        "realty", "real estate", "construction", "infrastructure"
+    ],
+}
+
+# Compile reverse lookup dictionary for fast performance
+_REVERSE_SECTOR_MAP: Dict[str, str] = {}
+for _canonical, _aliases in SECTOR_NORMALIZATION_MAP.items():
+    _REVERSE_SECTOR_MAP[_canonical.lower().strip()] = _canonical
+    for _alias in _aliases:
+        _REVERSE_SECTOR_MAP[_alias.lower().strip()] = _canonical
+
+def normalize_sector(sector_name: Optional[str]) -> Optional[str]:
+    """Resolve a raw sector name to a canonical sector.
+    Falls back to a cleaned title-case version of the raw string if not explicitly mapped.
+    """
+    if not sector_name:
+        return None
+    cleaned = sector_name.lower().strip()
+    
+    # 1. Exact match on compiled reverse lookup map
+    if cleaned in _REVERSE_SECTOR_MAP:
+        return _REVERSE_SECTOR_MAP[cleaned]
+        
+    # 2. Check root splits (e.g. split on dash)
+    root = cleaned.split(" - ")[0].strip()
+    if root in _REVERSE_SECTOR_MAP:
+        return _REVERSE_SECTOR_MAP[root]
+        
+    # Fallback to original strip representation
+    return sector_name.strip()
+
 def _sector_match(a: str, b: str) -> bool:
-    """Loose, case-insensitive sector equality. Strips common suffixes / dashes
-    so ``"Auto OEM"`` matches ``"auto oem"`` and ``"Banks - Private"`` matches
-    ``"Banks"`` etc."""
+    """Loose sector matching based on normalised canonical sectors."""
     if not a or not b:
         return False
-    aa = a.lower().strip()
-    bb = b.lower().strip()
-    if aa == bb:
-        return True
-    # Strip trailing qualifiers after a dash (Screener uses "Banks - Private").
-    aa_root = aa.split(" - ")[0].strip()
-    bb_root = bb.split(" - ")[0].strip()
-    if aa_root and aa_root == bb_root:
-        return True
-    # Allow one to be a substring of the other (e.g. "Auto" matches "Auto OEM")
-    # but only when the shorter side is non-trivially long to avoid noise.
-    short, long_ = (aa_root, bb_root) if len(aa_root) <= len(bb_root) else (bb_root, aa_root)
-    if len(short) >= 4 and short in long_:
-        return True
-    return False
+    norm_a = normalize_sector(a)
+    norm_b = normalize_sector(b)
+    if not norm_a or not norm_b:
+        return False
+    return norm_a.lower() == norm_b.lower()

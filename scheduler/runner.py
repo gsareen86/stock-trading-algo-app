@@ -736,8 +736,8 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                         with get_conn() as _conn:
                             _news_rows = _conn.execute(
                                 """SELECT title, summary, ts, tickers FROM news
-                                   WHERE tickers LIKE ? ORDER BY ts DESC LIMIT 15""",
-                                (f"%{d.ticker}%",),
+                                   WHERE (',' || tickers || ',') LIKE ? ORDER BY ts DESC LIMIT 15""",
+                                (f"%,{d.ticker.upper()},%",),
                             ).fetchall()
                         _news_items = [dict(r) for r in _news_rows]
                         _events = extract_events(d.ticker, _news_items) or []
@@ -756,8 +756,8 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                             _recent_news = [
                                 dict(r) for r in _conn.execute(
                                     """SELECT title, ts, sentiment FROM news
-                                       WHERE tickers LIKE ? ORDER BY ts DESC LIMIT 5""",
-                                    (f"%{d.ticker}%",),
+                                       WHERE (',' || tickers || ',') LIKE ? ORDER BY ts DESC LIMIT 5""",
+                                    (f"%,{d.ticker.upper()},%",),
                                 ).fetchall()
                             ]
                         _fired = [

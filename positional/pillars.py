@@ -156,8 +156,8 @@ def sentiment_pillar(ticker: str, days: int = 14) -> Optional[float]:
         with get_conn() as conn:
             row = conn.execute(
                 """SELECT COUNT(*) AS n FROM news
-                   WHERE tickers LIKE ? AND ts >= ? AND sentiment IS NOT NULL""",
-                (f"%{base}%", cutoff),
+                   WHERE (',' || tickers || ',') LIKE ? AND ts >= ? AND sentiment IS NOT NULL""",
+                (f"%,{base.upper()},%", cutoff),
             ).fetchone()
         if not row or int(row["n"] or 0) == 0:
             return None

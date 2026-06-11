@@ -8,16 +8,20 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional
 
 import feedparser
 
 from config import NEWS_SOURCES
-from data.universe import load_universe
+from data.universe import load_universe, load_expanded_universe
 from db.models import get_conn
 
 log = logging.getLogger(__name__)
+
+_dynamic_aliases_cache: dict[str, list[str]] = {}
+_dynamic_aliases_lock = threading.Lock()
 
 
 # Company-name aliases for ticker matching. News articles almost never use
@@ -166,6 +170,82 @@ def _normalize_text(t: str) -> str:
     return re.sub(r"\s+", " ", t or "").strip()
 
 
+_LEGAL_SUFFIX_RE = re.compile(
+    r'\s*\b(LIMITED|LTD|CORPORATION|CORP|CO|COMPANY)\b\.?$',
+    re.IGNORECASE
+)
+
+
+def _clean_company_name(name: str) -> str:
+    # Normalize whitespace
+    name = re.sub(r'\s+', ' ', name or "").strip()
+    # Repeatedly strip legal suffixes from the end of the name
+    while True:
+        m = _LEGAL_SUFFIX_RE.search(name)
+        if m:
+            name = name[:m.start()].strip()
+        else:
+            break
+    # Clean trailing punctuation
+    name = name.rstrip(",.- ")
+    return name
+
+
+def _build_dynamic_aliases(universe: Iterable[str]) -> dict[str, list[str]]:
+    global _dynamic_aliases_cache
+    
+    with _dynamic_aliases_lock:
+        if _dynamic_aliases_cache:
+            return _dynamic_aliases_cache
+            
+    from data.universe import load_equity_master
+    try:
+        master_rows = load_equity_master()
+    except Exception as e:
+        log.warning("Failed to load equity master for dynamic aliases: %s", e)
+        master_rows = []
+        
+    import copy
+    aliases_map = copy.deepcopy(TICKER_NAME_ALIASES)
+    
+    symbol_to_company: dict[str, str] = {}
+    for row in master_rows:
+        sym = row.get("symbol", "").upper()
+        name = row.get("name", "")
+        if sym and name:
+            symbol_to_company[sym] = name
+            
+    for sym in universe:
+        sym_upper = sym.upper()
+        if sym_upper not in aliases_map:
+            aliases_map[sym_upper] = []
+            
+        co_name = symbol_to_company.get(sym_upper)
+        if co_name:
+            cleaned = _clean_company_name(co_name)
+            cleaned_upper = cleaned.upper()
+            
+            if (
+                len(cleaned_upper) >= 4 
+                and cleaned_upper not in AMBIGUOUS_SYMBOLS
+                and cleaned_upper != sym_upper
+            ):
+                existing_upper = {a.upper() for a in aliases_map[sym_upper]}
+                if cleaned_upper not in existing_upper:
+                    aliases_map[sym_upper].append(cleaned)
+                    
+    with _dynamic_aliases_lock:
+        _dynamic_aliases_cache = aliases_map
+        
+    return aliases_map
+
+
+def _check_whole_word_match(pattern: str, text: str) -> bool:
+    escaped = re.escape(pattern)
+    regex = rf"(?<!\w){escaped}(?!\w)"
+    return bool(re.search(regex, text))
+
+
 def _match_tickers(text: str, universe: Iterable[str]) -> List[str]:
     """Case-insensitive match of tickers against article text.
 
@@ -179,14 +259,17 @@ def _match_tickers(text: str, universe: Iterable[str]) -> List[str]:
     text_upper = text.upper()
     hits: set[str] = set()
 
+    aliases_map = _build_dynamic_aliases(universe)
+
     for sym in universe:
+        sym_upper = sym.upper()
         # Pass 1: symbol match (whole-word, skip very short noisy symbols and
         # symbols that collide with ordinary English words — those may only
         # match via their qualified aliases in pass 2).
         if (
-            len(sym) >= 3
-            and sym not in AMBIGUOUS_SYMBOLS
-            and re.search(rf"\b{re.escape(sym)}\b", text_upper)
+            len(sym_upper) >= 3
+            and sym_upper not in AMBIGUOUS_SYMBOLS
+            and _check_whole_word_match(sym_upper, text_upper)
         ):
             hits.add(sym)
             continue
@@ -194,10 +277,10 @@ def _match_tickers(text: str, universe: Iterable[str]) -> List[str]:
         # Pass 2: alias match. Word-boundary (not plain substring) so e.g.
         # "HUL" can't fire inside "HULL" and "TITAN COMPANY" can't fire
         # inside an unrelated longer phrase fragment.
-        aliases = TICKER_NAME_ALIASES.get(sym)
+        aliases = aliases_map.get(sym_upper)
         if aliases:
             for alias in aliases:
-                if re.search(rf"\b{re.escape(alias)}\b", text_upper):
+                if _check_whole_word_match(alias.upper(), text_upper):
                     hits.add(sym)
                     break
     return sorted(hits)
@@ -256,7 +339,7 @@ def scrape_all(universe: Optional[list[str]] = None) -> int:
     Scrape every configured source, match tickers, and persist.
     Returns count of *new* items inserted.
     """
-    universe = universe or load_universe()
+    universe = universe or load_expanded_universe()
     inserted = 0
     with get_conn() as conn:
         for source, url in NEWS_SOURCES.items():
@@ -298,7 +381,7 @@ def retag_existing_news(universe: Optional[list[str]] = None) -> int:
     empty `tickers` columns because the old matcher only looked at the NSE
     symbol. Returns count of rows whose tags changed.
     """
-    universe = universe or load_universe()
+    universe = universe or load_expanded_universe()
     updated = 0
     with get_conn() as conn:
         rows = conn.execute(
@@ -317,24 +400,18 @@ def retag_existing_news(universe: Optional[list[str]] = None) -> int:
     return updated
 
 
-def _escape_like(value: str) -> str:
-    """Escape SQL LIKE special characters in value for use with ESCAPE '\'."""
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def recent_news_for_ticker(ticker: str, hours: int = 24, limit: int = 20) -> list[dict]:
     """Return the most recent news items referencing a ticker."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    escaped = _escape_like(ticker)
     with get_conn() as conn:
         rows = conn.execute(
             r"""SELECT ts, source, title, summary, url, sentiment
                  FROM news
-                WHERE tickers LIKE ? ESCAPE '\'
+                WHERE (',' || tickers || ',') LIKE ?
                   AND ts >= ?
                 ORDER BY ts DESC
                 LIMIT ?""",
-            (f"%{escaped}%", cutoff, limit),
+            (f"%,{ticker.upper()},%", cutoff, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 

@@ -175,10 +175,6 @@ def score_news_items(ids: Optional[Iterable[int]] = None) -> int:
     return n
 
 
-def _escape_like(value: str) -> str:
-    """Escape SQL LIKE special characters for use with ESCAPE '\'."""
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
 
 def aggregated_sentiment(ticker: str, hours: int = 24) -> float:
     """
@@ -192,14 +188,13 @@ def aggregated_sentiment(ticker: str, hours: int = 24) -> float:
     # (SQLite's datetime('now', '-X hours') is not valid Postgres).
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=hours)).isoformat()
-    escaped = _escape_like(ticker)
     with get_conn() as conn:
         rows = conn.execute(
             r"""SELECT ts, sentiment FROM news
-                WHERE tickers LIKE ? ESCAPE '\'
+                WHERE (',' || tickers || ',') LIKE ?
                   AND sentiment IS NOT NULL
                   AND ts >= ?""",
-            (f"%{escaped}%", cutoff),
+            (f"%,{ticker.upper()},%", cutoff),
         ).fetchall()
     if not rows:
         return 0.0
