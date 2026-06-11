@@ -304,7 +304,8 @@ CREATE TABLE IF NOT EXISTS pos_universe (
     pe_ratio        REAL,
     imported_at     TEXT NOT NULL,
     in_universe     INTEGER DEFAULT 1,
-    filter_reason   TEXT
+    filter_reason   TEXT,
+    listing_date    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_scans (
@@ -789,7 +790,8 @@ CREATE TABLE IF NOT EXISTS pos_universe (
     pe_ratio       DOUBLE PRECISION,
     imported_at    TEXT NOT NULL,
     in_universe    INTEGER DEFAULT 1,
-    filter_reason  TEXT
+    filter_reason  TEXT,
+    listing_date   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_scans (
@@ -1416,10 +1418,14 @@ def _migrate_engine_columns(conn) -> None:
         for name, sqlite_type, _ in cols:
             if name not in existing:
                 conn.execute(f"ALTER TABLE pos_positions ADD COLUMN {name} {sqlite_type}")
+        uni_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pos_universe)").fetchall()}
+        if "listing_date" not in uni_cols:
+            conn.execute("ALTER TABLE pos_universe ADD COLUMN listing_date TEXT")
         return
     cur = conn.cursor() if hasattr(conn, "cursor") else conn
     for name, _, pg_type in cols:
         cur.execute(f"ALTER TABLE pos_positions ADD COLUMN IF NOT EXISTS {name} {pg_type}")
+    cur.execute("ALTER TABLE pos_universe ADD COLUMN IF NOT EXISTS listing_date TEXT")
 
 
 def init_db() -> None:

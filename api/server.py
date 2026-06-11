@@ -2286,21 +2286,71 @@ def engine_surveillance_refresh(background_tasks: BackgroundTasks):
 
 
 @app.get("/api/engine/hygiene/{ticker}")
-def engine_hygiene(ticker: str, check_liquidity: bool = True):
-    """Stage-0 gate check for one ticker (surveillance + liquidity + events)."""
+def engine_hygiene(ticker: str, check_liquidity: bool = True, book: str = "swing"):
+    """Stage-0 gate check for one ticker against a book's floors
+    (surveillance + tiered liquidity + microcap integrity + events + IPO)."""
     try:
-        from data.hygiene import hygiene_check, median_traded_value_cr
+        from data.hygiene import hygiene_check, market_cap_cr
         from data.nse_calendar import upcoming_events
         from config import POSITIONAL_EVENT_GUARD_DAYS
-        hc = hygiene_check(ticker, check_liquidity=check_liquidity)
+        from positional.ipo import listing_date, is_ipo_track
+        hc = hygiene_check(ticker, check_liquidity=check_liquidity, book=book)
         return {
             "ticker": ticker.upper(),
+            "book": book,
             **hc,
-            "median_traded_value_cr": median_traded_value_cr(ticker) if check_liquidity else None,
+            "market_cap_cr": market_cap_cr(ticker),
+            "listing_date": listing_date(ticker),
+            "ipo_track": is_ipo_track(ticker),
             "upcoming_events": upcoming_events(ticker, days=POSITIONAL_EVENT_GUARD_DAYS + 7),
         }
     except Exception as e:
         log.error("Error in engine_hygiene: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/universe/summary")
+def universe_summary():
+    """The funnel in numbers: NSE master -> mcap floor -> swing-eligible ->
+    IPO track, plus the intraday pool. One place to see where stocks fall out."""
+    try:
+        from data.universe import load_equity_master, recent_ipos, load_universe
+        from config import (UNIVERSE_SOURCE, UNIVERSE_MIN_MARKET_CAP_CR,
+                            IPO_TRACK_MONTHS, MICROCAP_MCAP_THRESHOLD_CR)
+        master = load_equity_master()
+        ipos = recent_ipos()
+        with get_conn() as conn:
+            lt_total = conn.execute("SELECT COUNT(*) AS n FROM lt_universe").fetchone()["n"]
+            lt_pass = conn.execute(
+                "SELECT COUNT(*) AS n FROM lt_universe WHERE in_universe=1").fetchone()["n"]
+            pos_total = conn.execute("SELECT COUNT(*) AS n FROM pos_universe").fetchone()["n"]
+            pos_active = conn.execute(
+                "SELECT COUNT(*) AS n FROM pos_universe WHERE in_universe=1").fetchone()["n"]
+            pos_micro = conn.execute(
+                "SELECT COUNT(*) AS n FROM pos_universe WHERE in_universe=1 AND market_cap IS NOT NULL AND market_cap < ?",
+                (MICROCAP_MCAP_THRESHOLD_CR,)).fetchone()["n"]
+            pos_ipo = conn.execute(
+                "SELECT COUNT(*) AS n FROM pos_universe WHERE in_universe=1 AND listing_date >= ?",
+                ((datetime.now(timezone.utc).date() - timedelta(days=IPO_TRACK_MONTHS * 30)).isoformat(),)
+            ).fetchone()["n"]
+            surveillance = conn.execute(
+                "SELECT COUNT(DISTINCT ticker) AS n FROM surveillance_list").fetchone()["n"]
+        return {
+            "source": UNIVERSE_SOURCE,
+            "mcap_floor_cr": UNIVERSE_MIN_MARKET_CAP_CR,
+            "nse_master_eq": len(master),
+            "recent_ipos": len(ipos),
+            "intraday_pool": len(load_universe()),
+            "lt_pipeline_scanned": int(lt_total or 0),
+            "lt_pipeline_passed": int(lt_pass or 0),
+            "swing_total": int(pos_total or 0),
+            "swing_eligible": int(pos_active or 0),
+            "swing_microcaps": int(pos_micro or 0),
+            "swing_ipo_track": int(pos_ipo or 0),
+            "surveillance_blocked": int(surveillance or 0),
+        }
+    except Exception as e:
+        log.error("Error in universe_summary: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -54,10 +54,15 @@ log = logging.getLogger(__name__)
 
 # ---------- Hard-filter thresholds ----------
 
-MIN_MARKET_CAP_CR = 1_000.0          # user requirement: >= 1000 crore
+from config import UNIVERSE_MIN_FINANCIAL_YEARS, UNIVERSE_MIN_MARKET_CAP_CR
+
+MIN_MARKET_CAP_CR = UNIVERSE_MIN_MARKET_CAP_CR   # >= 1000 crore
 MIN_INSTITUTIONAL_PCT = 0.5          # accept if FII or DII >= 0.5%
 MAX_PROMOTER_PLEDGE_PCT = 50.0       # user requirement
-MIN_YEARS_HISTORY = 5                # need 5+ years of P&L for the scorer
+# 3 years of P&L (was 5): quality IPOs ship 3 audited years in the RHP and
+# Screener surfaces them, so good young companies are no longer filtered out.
+# The quality scorer's CAGR helper already adapts to the years available.
+MIN_YEARS_HISTORY = UNIVERSE_MIN_FINANCIAL_YEARS
 
 
 # ---------- Filter logic ----------
@@ -269,7 +274,11 @@ def build_universe(
     Returns counts: ``{"total":N, "passed":P, "failed":F, "errors":E,
                        "skipped":S}``.
     """
-    tickers = tickers or load_universe()
+    # Expanded universe: every NSE EQ-series name (incl. microcaps + IPOs).
+    # The mcap >= 1000 Cr floor is enforced by _evaluate_filters once the
+    # Screener scrape resolves each company's market cap.
+    from data.universe import load_expanded_universe
+    tickers = tickers or load_expanded_universe()
 
     skipped = 0
     if skip_existing:

@@ -109,6 +109,12 @@ def sync_lt_to_pos_universe(check_liquidity: bool = True,
     passed = failed = 0
     errors: list[str] = []
 
+    try:
+        from data.universe import listing_dates
+        listing_map = listing_dates()
+    except Exception:
+        listing_map = {}
+
     for row in rows:
         ticker = row["ticker"]
         try:
@@ -131,7 +137,7 @@ def sync_lt_to_pos_universe(check_liquidity: bool = True,
         reasons += _fundamental_reasons(is_fin, roce, roe, sales_growth, de)
 
         if not reasons:  # only pay the hygiene cost for fundamental survivors
-            hc = hygiene_check(ticker, check_liquidity=check_liquidity)
+            hc = hygiene_check(ticker, check_liquidity=check_liquidity, book="swing")
             reasons += hc["reasons"]
 
         in_universe = 0 if reasons else 1
@@ -145,8 +151,8 @@ def sync_lt_to_pos_universe(check_liquidity: bool = True,
                     """INSERT INTO pos_universe
                        (ticker, company_name, sector, market_cap, roce, roe,
                         sales_growth, debt_to_equity, pe_ratio, imported_at,
-                        in_universe, filter_reason)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                        in_universe, filter_reason, listing_date)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(ticker) DO UPDATE SET
                            sector=excluded.sector,
                            market_cap=excluded.market_cap,
@@ -157,11 +163,12 @@ def sync_lt_to_pos_universe(check_liquidity: bool = True,
                            pe_ratio=COALESCE(excluded.pe_ratio, pos_universe.pe_ratio),
                            imported_at=excluded.imported_at,
                            in_universe=excluded.in_universe,
-                           filter_reason=excluded.filter_reason""",
+                           filter_reason=excluded.filter_reason,
+                           listing_date=COALESCE(excluded.listing_date, pos_universe.listing_date)""",
                     (yf_ticker, "", row.get("sector") or "", row.get("market_cap"),
                      roce, roe, sales_growth,
                      de if not is_fin else None, pe, now_iso,
-                     in_universe, filter_reason),
+                     in_universe, filter_reason, listing_map.get(ticker)),
                 )
             if in_universe:
                 passed += 1

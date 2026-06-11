@@ -56,3 +56,4 @@ desktop.ini
 .idea/
 .vscode/
 *.iml
+data/nse_equity_master.csv

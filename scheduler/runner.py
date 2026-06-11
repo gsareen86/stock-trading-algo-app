@@ -490,6 +490,22 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
         # Parameters panel.
         from config import CYCLE_SAMPLE_SIZE
         uni = universe or load_universe()
+        # Hygiene parity with the swing book: never sample a name on the
+        # ASM/GSM surveillance lists. Intraday is MORE exposed to circuit
+        # limits than delivery books, not less.
+        try:
+            from db.models import get_conn as _gc
+            with _gc() as _conn:
+                _watch = {r["ticker"] for r in _conn.execute(
+                    "SELECT ticker FROM surveillance_list").fetchall()}
+            if _watch:
+                _before = len(uni)
+                uni = [s for s in uni if s.upper().split(".")[0] not in _watch]
+                if len(uni) < _before:
+                    log.info("sampling: %d surveillance-listed names excluded",
+                             _before - len(uni))
+        except Exception:
+            pass
         sample_size = min(CYCLE_SAMPLE_SIZE, len(uni))
         sampled = random.sample(uni, sample_size)
 
@@ -659,6 +675,25 @@ def run_cycle(universe: List[str] | None = None, *, force: bool = False,
                     break
                 if is_open(d.ticker):
                     continue
+                # Intraday liquidity floor: estimate daily traded value from
+                # the 15-min candles already in hand (sum of close*volume per
+                # day, median over the window). Must enter AND exit today —
+                # thin names eat the round-trip in slippage.
+                try:
+                    from config import LIQUIDITY_FLOOR_INTRADAY_CR
+                    _df = candles.get(d.ticker)
+                    if _df is not None and not _df.empty and "Volume" in _df:
+                        _val = (_df["Close"].astype(float) * _df["Volume"].astype(float))
+                        _daily = _val.groupby(_val.index.date).sum()
+                        if len(_daily) >= 5:
+                            _med_cr = float(_daily.median()) / 1e7
+                            if _med_cr < LIQUIDITY_FLOOR_INTRADAY_CR:
+                                log.info("entry skipped %s: traded value "
+                                         "₹%.1f Cr/day < ₹%.0f Cr intraday floor",
+                                         d.ticker, _med_cr, LIQUIDITY_FLOOR_INTRADAY_CR)
+                                continue
+                except Exception:
+                    pass
                 qty = position_size(cash, d.price)
                 if qty <= 0:
                     continue

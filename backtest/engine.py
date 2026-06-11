@@ -62,6 +62,8 @@ class BTConfig:
     min_trend_score: float = 60.0
     scan_every_n_days: int = 1        # >1 trades signal latency for speed
     min_history_days: int = 230       # scan_ticker needs 220+ rows
+    slippage_pct: Optional[float] = None  # None = large-cap default; use
+                                          # 0.004 when testing microcap lists
 
 
 @dataclass
@@ -128,10 +130,11 @@ def load_price_data(tickers: List[str], years: int = 3) -> Dict[str, pd.DataFram
 
 # ── Cost model (reuses the live delivery model) ──────────────────────────────
 
-def _fill(side: str, price: float, qty: int) -> Tuple[float, float]:
+def _fill(side: str, price: float, qty: int,
+          slippage_pct: Optional[float] = None) -> Tuple[float, float]:
     """(fill_price_after_slippage, total_costs)."""
     from positional.risk import compute_delivery_costs, delivery_fill_price
-    fp = delivery_fill_price(side, price)
+    fp = delivery_fill_price(side, price, slippage_pct=slippage_pct)
     return fp, compute_delivery_costs(side, fp, qty)
 
 
@@ -180,7 +183,7 @@ def run_backtest(price_data: Dict[str, pd.DataFrame],
     def _book_exit(t: str, day_i: int, dstr: str, px: float, qty: int, reason: str,
                    pos: _OpenPos, full: bool) -> None:
         nonlocal cash
-        fp, costs = _fill("SELL", px, qty)
+        fp, costs = _fill("SELL", px, qty, cfg.slippage_pct)
         proceeds = fp * qty - costs
         cash += proceeds
         pnl = (fp - pos.entry) * qty - costs
@@ -283,7 +286,7 @@ def run_backtest(price_data: Dict[str, pd.DataFrame],
                           int(cash / px) if px > 0 else 0)
                 if qty <= 0:
                     continue
-                fp, costs = _fill("BUY", px, qty)
+                fp, costs = _fill("BUY", px, qty, cfg.slippage_pct)
                 outlay = fp * qty + costs
                 if outlay > cash:
                     continue

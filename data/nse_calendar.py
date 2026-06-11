@@ -185,12 +185,21 @@ def upcoming_events(ticker: str, days: int = 7) -> list[dict]:
 
 
 def has_blocking_event(ticker: str, days: int = 3) -> Optional[str]:
-    """Reason string if a gap-risk event (results / board meeting / ex-date)
-    falls within the next N days, else None. Fail-open: empty calendar → None."""
+    """Reason string if a gap-risk event (results / board meeting / ex-date /
+    IPO lock-in expiry) falls within the next N days, else None.
+    Fail-open: empty calendar → None. Lock-in expiries are deterministic
+    SUPPLY events (anchor 30/90d, promoter 6/18m) and use their own window."""
     blocking = {"results", "board_meeting", "ex_dividend", "ex_rights"}
     for ev in upcoming_events(ticker, days=days):
         if ev["event_type"] in blocking:
             return f"{ev['event_type']} on {ev['event_date']} (source: {ev['source']})"
+    try:
+        from config import IPO_LOCKIN_GUARD_DAYS
+        for ev in upcoming_events(ticker, days=IPO_LOCKIN_GUARD_DAYS):
+            if ev["event_type"] == "ipo_lockin_expiry":
+                return f"IPO lock-in expiry on {ev['event_date']} (known supply event)"
+    except Exception:
+        pass
     return None
 
 

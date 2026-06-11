@@ -27,6 +27,11 @@ const STRATEGY_INFO: Record<string, { name: string; desc: string; hold: string }
     desc: "A fresh 20–50% impulse leg followed by a short, shallow pause (≤6 bars, retracing less than 38.2%). Enters the continuation while the move is still young — momentum begets momentum.",
     hold: "~10 trading days",
   },
+  ipo_base: {
+    name: "IPO First Base",
+    desc: "O'Neil's new-issue playbook for listings under 12 months old (too young for the 220-day trend template): wait out the first ~25 sessions of price discovery, then buy the breakout from the first proper base — ≥3 weeks of consolidation, depth under 25%, price above the 10/21 EMA, breakout on ≥1.5× volume. Entries are blocked around lock-in expiry dates (known supply events).",
+    hold: "~10 trading days",
+  },
 };
 
 function PillarBar({ label, value }: { label: string; value: number | null | undefined }) {
@@ -40,6 +45,40 @@ function PillarBar({ label, value }: { label: string; value: number | null | und
       </div>
       <span className="w-8 text-right font-mono text-slate-300">{v == null ? "—" : Math.round(v)}</span>
     </div>
+  );
+}
+
+/* The universe funnel in numbers — where stocks fall out and why */
+function UniverseFunnel() {
+  const s = useApi<any>("/api/universe/summary");
+  const d = s.data;
+  if (!d) return null;
+  const stages = [
+    { label: "NSE EQ Master", value: d.nse_master_eq, note: "every listed EQ-series name (incl. microcaps & IPOs)" },
+    { label: "Screener Scanned", value: d.lt_pipeline_scanned, note: `mcap ≥ ₹${d.mcap_floor_cr?.toLocaleString()} Cr + filters applied` },
+    { label: "Pipeline Passed", value: d.lt_pipeline_passed, note: "mcap, institutional, pledge, ≥3y financials" },
+    { label: "Swing Eligible", value: d.swing_eligible, note: "quality ≥ 60 + fundamentals + hygiene gates" },
+  ];
+  return (
+    <Panel title="Universe Funnel" subtitle="One pipeline feeds every book. Each stage's count shows where names fall out; the weekly Saturday refresh rebuilds the whole chain."
+      actions={<RefreshBtn onClick={s.reload} loading={s.loading} />}>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        {stages.map((st, i) => (
+          <div key={st.label} className="bg-slate-900/50 border border-slate-800/70 rounded-xl p-3 relative">
+            {i > 0 && <span className="absolute -left-2.5 top-1/2 -translate-y-1/2 text-slate-600 hidden md:block">→</span>}
+            <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{st.label}</div>
+            <div className="text-xl font-extrabold font-mono text-indigo-300 mt-1">{st.value ?? "—"}</div>
+            <div className="text-[9px] text-slate-600 leading-snug mt-1">{st.note}</div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2 text-[10px]">
+        <Badge text={`${d.swing_ipo_track ?? 0} IPO-track (<12m listed)`} tone="INFO" />
+        <Badge text={`${d.swing_microcaps ?? 0} microcaps (<₹3,000 Cr — halved risk, 35% book budget)`} tone="WATCH" />
+        <Badge text={`${d.surveillance_blocked ?? 0} ASM/GSM blocked`} tone="FAIL" />
+        <Badge text={`intraday pool: ${d.intraday_pool ?? 0} (depth over breadth)`} />
+      </div>
+    </Panel>
   );
 }
 
@@ -275,6 +314,8 @@ export default function SwingBook() {
           ]}
         />
       </Panel>
+
+      <UniverseFunnel />
 
       <Panel title="Universe (manual CSV upload — optional)"
         subtitle="The Saturday auto-refresh syncs the scraped Screener pipeline into this book's universe. You can still upload Screener.in exports manually: Query A = non-financials, Query B = banks & NBFCs.">

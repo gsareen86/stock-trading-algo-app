@@ -481,7 +481,22 @@ def run_eod_scan(tickers: Optional[list[str]] = None) -> list[dict]:
                 df = data.dropna(how="all")
 
             if df is None or df.empty or len(df) < 220:
-                log.debug("[scan] %s: only %d rows — need 220+",
+                # IPO track: young listings can't satisfy the 220-day trend
+                # template, but that's where the biggest winners are born.
+                # Route them through the O'Neil first-base scanner instead;
+                # they graduate to this mature path once history exists.
+                try:
+                    from positional.ipo import is_ipo_track, scan_ipo_base
+                    if df is not None and not df.empty and is_ipo_track(ticker):
+                        ipo_res = scan_ipo_base(ticker, df)
+                        if ipo_res is not None:
+                            results.append(ipo_res)
+                            _persist_scan_result(scanned_at, ipo_res)
+                            log.info("[scan] %s IPO-base %s score=%.0f",
+                                     ticker, ipo_res["alert_type"], ipo_res["score"])
+                except Exception as ipo_err:
+                    log.debug("[scan] IPO-base scan failed for %s: %s", ticker, ipo_err)
+                log.debug("[scan] %s: only %d rows — IPO track or skipped",
                           ticker, len(df) if df is not None else 0)
                 continue
 

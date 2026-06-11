@@ -130,31 +130,45 @@ function BacktestLab() {
 
 function HygieneChecker() {
   const [ticker, setTicker] = useState("");
+  const [book, setBook] = useState("swing");
   const [result, setResult] = useState<any>(null);
   const [busy, setBusy] = useState(false);
 
   const check = async () => {
     if (!ticker.trim()) return;
     setBusy(true);
-    try { setResult(await getJSON(`/api/engine/hygiene/${ticker.trim().toUpperCase()}`)); }
+    try { setResult(await getJSON(`/api/engine/hygiene/${ticker.trim().toUpperCase()}?book=${book}`)); }
     catch (e: any) { toast(`Check failed: ${e.message}`); }
     setBusy(false);
   };
 
   return (
-    <Panel title="Hygiene & Event Check" subtitle="Run any ticker through the exact gates an entry must pass: ASM/GSM surveillance, liquidity, and upcoming results/ex-dates.">
+    <Panel title="Hygiene & Event Check" subtitle="Run any ticker through the exact gates an entry must pass for the selected book: ASM/GSM surveillance, the book's liquidity floor, microcap integrity (free float / pledge), upcoming results & ex-dates, and IPO lock-in expiries.">
       <div className="flex items-center gap-2">
         <input value={ticker} onChange={(e) => setTicker(e.target.value)} onKeyDown={(e) => e.key === "Enter" && check()}
           placeholder="RELIANCE" className="bg-slate-900/70 border border-slate-700/60 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono outline-none w-36 uppercase" />
+        <select value={book} onChange={(e) => setBook(e.target.value)}
+          className="bg-slate-900/70 border border-slate-700/60 rounded-lg px-2 py-1.5 text-xs text-slate-300 outline-none">
+          <option value="intraday">Intraday (₹25 Cr/day floor)</option>
+          <option value="swing">Swing (₹5 Cr/day floor)</option>
+          <option value="longterm">Long-Term (₹2 Cr/day floor)</option>
+        </select>
         <Btn kind="primary" busy={busy} onClick={check}><ShieldCheck size={12} /> Check</Btn>
       </div>
       {result && (
         <div className="mt-3 space-y-2 text-xs">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-bold text-slate-100">{result.ticker}</span>
-            <Badge text={result.passed ? "PASSES GATES" : "BLOCKED"} tone={result.passed ? "OK" : "FAIL"} />
+            <Badge text={result.passed ? `PASSES ${String(result.book).toUpperCase()} GATES` : "BLOCKED"} tone={result.passed ? "OK" : "FAIL"} />
+            {result.microcap && <Badge text="MICROCAP TIER" tone="WATCH" />}
+            {result.ipo_track && <Badge text={`IPO TRACK (listed ${result.listing_date})`} tone="INFO" />}
+            {result.market_cap_cr != null && (
+              <span className="text-slate-400 font-mono">mcap ₹{fmtNum(result.market_cap_cr, 0)} Cr</span>
+            )}
             {result.median_traded_value_cr != null && (
-              <span className="text-slate-400 font-mono">median traded ₹{fmtNum(result.median_traded_value_cr, 1)} Cr/day</span>
+              <span className="text-slate-400 font-mono">
+                traded ₹{fmtNum(result.median_traded_value_cr, 1)} Cr/day (floor ₹{fmtNum(result.floor_cr, 0)} Cr)
+              </span>
             )}
           </div>
           {result.reasons?.length > 0 && <div className="text-rose-400">{result.reasons.join(" · ")}</div>}

@@ -339,6 +339,20 @@ def _lt_candidates() -> list[dict]:
         verdict = str(_research_state(r["ticker"]).get("verdict") or "").upper()
         if verdict in ("SKIP", "AVOID"):
             continue
+        # Compounding requires evidence of delivery: recent IPOs must show
+        # LT_MIN_LISTING_AGE_DAYS of post-listing life before this book buys.
+        # The swing book may trade their momentum; long-term waits for proof.
+        try:
+            from config import LT_MIN_LISTING_AGE_DAYS
+            from positional.ipo import listing_date
+            ld = listing_date(r["ticker"])
+            if ld:
+                from datetime import date as _d
+                age = (_d.today() - _d.fromisoformat(ld)).days
+                if age < LT_MIN_LISTING_AGE_DAYS:
+                    continue
+        except Exception:
+            pass
         out.append(r)
     return out
 

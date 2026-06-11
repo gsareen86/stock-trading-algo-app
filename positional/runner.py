@@ -78,6 +78,24 @@ def _fetch_daily_df(ticker: str):
         return None
 
 
+def _microcap_exposure() -> float:
+    """Current ₹ value of open swing positions in the microcap tier."""
+    from data.hygiene import is_microcap
+    from db.models import get_conn
+    total = 0.0
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT ticker, entry_price, quantity FROM pos_positions WHERE status='OPEN'"
+        ).fetchall()
+    for r in rows:
+        try:
+            if is_microcap(r["ticker"]):
+                total += float(r["entry_price"]) * int(r["quantity"])
+        except Exception:
+            continue
+    return total
+
+
 # ── Open a new position ───────────────────────────────────────────────────────
 
 def _open_position(ticker: str, price: float, score: float,
@@ -113,29 +131,54 @@ def _open_position(ticker: str, price: float, score: float,
         except Exception as e:
             log.debug("[pos_runner] event guard check failed for %s: %s", ticker, e)
 
-    # Stage-0 hygiene gate — known ASM/GSM listing or known-poor liquidity
-    # blocks the entry; missing data never does.
+    # Stage-0 hygiene gate — known ASM/GSM listing, poor liquidity for the
+    # swing book, or a failed microcap integrity check blocks the entry;
+    # missing data never does.
+    microcap = False
+    adv_cr = None
     try:
         from data.hygiene import hygiene_check
-        hc = hygiene_check(ticker)
+        hc = hygiene_check(ticker, book="swing")
         if not hc["passed"]:
             log.info("[pos_runner] %s: entry blocked by hygiene gate — %s",
                      ticker, "; ".join(hc["reasons"]))
             return False
+        microcap = bool(hc.get("microcap"))
+        adv_cr = hc.get("median_traded_value_cr")
     except Exception as e:
         log.debug("[pos_runner] hygiene check failed for %s: %s", ticker, e)
+
+    # Microcap exposure budget: the tier as a whole may not exceed
+    # MICROCAP_MAX_BOOK_PCT of the pool — upside of the tier without
+    # letting it become the book.
+    if microcap:
+        from config import MICROCAP_MAX_BOOK_PCT, POSITIONAL_CAPITAL
+        try:
+            exposure = _microcap_exposure()
+            if exposure >= POSITIONAL_CAPITAL * MICROCAP_MAX_BOOK_PCT:
+                log.info("[pos_runner] %s: microcap budget full "
+                         "(₹%.0f ≥ %.0f%% of pool) — entry skipped",
+                         ticker, exposure, MICROCAP_MAX_BOOK_PCT * 100)
+                return False
+        except Exception as e:
+            log.debug("[pos_runner] microcap budget check failed: %s", e)
 
     size_mult = current_size_multiplier()
     if reduce_size:
         size_mult *= 0.50
+    if microcap:
+        from config import MICROCAP_RISK_MULT
+        size_mult *= MICROCAP_RISK_MULT   # halve per-trade risk in the tier
 
     from config import POSITIONAL_USE_RISK_SIZING
     if POSITIONAL_USE_RISK_SIZING:
-        # Risk-based sizing: rupee risk to the hard stop, not equal weight.
+        # Risk-based sizing: rupee risk to the hard stop, capped vs the
+        # stock's daily traded value (never > 1.5% of ADV).
         stop_est = compute_hard_stop(price)
         qty = positional_position_size_risk(
             price, stop_est, size_multiplier=size_mult,
             cash_available=get_positional_cash(),
+            adv_cr=adv_cr,
         )
     else:
         qty = positional_position_size(price, size_multiplier=size_mult)
@@ -801,6 +844,11 @@ def run_eod_scan(force: bool = False) -> dict:
         refresh_surveillance_lists()
     except Exception as e:
         log.debug("[pos_runner] surveillance refresh failed: %s", e)
+    try:
+        from positional.ipo import sync_lockin_events
+        sync_lockin_events()   # deterministic IPO supply events → event guard
+    except Exception as e:
+        log.debug("[pos_runner] lockin sync failed: %s", e)
 
     # Step 1: India VIX Check & Dynamic Score Threshold Adjustment
     import config

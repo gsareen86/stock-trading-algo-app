@@ -467,9 +467,48 @@ OUTCOME_HORIZONS_DAYS = (5, 20, 60)
 OUTCOME_JOB_MAX_TICKERS = 25         # per daily run (price fetches are cached)
 
 # Stage-0 universe hygiene (Phase 1/4) — hard gates, never blended away.
-UNIVERSE_MIN_MEDIAN_TRADED_VALUE_CR = 5.0   # 60-day median ₹ Cr traded/day
+UNIVERSE_MIN_MEDIAN_TRADED_VALUE_CR = 5.0   # default (swing) floor, ₹ Cr/day
 UNIVERSE_EXCLUDE_SURVEILLANCE = True         # block ASM/GSM-listed names
 SURVEILLANCE_REFRESH_HOURS = 12              # NSE ASM/GSM list refresh throttle
+
+# ── Universe expansion: all of NSE, not an index ─────────────────────────────
+# Master source = NSE securities master (EQUITY_L.csv, EQ series only) with a
+# market-cap floor — includes microcaps and recent IPOs. The NIFTY 500 list
+# remains the intraday sampling pool (intraday needs depth, not breadth).
+UNIVERSE_SOURCE = os.environ.get("UNIVERSE_SOURCE", "nse_all")  # "nse_all" | "nifty500"
+UNIVERSE_MIN_MARKET_CAP_CR = 1000.0
+UNIVERSE_MIN_FINANCIAL_YEARS = 3      # was 5 — RHP gives 3y for quality IPOs
+EQUITY_MASTER_REFRESH_DAYS = 7        # weekly refresh of the NSE master CSV
+
+# Tiered liquidity floors (₹ Cr/day, 60-day median traded value)
+LIQUIDITY_FLOOR_INTRADAY_CR = 25.0    # must enter AND exit same day
+LIQUIDITY_FLOOR_SWING_CR = 5.0
+LIQUIDITY_FLOOR_LT_CR = 2.0
+INTRADAY_MIN_MARKET_CAP_CR = 2000.0   # intraday stays in the deep end
+
+# Position size vs traded value — the rule that scales with the account:
+# a position may never exceed this fraction of the stock's median daily
+# traded value (exit in ~a day without moving the price).
+MAX_POSITION_PCT_OF_ADV = 0.015
+
+# Microcap safeguards (below this mcap the integrity gates + budget apply)
+MICROCAP_MCAP_THRESHOLD_CR = 3000.0
+MICROCAP_MAX_BOOK_PCT = 0.35          # microcaps ≤ 35% of the swing book
+MICROCAP_RISK_MULT = 0.50             # halve per-trade risk in the tier
+MICROCAP_MIN_FREE_FLOAT_PCT = 20.0    # 100 − promoter holding
+MICROCAP_MAX_PLEDGE_PCT = 25.0
+SLIPPAGE_MICROCAP_PCT = 0.004         # 0.4% per fill vs 0.05% for large caps
+
+# ── IPO track (listing < IPO_TRACK_MONTHS) ──────────────────────────────────
+IPO_TRACK_MONTHS = 12
+IPO_MIN_SEASONING_SESSIONS = 25       # no entries during price discovery
+IPO_BASE_MIN_SESSIONS = 15            # first proper base: ≥3 weeks…
+IPO_BASE_MAX_DEPTH_PCT = 25.0         # …with depth under 25%
+IPO_BASE_BREAKOUT_VOL_MULT = 1.5      # breakout volume vs 20-bar avg
+IPO_LOCKIN_GUARD_DAYS = 5             # no entry within ±N days of an expiry
+# Anchor lock-ins expire at 30/90 days; promoter at 6/18 months (SEBI).
+IPO_LOCKIN_OFFSETS_DAYS = (30, 90, 180, 540)
+LT_MIN_LISTING_AGE_DAYS = 180         # LT book waits for post-listing proof
 
 # Weekly unified-universe refresh (Phase 4) — re-runs the Screener pipeline
 # (longterm.tasks.run_phase_a) and syncs passed names into pos_universe so

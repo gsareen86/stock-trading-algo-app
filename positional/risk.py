@@ -62,9 +62,25 @@ def compute_delivery_costs(side: str, price: float, qty: int) -> float:
     return round(brokerage + stt + exch + sebi + gst + stamp, 4)
 
 
-def delivery_fill_price(side: str, price: float) -> float:
-    slip = price * SLIPPAGE_PCT
+def delivery_fill_price(side: str, price: float,
+                        slippage_pct: Optional[float] = None) -> float:
+    """Fill with slippage. Microcaps get the wider tier (0.4% vs 0.05%) —
+    pass slippage_pct explicitly, or use fill_slippage_pct() per ticker."""
+    slip = price * (slippage_pct if slippage_pct is not None else SLIPPAGE_PCT)
     return price + slip if side == "BUY" else price - slip
+
+
+def fill_slippage_pct(ticker: str) -> float:
+    """Slippage tier for a ticker: SLIPPAGE_MICROCAP_PCT below the microcap
+    threshold, the standard large-cap figure above it."""
+    try:
+        from config import SLIPPAGE_MICROCAP_PCT
+        from data.hygiene import is_microcap
+        if is_microcap(ticker):
+            return SLIPPAGE_MICROCAP_PCT
+    except Exception:
+        pass
+    return SLIPPAGE_PCT
 
 
 # ── Position sizing ───────────────────────────────────────────────────────────
@@ -89,16 +105,22 @@ def positional_position_size_risk(
     stop_price: float,
     size_multiplier: float = 1.0,
     cash_available: Optional[float] = None,
+    adv_cr: Optional[float] = None,
 ) -> int:
     """
     Risk-based sizing: qty = risk_amount / (entry − stop).
 
     A tight stop (e.g. a 3% VCP pivot) naturally earns a bigger position than
     a loose 8% one for the same rupee risk — the Minervini logic the scanner
-    encodes, applied to sizing. Caps: POSITIONAL_MAX_POSITION_PCT of the pool
-    and available pool cash. Returns 0 when inputs are invalid.
+    encodes, applied to sizing. Caps, in order:
+      * POSITIONAL_MAX_POSITION_PCT of the pool
+      * available pool cash
+      * MAX_POSITION_PCT_OF_ADV of the stock's median daily traded value —
+        the rule that scales with the account and automatically shrinks
+        positions in thin names (you must be able to exit in ~a day).
+    Returns 0 when inputs are invalid.
     """
-    from config import POSITIONAL_RISK_PCT_POOL
+    from config import POSITIONAL_RISK_PCT_POOL, MAX_POSITION_PCT_OF_ADV
 
     if entry_price <= 0 or stop_price <= 0 or stop_price >= entry_price:
         return 0
@@ -109,6 +131,8 @@ def positional_position_size_risk(
     max_alloc = POSITIONAL_CAPITAL * POSITIONAL_MAX_POSITION_PCT
     if cash_available is not None:
         max_alloc = min(max_alloc, cash_available)
+    if adv_cr is not None and adv_cr > 0:
+        max_alloc = min(max_alloc, adv_cr * 1e7 * MAX_POSITION_PCT_OF_ADV)
     qty = min(qty, int(max_alloc / entry_price))
     return max(qty, 0)
 

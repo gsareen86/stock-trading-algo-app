@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
@@ -159,6 +160,125 @@ def load_universe(refresh: bool = False) -> List[str]:
 def yf_tickers(symbols: List[str] | None = None) -> List[str]:
     symbols = symbols or load_universe()
     return [to_yf_ticker(s) for s in symbols]
+
+
+# ── Full NSE equity master (EQUITY_L.csv) ─────────────────────────────────────
+# Every listed company with series + DATE OF LISTING. This is the expanded
+# universe source: all EQ-series names (microcaps and fresh IPOs included);
+# the market-cap floor is applied downstream by the Screener pipeline where
+# mcap is actually known. BE/BZ (trade-to-trade) and SME series are excluded —
+# T2T allows no intraday netting and is itself a surveillance signal.
+
+NSE_EQUITY_MASTER_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+EQUITY_MASTER_FILE = str(Path(__file__).parent / "nse_equity_master.csv")
+
+
+def _parse_listing_date(raw: str) -> str:
+    """NSE '01-JAN-2024' (or similar) → ISO date; '' if unparseable."""
+    raw = (raw or "").strip()
+    for fmt in ("%d-%b-%Y", "%d-%B-%Y", "%d-%m-%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return ""
+
+
+def download_equity_master() -> List[dict]:
+    """Download the full NSE securities master. Returns EQ-series rows:
+    [{symbol, name, series, listing_date}], or [] on failure (fail-open)."""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(NSE_EQUITY_MASTER_URL, headers=headers, timeout=20)
+        resp.raise_for_status()
+        reader = csv.DictReader(io.StringIO(resp.text))
+        rows = []
+        for row in reader:
+            norm = {k.strip().upper(): (v or "").strip() for k, v in row.items()}
+            if norm.get("SERIES", "").upper() != "EQ":
+                continue
+            sym = norm.get("SYMBOL", "").upper()
+            if not sym or sym in _BLOCKED_TICKERS:
+                continue
+            rows.append({
+                "symbol": sym,
+                "name": norm.get("NAME OF COMPANY", ""),
+                "series": "EQ",
+                "listing_date": _parse_listing_date(norm.get("DATE OF LISTING", "")),
+            })
+        return rows
+    except Exception as e:
+        print(f"[universe] NSE equity master download failed ({e})")
+        return []
+
+
+def load_equity_master(refresh: bool = False) -> List[dict]:
+    """EQ-series master, cached to disk and auto-refreshed weekly
+    (EQUITY_MASTER_REFRESH_DAYS). Falls back to the NIFTY 500 list (without
+    listing dates) when NSE is unreachable and no cache exists."""
+    from config import EQUITY_MASTER_REFRESH_DAYS
+    path = Path(EQUITY_MASTER_FILE)
+
+    stale = True
+    if path.exists():
+        try:
+            age_days = (datetime.now().timestamp() - path.stat().st_mtime) / 86400
+            stale = age_days > EQUITY_MASTER_REFRESH_DAYS
+        except OSError:
+            pass
+
+    if refresh or stale or not path.exists():
+        rows = download_equity_master()
+        if rows:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=["symbol", "name", "series", "listing_date"])
+                w.writeheader()
+                w.writerows(rows)
+            return rows
+        # download failed — use stale cache if any, else NIFTY 500 fallback
+        if not path.exists():
+            print("[universe] equity master unavailable — falling back to NIFTY 500 list")
+            return [{"symbol": s, "name": "", "series": "EQ", "listing_date": ""}
+                    for s in load_universe()]
+
+    with open(path, encoding="utf-8") as f:
+        return [dict(r) for r in csv.DictReader(f)]
+
+
+def load_expanded_universe(refresh: bool = False) -> List[str]:
+    """Symbol list for the expanded (all-NSE) universe, honouring
+    UNIVERSE_SOURCE. The ₹ market-cap floor is enforced downstream by the
+    Screener pipeline (mcap isn't in the master CSV)."""
+    from config import UNIVERSE_SOURCE
+    if UNIVERSE_SOURCE == "nifty500":
+        return load_universe(refresh=refresh)
+    return [r["symbol"] for r in load_equity_master(refresh=refresh)]
+
+
+def listing_dates() -> dict:
+    """{symbol: iso_listing_date} for every master row that has one."""
+    return {r["symbol"]: r["listing_date"]
+            for r in load_equity_master() if r.get("listing_date")}
+
+
+def listing_age_days(symbol: str) -> int | None:
+    """Calendar days since listing, or None if unknown."""
+    d = listing_dates().get(symbol.upper().split(".")[0])
+    if not d:
+        return None
+    try:
+        return (datetime.now().date() - datetime.fromisoformat(d).date()).days
+    except ValueError:
+        return None
+
+
+def recent_ipos(months: int | None = None) -> List[dict]:
+    """Master rows listed within the last N months (default IPO_TRACK_MONTHS)."""
+    from config import IPO_TRACK_MONTHS
+    months = months or IPO_TRACK_MONTHS
+    cutoff = (datetime.now().date() - timedelta(days=months * 30)).isoformat()
+    return [r for r in load_equity_master()
+            if r.get("listing_date") and r["listing_date"] >= cutoff]
 
 
 def universe_info() -> dict:

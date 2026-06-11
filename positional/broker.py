@@ -49,8 +49,10 @@ class PaperBroker:
         price: float,
         order_type: str = "MARKET",
     ) -> OrderResult:
-        from positional.risk import delivery_fill_price
-        fill = delivery_fill_price(side, price)
+        from positional.risk import delivery_fill_price, fill_slippage_pct
+        # Microcaps fill with the wider slippage tier (0.4% vs 0.05%) — paper
+        # results must not flatter the engine where it is most dangerous.
+        fill = delivery_fill_price(side, price, slippage_pct=fill_slippage_pct(ticker))
         order_id = f"PAPER-{ticker}-{side}-{quantity}"
         log.info("[broker:paper] %s %s qty=%d fill=%.2f (simulated)",
                  side, ticker, quantity, fill)

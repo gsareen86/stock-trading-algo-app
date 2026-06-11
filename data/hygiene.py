@@ -153,14 +153,99 @@ def median_traded_value_cr(ticker: str, days: int = 60) -> Optional[float]:
         return None
 
 
+# ── Market-cap & shareholding lookups (microcap integrity) ──────────────────
+
+def market_cap_cr(ticker: str) -> Optional[float]:
+    """Market cap in ₹ Cr from pos_universe (preferred) or lt_universe."""
+    base = _bare(ticker)
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            for sql, params in (
+                ("SELECT market_cap FROM pos_universe WHERE ticker=? OR ticker=?",
+                 (base, base + ".NS")),
+                ("SELECT market_cap FROM lt_universe WHERE ticker=?", (base,)),
+            ):
+                row = conn.execute(sql, params).fetchone()
+                if row and row["market_cap"] is not None:
+                    return float(row["market_cap"])
+    except Exception:
+        pass
+    return None
+
+
+def is_microcap(ticker: str) -> bool:
+    """True when the name sits below the microcap threshold. Unknown mcap on
+    an expanded-universe name is treated as microcap (conservative)."""
+    from config import MICROCAP_MCAP_THRESHOLD_CR
+    mcap = market_cap_cr(ticker)
+    if mcap is None:
+        return True
+    return mcap < MICROCAP_MCAP_THRESHOLD_CR
+
+
+def _shareholding(ticker: str) -> dict:
+    """{promoter_pct, pledge_pct} from lt_universe; {} when unknown."""
+    try:
+        from db.models import get_conn
+        with get_conn() as conn:
+            row = conn.execute(
+                """SELECT promoter_holding_pct, promoter_pledge_pct
+                   FROM lt_universe WHERE ticker=?""",
+                (_bare(ticker),),
+            ).fetchone()
+        if row:
+            return {"promoter_pct": row["promoter_holding_pct"],
+                    "pledge_pct": row["promoter_pledge_pct"]}
+    except Exception:
+        pass
+    return {}
+
+
+def microcap_integrity_reasons(ticker: str) -> list[str]:
+    """Extra hard gates for sub-threshold names: free float and pledge.
+    The index did this vetting for free; below ₹3,000 Cr we must.
+    Fail-open on missing data — only KNOWN bad values block."""
+    from config import MICROCAP_MIN_FREE_FLOAT_PCT, MICROCAP_MAX_PLEDGE_PCT
+    reasons: list[str] = []
+    sh = _shareholding(ticker)
+    promoter = sh.get("promoter_pct")
+    if promoter is not None and (100.0 - float(promoter)) < MICROCAP_MIN_FREE_FLOAT_PCT:
+        reasons.append(
+            f"microcap free float {100.0 - float(promoter):.1f}% "
+            f"< {MICROCAP_MIN_FREE_FLOAT_PCT:.0f}%"
+        )
+    pledge = sh.get("pledge_pct")
+    if pledge is not None and float(pledge) > MICROCAP_MAX_PLEDGE_PCT:
+        reasons.append(
+            f"microcap pledge {float(pledge):.1f}% > {MICROCAP_MAX_PLEDGE_PCT:.0f}%"
+        )
+    return reasons
+
+
 # ── Combined gate ────────────────────────────────────────────────────────────
 
-def hygiene_check(ticker: str, check_liquidity: bool = True) -> dict:
-    """Stage-0 gate. Returns {passed: bool, reasons: [..], notes: [..]}.
+def liquidity_floor_cr(book: str) -> float:
+    """Book-specific liquidity floor: intraday must exit the same day,
+    swing has days, long-term can scale out over weeks."""
+    from config import (LIQUIDITY_FLOOR_INTRADAY_CR, LIQUIDITY_FLOOR_SWING_CR,
+                        LIQUIDITY_FLOOR_LT_CR, UNIVERSE_MIN_MEDIAN_TRADED_VALUE_CR)
+    return {
+        "intraday": LIQUIDITY_FLOOR_INTRADAY_CR,
+        "swing": LIQUIDITY_FLOOR_SWING_CR,
+        "longterm": LIQUIDITY_FLOOR_LT_CR,
+    }.get(book, UNIVERSE_MIN_MEDIAN_TRADED_VALUE_CR)
 
-    Known surveillance listing or known-poor liquidity fails; missing data
-    only adds a note (fail-open on data gaps, fail-closed on known risk)."""
-    from config import UNIVERSE_EXCLUDE_SURVEILLANCE, UNIVERSE_MIN_MEDIAN_TRADED_VALUE_CR
+
+def hygiene_check(ticker: str, check_liquidity: bool = True,
+                  book: str = "swing") -> dict:
+    """Stage-0 gate. Returns {passed, reasons, notes, microcap, floor_cr,
+    median_traded_value_cr}.
+
+    Known surveillance listing, known-poor liquidity for the given book, or
+    a failed microcap integrity gate fails; missing data only adds a note
+    (fail-open on data gaps, fail-closed on known risk)."""
+    from config import UNIVERSE_EXCLUDE_SURVEILLANCE
 
     reasons: list[str] = []
     notes: list[str] = []
@@ -170,17 +255,26 @@ def hygiene_check(ticker: str, check_liquidity: bool = True) -> dict:
         if flag:
             reasons.append(f"surveillance: {flag}")
 
+    floor = liquidity_floor_cr(book)
+    mtv: Optional[float] = None
     if check_liquidity:
         mtv = median_traded_value_cr(ticker)
         if mtv is None:
             notes.append("liquidity unknown (no price data)")
-        elif mtv < UNIVERSE_MIN_MEDIAN_TRADED_VALUE_CR:
+        elif mtv < floor:
             reasons.append(
-                f"illiquid: median traded value ₹{mtv:.1f} Cr/day "
-                f"< ₹{UNIVERSE_MIN_MEDIAN_TRADED_VALUE_CR:.0f} Cr"
+                f"illiquid for {book}: median traded value ₹{mtv:.1f} Cr/day "
+                f"< ₹{floor:.0f} Cr floor"
             )
 
-    return {"passed": not reasons, "reasons": reasons, "notes": notes}
+    micro = is_microcap(ticker)
+    if micro:
+        reasons.extend(microcap_integrity_reasons(ticker))
+        notes.append("microcap tier: halved risk, 0.4% slippage, book budget applies")
+
+    return {"passed": not reasons, "reasons": reasons, "notes": notes,
+            "microcap": micro, "floor_cr": floor,
+            "median_traded_value_cr": mtv}
 
 
 if __name__ == "__main__":
