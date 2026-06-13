@@ -2254,22 +2254,54 @@ with tab_lt_research:
                     f"(https://www.screener.in/company/{sel}/consolidated/)"
                 )
 
-                # ----- Full research-metrics pack (skill Step-2 checklist) -----
-                st.divider()
-                st.markdown("#### 🔍 Research detail")
-                st.caption(
-                    "The full fundamentals checklist — valuation multiples, "
-                    "multi-year growth & margins, debt/coverage trend, cash "
-                    "flow, ownership trend and quarterly EPS — each with a "
-                    "plain-English verdict, red-flag list and a data-confidence "
-                    "grade. Computed during the Phase A run."
+        # ----- Research detail (any stock, on-demand) -----
+        # Promoted out of the drilldown so it works for ANY NSE symbol — not
+        # only the quality-scored universe — and even when no universe has been
+        # built yet. Defaults the input to the drilldown selection for one-click
+        # flow from the candidates table.
+        st.divider()
+        st.subheader("🔍 Research detail")
+        st.caption(
+            "The full fundamentals checklist for one stock — valuation "
+            "(P/E vs sector, P/B, EV/EBITDA), multi-year growth & margins, "
+            "debt & interest-coverage trend, current ratio, free cash flow, "
+            "8-quarter ownership trend and quarterly EPS — each with a "
+            "plain-English verdict, a red-flag list and a data-confidence grade. "
+            "Pick from the scored universe above, or type any NSE symbol and "
+            "fetch it live."
+        )
+        rc1, rc2 = st.columns([3, 1])
+        _default_tkr = (st.session_state.get("lt_drilldown") or "").upper()
+        research_tkr = rc1.text_input(
+            "NSE symbol", value=_default_tkr, key="research_lookup",
+            placeholder="e.g. RELIANCE, INFY, HDFCBANK",
+        ).strip().upper()
+        fetch_live = rc2.button("Fetch / refresh (live)", key="research_fetch",
+                                width="stretch")
+        if research_tkr:
+            try:
+                pack = _lt_get_metrics(research_tkr)
+            except Exception:
+                pack = None
+            if fetch_live:
+                with st.spinner(
+                    f"Computing research metrics for {research_tkr} "
+                    f"(live Screener + yfinance, ~5-10s)…"
+                ):
+                    try:
+                        from longterm.metrics import compute_and_store as _lt_compute
+                        pack = _lt_compute(research_tkr, force=True)
+                    except Exception as e:
+                        st.error(f"Could not compute metrics for {research_tkr}: {e}")
+                        pack = None
+            if pack:
+                render_research_metrics(pack)
+            else:
+                st.info(
+                    f"No cached research for **{research_tkr}** yet. Click "
+                    f"**Fetch / refresh (live)** to pull it from Screener + "
+                    f"yfinance now."
                 )
-                try:
-                    _pack = _lt_get_metrics(sel)
-                except Exception as _me:
-                    _pack = None
-                    st.caption(f"(metrics unavailable — {_me})")
-                render_research_metrics(_pack)
 
         # ----- Coverage gaps -----
         st.divider()
