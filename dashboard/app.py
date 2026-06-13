@@ -166,6 +166,164 @@ def render_table(df: pd.DataFrame, cols: list[str] | None = None) -> None:
     st.markdown(TABLE_CSS + html, unsafe_allow_html=True)
 
 
+# Verdict word -> colour, used to make the research pack scannable.
+_VERDICT_COLOR = {
+    # good
+    "Cheap": "#1bc47d", "Safe": "#1bc47d", "Healthy": "#1bc47d",
+    "Comfortable": "#1bc47d", "Strong": "#1bc47d", "Good": "#1bc47d",
+    "Accelerating": "#1bc47d",
+    # neutral
+    "Fair": "#c9a227", "Moderate": "#c9a227", "Watch": "#c9a227",
+    "Stable": "#c9a227", "Average": "#c9a227", "Steady": "#c9a227",
+    # bad
+    "Expensive": "#d65a5a", "Leveraged": "#d65a5a", "Risk": "#d65a5a",
+    "Concern": "#d65a5a", "Weak": "#d65a5a", "Slowing": "#d65a5a",
+    "Declining": "#d65a5a",
+}
+
+
+def _verdict_badge(verdict) -> str:
+    """Coloured inline badge for a verdict word (returns HTML)."""
+    if not verdict:
+        return ""
+    color = _VERDICT_COLOR.get(str(verdict), "#6c7a86")
+    return (f"<span style='background:{color}22;color:{color};"
+            f"padding:1px 7px;border-radius:6px;font-size:0.82em;"
+            f"font-weight:600'>{verdict}</span>")
+
+
+def _f(v, suffix="", dp=2):
+    """Format a number or '—' for missing, with optional suffix."""
+    if v is None:
+        return "—"
+    try:
+        return f"{float(v):,.{dp}f}{suffix}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def render_research_metrics(m: dict) -> None:
+    """Render the full ``lt_metrics`` research pack (skill Step-2 checklist) as
+    an in-app panel — the dashboard equivalent of the skill's chat "Deep Dive"."""
+    if not m:
+        st.caption(
+            "No research-metrics pack for this ticker yet. Run the Phase A "
+            "pipeline (it computes metrics during quality scoring)."
+        )
+        return
+
+    price, val = m.get("price", {}), m.get("valuation", {})
+    growth, marg = m.get("growth", {}), m.get("margins", {})
+    prof, health = m.get("profitability", {}), m.get("health", {})
+    own, div = m.get("ownership", {}), m.get("dividend", {})
+
+    # --- Header line: overall view + confidence + flags ---
+    conf = m.get("data_confidence", "—")
+    conf_color = {"High": "#1bc47d", "Moderate": "#c9a227", "Low": "#d65a5a"}.get(conf, "#6c7a86")
+    st.markdown(
+        f"**Overall view:** {_verdict_badge(m.get('overall_view'))}  "
+        f"&nbsp;•&nbsp; **Data confidence:** "
+        f"<span style='color:{conf_color};font-weight:600'>{conf}</span>  "
+        f"&nbsp;•&nbsp; {len(m.get('flags') or [])} red flag(s)"
+        f"{'  ·  🏦 lender — debt/cash verdicts n/a' if m.get('is_loan_book') else ''}",
+        unsafe_allow_html=True,
+    )
+    flags = m.get("flags") or []
+    if flags:
+        st.markdown(
+            "<div style='background:rgba(214,90,90,0.10);border-left:4px solid "
+            "#d65a5a;padding:8px 12px;border-radius:6px'>🚩 " +
+            "<br>🚩 ".join(flags) + "</div>",
+            unsafe_allow_html=True,
+        )
+
+    # --- Price & valuation ---
+    st.markdown("**Price & valuation**")
+    c = st.columns(4)
+    c[0].metric("CMP", _f(price.get("cmp")))
+    c[1].metric("52-wk high / low",
+                f"{_f(price.get('fifty_two_week_high'))} / {_f(price.get('fifty_two_week_low'))}")
+    c[2].metric("From 52-wk high", _f(price.get("pct_below_52w_high"), "%", 1))
+    c[3].metric("Book / Face value",
+                f"{_f(price.get('book_value'))} / {_f(price.get('face_value'))}")
+    c = st.columns(4)
+    c[0].markdown(f"P/E&nbsp; **{_f(val.get('pe'))}** {_verdict_badge(val.get('pe_vs_sector'))}",
+                  unsafe_allow_html=True)
+    c[1].markdown(f"Sector P/E&nbsp; **{_f(val.get('industry_pe'))}**", unsafe_allow_html=True)
+    c[2].markdown(f"P/B&nbsp; **{_f(val.get('pb'))}**", unsafe_allow_html=True)
+    c[3].markdown(f"EV/EBITDA&nbsp; **{_f(val.get('ev_ebitda'))}**", unsafe_allow_html=True)
+    st.caption(val.get("own_5y_average_note", ""))
+
+    # --- Growth & margins ---
+    st.markdown(f"**Growth** {_verdict_badge(growth.get('trend'))}", unsafe_allow_html=True)
+    gdf = pd.DataFrame([
+        {"Metric": "Revenue", "3-yr CAGR": _f(growth.get("revenue_cagr_3y"), "%"),
+         "5-yr CAGR": _f(growth.get("revenue_cagr_5y"), "%")},
+        {"Metric": "Net profit", "3-yr CAGR": _f(growth.get("net_profit_cagr_3y"), "%"),
+         "5-yr CAGR": _f(growth.get("net_profit_cagr_5y"), "%")},
+        {"Metric": "EPS", "3-yr CAGR": _f(growth.get("eps_cagr_3y"), "%"),
+         "5-yr CAGR": _f(growth.get("eps_cagr_5y"), "%")},
+    ])
+    render_table(gdf)
+    c = st.columns(2)
+    c[0].metric("EBITDA margin (latest)", _f(marg.get("ebitda_margin_latest"), "%", 1))
+    c[1].metric("Net margin (latest)", _f(marg.get("net_margin_latest"), "%", 1))
+
+    # --- Profitability & health ---
+    st.markdown("**Returns & financial health**")
+    c = st.columns(2)
+    c[0].markdown(
+        f"ROE&nbsp; **{_f(prof.get('roe_current') or prof.get('roe_5y_avg'), '%', 1)}** "
+        f"{_verdict_badge(prof.get('roe_verdict'))}<br>"
+        f"<span style='color:#9aa'>3-yr {_f(prof.get('roe_3y_avg'),'%',1)} · "
+        f"5-yr {_f(prof.get('roe_5y_avg'),'%',1)}</span>", unsafe_allow_html=True)
+    c[1].markdown(
+        f"ROCE&nbsp; **{_f(prof.get('roce_current') or prof.get('roce_5y_avg'), '%', 1)}** "
+        f"{_verdict_badge(prof.get('roce_verdict'))}<br>"
+        f"<span style='color:#9aa'>3-yr {_f(prof.get('roce_3y_avg'),'%',1)} · "
+        f"5-yr {_f(prof.get('roce_5y_avg'),'%',1)}</span>", unsafe_allow_html=True)
+    c = st.columns(4)
+    c[0].markdown(f"D/E&nbsp; **{_f(health.get('debt_to_equity'))}** "
+                  f"{_verdict_badge(health.get('de_verdict'))}", unsafe_allow_html=True)
+    c[1].markdown(f"Int. cover&nbsp; **{_f(health.get('interest_coverage_latest'),'x',1)}** "
+                  f"{_verdict_badge(health.get('interest_coverage_verdict'))}", unsafe_allow_html=True)
+    c[2].markdown(f"Current ratio&nbsp; **{_f(health.get('current_ratio'))}** "
+                  f"{_verdict_badge(health.get('current_ratio_verdict'))}", unsafe_allow_html=True)
+    c[3].markdown(f"FCF&nbsp; {_verdict_badge(health.get('fcf_verdict'))}", unsafe_allow_html=True)
+
+    # --- Ownership & dividend ---
+    st.markdown("**Ownership & dividend**")
+    c = st.columns(4)
+    pledge = own.get("pledge_latest")
+    pledge_str = _f(pledge, "%", 1)
+    if own.get("pledge_over_10pct"):
+        pledge_str += " 🚩"
+    c[0].metric("Promoter", _f(own.get("promoter_latest"), "%", 1),
+                _f(own.get("promoter_qoq"), "pp", 1) if own.get("promoter_qoq") is not None else None)
+    c[1].metric("Pledge", pledge_str)
+    c[2].metric("FII", _f(own.get("fii_latest"), "%", 1),
+                _f(own.get("fii_qoq"), "pp", 1) if own.get("fii_qoq") is not None else None)
+    c[3].metric("DII", _f(own.get("dii_latest"), "%", 1),
+                _f(own.get("dii_qoq"), "pp", 1) if own.get("dii_qoq") is not None else None)
+    st.caption(f"Dividend yield {_f(div.get('yield_pct'), '%', 1)} · "
+               f"payout {_f(div.get('payout_pct'), '%', 0)}")
+
+    # --- Quarterly EPS YoY ---
+    qeps = m.get("quarterly_eps_yoy") or []
+    if qeps:
+        qdf = pd.DataFrame([
+            {"Quarter": q.get("period"), "EPS": _f(q.get("eps")),
+             "YoY": _f(q.get("yoy_pct"), "%", 1)} for q in qeps
+        ])
+        with st.expander("Quarterly EPS (last 8, YoY)"):
+            render_table(qdf)
+
+    unavailable = m.get("unavailable") or []
+    if unavailable:
+        st.caption("🚩 Unavailable from source (verify on screener.in): "
+                   + ", ".join(unavailable))
+
+
 def _bot_row() -> dict:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM bot_control WHERE id=1").fetchone()
@@ -1659,9 +1817,10 @@ with tab_fund:
         "Click 🔗 to cross-check on screener.in."
     )
     df = query_df(
-        "SELECT ticker, sector, industry, fundamental_score, pe_ratio, roe, "
+        "SELECT ticker, sector, industry, fundamental_score, pe_ratio, "
+        "price_to_book, ev_to_ebitda, current_ratio, roe, "
         "debt_to_equity, earnings_growth, revenue_growth, profit_margin, "
-        "dividend_yield, market_cap, fetched_at "
+        "dividend_yield, market_cap, current_price, fetched_at "
         "FROM fundamentals ORDER BY fundamental_score DESC LIMIT 100"
     )
     if df.empty:
@@ -1706,6 +1865,9 @@ with tab_fund:
         view["P/E (TTM)"] = df["pe_ratio"].map(
             lambda v: f"{v:.1f}" if pd.notna(v) else "—"
         )
+        view["P/B"] = df["price_to_book"].map(_ratio)
+        view["EV/EBITDA"] = df["ev_to_ebitda"].map(_ratio)
+        view["Curr Ratio"] = df["current_ratio"].map(_ratio)
         view["ROE"] = df["roe"].map(_pct)
         # D/E is suppressed for banks
         view["D/E"] = df.apply(
@@ -1726,6 +1888,9 @@ with tab_fund:
             return label
         view["Net Margin"] = df.apply(_net_margin_html, axis=1)
         view["Div Yield"] = df["dividend_yield"].map(_pct)
+        view["CMP"] = df["current_price"].map(
+            lambda v: f"₹{v:,.1f}" if pd.notna(v) else "—"
+        )
         view["Market Cap"] = df["market_cap"].map(_money)
         view["Fetched (IST)"] = df["fetched_at"].map(_ist)
         view["Cross-check"] = df["ticker"].map(
@@ -1808,6 +1973,7 @@ with tab_lt_research:
     try:
         from db.models import query_df as _ltq_query_df  # type: ignore
         from longterm.tasks import run_phase_a as _lt_run_phase_a
+        from longterm.metrics import get_metrics as _lt_get_metrics
         _LT_IMPORT_OK = True
         _LT_IMPORT_ERR = None
     except Exception as _e:  # pragma: no cover
@@ -2087,6 +2253,23 @@ with tab_lt_research:
                     f"[Open on screener.in]"
                     f"(https://www.screener.in/company/{sel}/consolidated/)"
                 )
+
+                # ----- Full research-metrics pack (skill Step-2 checklist) -----
+                st.divider()
+                st.markdown("#### 🔍 Research detail")
+                st.caption(
+                    "The full fundamentals checklist — valuation multiples, "
+                    "multi-year growth & margins, debt/coverage trend, cash "
+                    "flow, ownership trend and quarterly EPS — each with a "
+                    "plain-English verdict, red-flag list and a data-confidence "
+                    "grade. Computed during the Phase A run."
+                )
+                try:
+                    _pack = _lt_get_metrics(sel)
+                except Exception as _me:
+                    _pack = None
+                    st.caption(f"(metrics unavailable — {_me})")
+                render_research_metrics(_pack)
 
         # ----- Coverage gaps -----
         st.divider()

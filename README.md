@@ -139,7 +139,8 @@ stock-trading-algo-app/
 │   ├── universe.py             # NIFTY 500 loader (NSE CSV + fallback list)
 │   ├── fetcher.py              # yfinance + parquet disk cache
 │   ├── news_scraper.py         # RSS scraper (MoneyControl, ET, LiveMint, BS)
-│   └── fundamentals.py        # yfinance fundamentals + 0-100 scoring
+│   └── fundamentals.py        # yfinance fundamentals (P/E, P/B, EV/EBITDA, CMP,
+│                              #   52w range, current ratio, FCF) + 0-100 scoring
 │
 ├── strategies/                 # INTRADAY strategies (15-min candles)
 │   ├── base.py                 # BaseStrategy + Signal dataclass
@@ -182,8 +183,12 @@ stock-trading-algo-app/
 │
 ├── longterm/                   # Fundamental quality scoring infrastructure
 │   ├── quality.py              # 5-bucket quality scorer (ROE/ROCE/D-E/growth/governance)
+│   ├── metrics.py              # Research-metrics pack: full skill checklist
+│   │                           #   (multi-yr CAGR/margins/FCF/coverage/ownership)
+│   │                           #   + per-metric verdicts, red flags, confidence
 │   ├── universe.py             # FII/DII holding filter
-│   ├── screener_scraper.py     # Screener.in scraper
+│   ├── screener_scraper.py     # Screener.in scraper (P&L, cash flow, ratios,
+│   │                           #   balance sheet, quarters, shareholding)
 │   └── tasks.py                # Orchestration tasks
 │
 ├── analytics/
@@ -404,6 +409,7 @@ Key tables:
 | `fundamentals` | Cached yfinance fundamentals per ticker |
 | `lt_universe` | NIFTY 500 universe with FII/DII/promoter holding data |
 | `lt_quality` | 5-bucket quality scores (profitability, cash, solvency, growth, governance) |
+| `lt_metrics` | Research-metrics pack per ticker: valuation multiples, 3y/5y CAGRs, margin & debt/coverage trends, FCF, ownership trend, quarterly EPS, per-metric verdicts, red-flag list, data-confidence grade |
 | `news` | Scraped news articles with sentiment scores |
 | `bot_control` | Single control row: status, mode, positional_enabled |
 | `cycle_log` | Per-cycle run log for cross-process visibility |
@@ -420,8 +426,8 @@ Key tables:
 | Signals | All generated signals (intraday + positional) with scores |
 | Analytics | Sharpe, Sortino, max drawdown, win rate, strategy P&L breakdown |
 | News | Latest scraped articles with per-ticker sentiment |
-| Fundamentals | NIFTY 500 fundamental scores |
-| Long-Term Research | lt_quality scores, FII/DII holding data |
+| Fundamentals | NIFTY 500 fundamental scores + P/B, EV/EBITDA, current ratio, CMP |
+| Long-Term Research | lt_quality scores, FII/DII data, and per-stock **Research detail** — the full fundamentals checklist (valuation, growth, margins, health, ownership, quarterly EPS) with plain-English verdicts, red flags and a data-confidence grade |
 
 ---
 

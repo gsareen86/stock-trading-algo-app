@@ -209,6 +209,12 @@ def fetch_and_store(ticker: str, force: bool = False) -> Dict:
         if debt_to_equity is not None and debt_to_equity > 5:
             debt_to_equity = debt_to_equity / 100.0
 
+    # Live price: yfinance moved between `currentPrice` and `regularMarketPrice`
+    # across versions — try both before giving up.
+    current_price = _safe_num(info.get("currentPrice"))
+    if current_price is None:
+        current_price = _safe_num(info.get("regularMarketPrice"))
+
     row = dict(
         ticker=ticker,
         fetched_at=datetime.utcnow().isoformat(),
@@ -224,6 +230,20 @@ def fetch_and_store(ticker: str, force: bool = False) -> Dict:
         dividend_yield=_safe_num(info.get("dividendYield")),
         sector=sector,
         industry=industry,
+        # ---- Research-grade additions (skill Step-2 checklist) ----
+        # Valuation completeness: P/B and EV/EBITDA sit alongside the existing
+        # P/E so the research layer can read all three multiples at once.
+        current_price=current_price,
+        fifty_two_week_high=_safe_num(info.get("fiftyTwoWeekHigh")),
+        fifty_two_week_low=_safe_num(info.get("fiftyTwoWeekLow")),
+        book_value=_safe_num(info.get("bookValue")),
+        price_to_book=_safe_num(info.get("priceToBook")),
+        ev_to_ebitda=_safe_num(info.get("enterpriseToEbitda")),
+        # Liquidity / cash: current ratio is not derivable from screener's
+        # condensed balance sheet, so yfinance is the cleanest source.
+        current_ratio=_safe_num(info.get("currentRatio")),
+        free_cashflow=_safe_num(info.get("freeCashflow")),
+        operating_cashflow=_safe_num(info.get("operatingCashflow")),
     )
     row["fundamental_score"] = score_fundamentals(row, is_bank_=bank_flag)
 
@@ -234,29 +254,45 @@ def fetch_and_store(ticker: str, force: bool = False) -> Dict:
             """INSERT INTO fundamentals (
                 ticker, fetched_at, pe_ratio, peg_ratio, eps, revenue_growth,
                 earnings_growth, debt_to_equity, roe, profit_margin, market_cap,
-                dividend_yield, sector, industry, fundamental_score
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                dividend_yield, sector, industry, fundamental_score,
+                current_price, fifty_two_week_high, fifty_two_week_low,
+                book_value, price_to_book, ev_to_ebitda, current_ratio,
+                free_cashflow, operating_cashflow
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT (ticker) DO UPDATE SET
-                fetched_at        = EXCLUDED.fetched_at,
-                pe_ratio          = EXCLUDED.pe_ratio,
-                peg_ratio         = EXCLUDED.peg_ratio,
-                eps               = EXCLUDED.eps,
-                revenue_growth    = EXCLUDED.revenue_growth,
-                earnings_growth   = EXCLUDED.earnings_growth,
-                debt_to_equity    = EXCLUDED.debt_to_equity,
-                roe               = EXCLUDED.roe,
-                profit_margin     = EXCLUDED.profit_margin,
-                market_cap        = EXCLUDED.market_cap,
-                dividend_yield    = EXCLUDED.dividend_yield,
-                sector            = EXCLUDED.sector,
-                industry          = EXCLUDED.industry,
-                fundamental_score = EXCLUDED.fundamental_score""",
+                fetched_at         = EXCLUDED.fetched_at,
+                pe_ratio           = EXCLUDED.pe_ratio,
+                peg_ratio          = EXCLUDED.peg_ratio,
+                eps                = EXCLUDED.eps,
+                revenue_growth     = EXCLUDED.revenue_growth,
+                earnings_growth    = EXCLUDED.earnings_growth,
+                debt_to_equity     = EXCLUDED.debt_to_equity,
+                roe                = EXCLUDED.roe,
+                profit_margin      = EXCLUDED.profit_margin,
+                market_cap         = EXCLUDED.market_cap,
+                dividend_yield     = EXCLUDED.dividend_yield,
+                sector             = EXCLUDED.sector,
+                industry           = EXCLUDED.industry,
+                fundamental_score  = EXCLUDED.fundamental_score,
+                current_price      = EXCLUDED.current_price,
+                fifty_two_week_high = EXCLUDED.fifty_two_week_high,
+                fifty_two_week_low  = EXCLUDED.fifty_two_week_low,
+                book_value         = EXCLUDED.book_value,
+                price_to_book      = EXCLUDED.price_to_book,
+                ev_to_ebitda       = EXCLUDED.ev_to_ebitda,
+                current_ratio      = EXCLUDED.current_ratio,
+                free_cashflow      = EXCLUDED.free_cashflow,
+                operating_cashflow = EXCLUDED.operating_cashflow""",
             (
                 row["ticker"], row["fetched_at"], row["pe_ratio"], row["peg_ratio"],
                 row["eps"], row["revenue_growth"], row["earnings_growth"],
                 row["debt_to_equity"], row["roe"], row["profit_margin"],
                 row["market_cap"], row["dividend_yield"], row["sector"],
                 row["industry"], row["fundamental_score"],
+                row["current_price"], row["fifty_two_week_high"],
+                row["fifty_two_week_low"], row["book_value"], row["price_to_book"],
+                row["ev_to_ebitda"], row["current_ratio"], row["free_cashflow"],
+                row["operating_cashflow"],
             ),
         )
     return row

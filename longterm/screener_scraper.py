@@ -452,6 +452,7 @@ def _parse_ratios_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
     out: Dict[str, List[Dict]] = {
         "roe_yearly": [], "roce_yearly": [],
         "opm_yearly": [], "debtor_days_yearly": [],
+        "dividend_payout_yearly": [],
     }
     if not rows:
         return out
@@ -467,11 +468,97 @@ def _parse_ratios_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
     roce = find_row("roce")
     opm = find_row("opm")
     dd = find_row("debtor", "days")
+    # "Dividend Payout %" — how much of earnings is paid out as dividend. The
+    # skill wants payout ratio + history alongside the dividend yield.
+    payout = find_row("dividend", "payout")
 
     out["roe_yearly"] = _row_to_records(headers, roe or [])
     out["roce_yearly"] = _row_to_records(headers, roce or [])
     out["opm_yearly"] = _row_to_records(headers, opm or [])
     out["debtor_days_yearly"] = _row_to_records(headers, dd or [])
+    out["dividend_payout_yearly"] = _row_to_records(headers, payout or [])
+    return out
+
+
+def _parse_balance_sheet_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
+    """Parse the ``<section id="balance-sheet">`` block.
+
+    Screener's condensed balance sheet uses these row labels (stable across
+    the universe): ``Equity Capital``, ``Reserves``, ``Borrowings``,
+    ``Other Liabilities``, ``Total Liabilities``, ``Fixed Assets``, ``CWIP``,
+    ``Investments``, ``Other Assets``, ``Total Assets``.
+
+    Why we need it
+    --------------
+    The skill's checklist wants a *multi-year debt/equity trend*, not just the
+    point-in-time D/E from the top-ratios card. Screener does not publish a
+    per-year D/E row, but it can be reconstructed:
+
+        D/E(year) = Borrowings / (Equity Capital + Reserves)
+
+    so we expose the three component series and let the metrics layer divide.
+    (Screener lumps current assets/liabilities into ``Other Assets`` /
+    ``Other Liabilities``, so a clean current ratio is NOT derivable here — the
+    metrics layer reads that from yfinance instead.)
+    """
+    sec = _extract_section_table(soup, "balance-sheet")
+    headers, rows = _parse_data_table(sec)
+    out: Dict[str, List[Dict]] = {
+        "equity_capital_yearly": [], "reserves_yearly": [],
+        "borrowings_yearly": [], "total_assets_yearly": [],
+    }
+    if not rows:
+        return out
+
+    def find_row(*keys: str) -> Optional[List[Optional[float]]]:
+        for label, vals in rows.items():
+            low = label.lower()
+            if all(k in low for k in keys):
+                return vals
+        return None
+
+    equity = find_row("equity", "capital")
+    reserves = find_row("reserves")
+    borrowings = find_row("borrowings")
+    total_assets = find_row("total", "assets")
+
+    out["equity_capital_yearly"] = _row_to_records(headers, equity or [])
+    out["reserves_yearly"] = _row_to_records(headers, reserves or [])
+    out["borrowings_yearly"] = _row_to_records(headers, borrowings or [])
+    out["total_assets_yearly"] = _row_to_records(headers, total_assets or [])
+    return out
+
+
+def _parse_quarters_section(soup: BeautifulSoup) -> Dict[str, List[Dict]]:
+    """Parse the ``<section id="quarters">`` quarterly-results block.
+
+    Gives the skill's "EPS — last 8 quarters, YoY" requirement. Screener row
+    labels: ``Sales`` (or ``Revenue``), ``Net Profit``, ``EPS in Rs``. Returned
+    most-recent-first so ``[0]`` is the latest reported quarter and YoY is
+    ``[i]`` vs ``[i+4]``.
+    """
+    sec = _extract_section_table(soup, "quarters")
+    headers, rows = _parse_data_table(sec)
+    out: Dict[str, List[Dict]] = {
+        "revenue_quarterly": [], "net_profit_quarterly": [], "eps_quarterly": [],
+    }
+    if not rows:
+        return out
+
+    def find_row(*keys: str) -> Optional[List[Optional[float]]]:
+        for label, vals in rows.items():
+            low = label.lower()
+            if all(k in low for k in keys):
+                return vals
+        return None
+
+    rev = find_row("sales") or find_row("revenue")
+    npft = find_row("net", "profit")
+    eps = find_row("eps")
+
+    out["revenue_quarterly"] = _row_to_records(headers, rev or [])
+    out["net_profit_quarterly"] = _row_to_records(headers, npft or [])
+    out["eps_quarterly"] = _row_to_records(headers, eps or [])
     return out
 
 
@@ -562,6 +649,14 @@ def _parse_html(ticker: str, html: str, used_view: str) -> Dict:
     if not rt["roe_yearly"]:
         warnings.append("ratios section missing")
 
+    bs = _parse_balance_sheet_section(soup)
+    if not bs["borrowings_yearly"]:
+        warnings.append("balance-sheet section missing")
+
+    qtr = _parse_quarters_section(soup)
+    if not qtr["eps_quarterly"]:
+        warnings.append("quarters section missing")
+
     sh = _parse_shareholding_section(soup)
     if not sh:
         warnings.append("shareholding section missing")
@@ -575,6 +670,8 @@ def _parse_html(ticker: str, html: str, used_view: str) -> Dict:
         **pl,
         **cf,
         **rt,
+        **bs,
+        **qtr,
         "shareholding_quarterly": sh,
         "warnings": warnings,
     }

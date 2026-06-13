@@ -580,6 +580,18 @@ def score_and_store(ticker: str, industry: Optional[str] = None,
                 json.dumps(sc["raw_inputs"], default=str),
             ),
         )
+
+    # Also compute + persist the full research-metrics pack from the SAME
+    # scrape (no extra Screener fetch). Lazy import avoids a circular dependency
+    # (metrics imports helpers from this module). Failure-isolated: a metrics
+    # error must never sink the quality score we just stored.
+    try:
+        from longterm.metrics import compute_and_store as _metrics_store
+        _metrics_store(ticker, parsed=parsed, industry=industry,
+                       quality_score=sc["total_score"])
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("metrics compute_and_store failed for %s: %s", ticker, e)
+
     return sc
 
 

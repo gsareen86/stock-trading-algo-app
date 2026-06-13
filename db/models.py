@@ -156,7 +156,16 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     dividend_yield REAL,
     sector TEXT,
     industry TEXT,
-    fundamental_score REAL
+    fundamental_score REAL,
+    current_price REAL,
+    fifty_two_week_high REAL,
+    fifty_two_week_low REAL,
+    book_value REAL,
+    price_to_book REAL,
+    ev_to_ebitda REAL,
+    current_ratio REAL,
+    free_cashflow REAL,
+    operating_cashflow REAL
 );
 
 CREATE TABLE IF NOT EXISTS bot_control (
@@ -219,6 +228,22 @@ CREATE TABLE IF NOT EXISTS lt_quality (
     governance_score REAL,
     total_score REAL,
     raw_inputs TEXT
+);
+
+-- Research metrics pack: the full skill Step-2 checklist of derived fundamentals
+-- (valuation multiples, multi-year CAGRs, margins, FCF, coverage, ownership
+-- trends) computed per ticker, plus per-metric verdict words, red-flag list and
+-- a data-confidence grade. `metrics` is the structured JSON pack consumed by the
+-- dashboard's research view; the scalar columns are denormalised for easy
+-- sorting/filtering without unpacking the JSON.
+CREATE TABLE IF NOT EXISTS lt_metrics (
+    ticker TEXT PRIMARY KEY,
+    computed_at TEXT NOT NULL,
+    data_confidence TEXT,
+    overall_view TEXT,
+    flag_count INTEGER DEFAULT 0,
+    metrics TEXT,
+    flags TEXT
 );
 
 -- Cycle log: every run_cycle invocation writes a row at start (status=RUNNING)
@@ -473,7 +498,16 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     dividend_yield DOUBLE PRECISION,
     sector TEXT,
     industry TEXT,
-    fundamental_score DOUBLE PRECISION
+    fundamental_score DOUBLE PRECISION,
+    current_price DOUBLE PRECISION,
+    fifty_two_week_high DOUBLE PRECISION,
+    fifty_two_week_low DOUBLE PRECISION,
+    book_value DOUBLE PRECISION,
+    price_to_book DOUBLE PRECISION,
+    ev_to_ebitda DOUBLE PRECISION,
+    current_ratio DOUBLE PRECISION,
+    free_cashflow DOUBLE PRECISION,
+    operating_cashflow DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS bot_control (
@@ -536,6 +570,16 @@ CREATE TABLE IF NOT EXISTS lt_quality (
     governance_score DOUBLE PRECISION,
     total_score DOUBLE PRECISION,
     raw_inputs JSONB
+);
+
+CREATE TABLE IF NOT EXISTS lt_metrics (
+    ticker TEXT PRIMARY KEY,
+    computed_at TEXT NOT NULL,
+    data_confidence TEXT,
+    overall_view TEXT,
+    flag_count INTEGER DEFAULT 0,
+    metrics JSONB,
+    flags JSONB
 );
 
 CREATE TABLE IF NOT EXISTS cycle_log (
@@ -889,6 +933,38 @@ def _migrate_positional_columns(conn) -> None:
         cur.execute(sql)
 
 
+def _migrate_fundamentals_research_columns(conn) -> None:
+    """Add the research-grade fundamental columns (skill Step-2 checklist) to
+    an existing ``fundamentals`` table.
+
+    Backwards-compatible: rows fetched before this migration simply carry NULL
+    in the new columns until the next 24h refresh re-populates them.
+    """
+    new_cols_sqlite = {
+        "current_price":       "ALTER TABLE fundamentals ADD COLUMN current_price REAL",
+        "fifty_two_week_high": "ALTER TABLE fundamentals ADD COLUMN fifty_two_week_high REAL",
+        "fifty_two_week_low":  "ALTER TABLE fundamentals ADD COLUMN fifty_two_week_low REAL",
+        "book_value":          "ALTER TABLE fundamentals ADD COLUMN book_value REAL",
+        "price_to_book":       "ALTER TABLE fundamentals ADD COLUMN price_to_book REAL",
+        "ev_to_ebitda":        "ALTER TABLE fundamentals ADD COLUMN ev_to_ebitda REAL",
+        "current_ratio":       "ALTER TABLE fundamentals ADD COLUMN current_ratio REAL",
+        "free_cashflow":       "ALTER TABLE fundamentals ADD COLUMN free_cashflow REAL",
+        "operating_cashflow":  "ALTER TABLE fundamentals ADD COLUMN operating_cashflow REAL",
+    }
+    if BACKEND == "sqlite":
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)").fetchall()}
+        for col, sql in new_cols_sqlite.items():
+            if col not in existing:
+                conn.execute(sql)
+        return
+
+    cur = conn.cursor() if hasattr(conn, "cursor") else conn
+    for col in new_cols_sqlite:
+        cur.execute(
+            f"ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION"
+        )
+
+
 def init_db() -> None:
     """Create tables + seed bot_control row if absent."""
     if BACKEND == "sqlite":
@@ -897,6 +973,7 @@ def init_db() -> None:
             conn.executescript(_SQLITE_SCHEMA)
             _migrate_positions_atr_columns(conn)
             _migrate_positional_columns(conn)
+            _migrate_fundamentals_research_columns(conn)
             conn.execute(
                 """INSERT INTO bot_control (id, status, mode, updated_at)
                    VALUES (1, 'STOPPED', 'auto', ?)
@@ -915,6 +992,7 @@ def init_db() -> None:
                 cur.execute(_POSTGRES_SCHEMA)
                 _migrate_positions_atr_columns(cur)
                 _migrate_positional_columns(cur)
+                _migrate_fundamentals_research_columns(cur)
                 cur.execute(
                     """INSERT INTO bot_control (id, status, mode, updated_at)
                        VALUES (1, 'STOPPED', 'auto', %s)
