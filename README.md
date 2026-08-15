@@ -1,13 +1,20 @@
 # Virtual Trading Bot — Indian Stock Market (NSE)
 
-A self-contained paper-trading bot for NIFTY 500 with two independent trading modules:
+> **Living specification**: [`openspec/specs/`](openspec/specs/) is the maintained
+> source of truth for current system behavior — read it before relying on this README's
+> strategy-inventory tables, which have drifted before (see `openspec/project.md`). This
+> README's install/run/troubleshooting sections are still accurate day-to-day.
+
+A self-contained paper-trading bot for NIFTY 500 with three trading modules:
 
 | Module | Timeframe | Hold period | Strategies |
 |---|---|---|---|
-| **Intraday** | 15-min candles | Same-day square-off by 15:10 IST | 9 strategies |
-| **Positional** | Daily candles | 3–30 trading days | 7 strategies |
+| **Intraday** | 15-min candles | Same-day square-off by 15:10 IST | 10 strategies |
+| **Positional** | Daily candles | 3–30 trading days | 4 strategies + Minervini VCP scanner |
+| **Long-Term** | Daily candles | 1–3+ years | Thesis-driven exits only; off by default |
 
-Both modules share the same dashboard, approval queue, cost model, and DB.
+All three share the same dashboard, cost model, and DB (separate capital pools and
+position ledgers per module — see `openspec/specs/`).
 
 ---
 
@@ -137,31 +144,31 @@ stock-trading-algo-app/
 │   ├── news_scraper.py         # RSS scraper (MoneyControl, ET, LiveMint, BS)
 │   └── fundamentals.py        # yfinance fundamentals + 0-100 scoring
 │
-├── strategies/                 # INTRADAY strategies (15-min candles)
+├── strategies/                 # INTRADAY strategies (15-min candles) — 10 total
 │   ├── base.py                 # BaseStrategy + Signal dataclass
 │   ├── moving_average.py       # EMA crossover (9/21)
 │   ├── rsi_mean_reversion.py   # RSI 30/70 with divergence
 │   ├── bollinger_breakout.py   # Bollinger band breakout + squeeze
 │   ├── momentum.py             # price-volume momentum
+│   ├── vwap_momentum.py        # VWAP momentum pullback — highest strategy weight (0.20)
 │   ├── opening_range_breakout.py  # ORB — 09:15-09:30 IST range
 │   ├── vwap_reversion.py       # VWAP ± dynamic band mean-reversion
 │   ├── supertrend.py           # Supertrend(10, 3.0) direction filter
 │   ├── gap_play.py             # Gap-and-go + gap-fade (first 30 min)
 │   └── pair_trading.py        # Z-score stat-arb on 8 NIFTY pairs
 │
-├── positional/                 # POSITIONAL strategies (daily candles)
+├── positional/                 # POSITIONAL strategies (daily candles) — 4 + scanner
+│   ├── scanner.py              # Minervini Trend Template + VCP (weight 0.30)
 │   ├── strategies/
-│   │   ├── base.py             # BasePositionalStrategy + PositionalSignal
-│   │   ├── trend_following.py  # EMA ribbon (9/21/55) + ADX > 25
-│   │   ├── breakout_retest.py  # 52-week high breakout + retest entry
-│   │   ├── quality_momentum.py # Quality ≥ 70 + 63d return + RSI cross 50
-│   │   ├── vcp_breakout.py     # Minervini VCP pattern
-│   │   ├── sector_rotation.py  # Top-3 NSE sector indices rotation
-│   │   ├── mean_reversion.py   # Oversold bounce on quality stocks
-│   │   └── earnings_momentum.py # Post-earnings announcement drift (PEAD)
-│   ├── screener.py             # Filters lt_universe by quality + FII holding
-│   ├── scorer.py               # Composite scoring for positional signals
+│   │   ├── base.py                    # BasePositionalStrategy + PositionalSignal
+│   │   ├── brahma_vishnu_mahesh.py    # regime + sector RS + multi-year breakout (0.25)
+│   │   ├── fun_tech_momentum.py       # CANSLIM-style earnings accel + base breakout (0.25)
+│   │   └── young_momentum.py          # "1-2-3-4" impulse-leg continuation (0.20)
+│   ├── screener.py, universe.py, universe_sync.py   # universe build/sync
+│   ├── scorer.py, pillars.py   # Timing/Durability scorecard — see openspec/specs/
 │   ├── risk.py                 # Daily ATR sizing, delivery costs, exit checks
+│   ├── broker.py               # PaperBroker (real); Sharekhan/Zerodha are stubs
+│   ├── research.py, concalls.py, guidance.py  # LLM concall research + guidance ledger
 │   └── runner.py               # Pre-market scan + EOD exit management
 │
 ├── scoring/
@@ -223,7 +230,11 @@ open positions):
    - Technical = weighted average of strategy scores (weights in `config.STRATEGY_WEIGHTS`)
    - Fundamental = yfinance P/E, ROE, D/E, margins → 0-100 (BUY blocked if < 40)
    - Sentiment = rolling 24h news sentiment (BUY blocked if < −0.4)
-   - Composite = `tech×0.50 + fund×0.25 + sentiment×0.25`
+   - Composite = `tech×TECHNICAL_WEIGHT + fund×FUNDAMENTAL_WEIGHT + sentiment×SENTIMENT_WEIGHT`
+     — currently `0.70 / 0.05 / 0.25` in `config.py` (fundamentals carry little weight
+     intraday by design; see `openspec/specs/configuration-and-feature-flags/` for why
+     this is stated as a formula, not fixed numbers — they're config.py's current
+     values, not a constant)
 
 6. **Entry decision**: composite ≥ 60 → BUY (LONG or SHORT based on signal direction).
 
@@ -245,17 +256,21 @@ open positions):
 
 ### Intraday strategies
 
-| Strategy | Timeframe | Edge |
-|---|---|---|
-| EMA Crossover (9/21) | 15-min | Trend initiation |
-| RSI Mean Reversion | 15-min | Oversold/overbought reversals |
-| Bollinger Breakout | 15-min | Volatility expansion |
-| Price-Volume Momentum | 15-min | Trend continuation |
-| Opening Range Breakout (ORB) | 15-min | 09:15-09:30 range breakout |
-| VWAP Reversion | 15-min | Mean reversion to VWAP ± band |
-| Supertrend (10, 3.0) | 15-min | Trend direction filter |
-| Gap-and-go / Gap-fade | 15-min | First-30-min gap edge |
-| Pair Trading (8 pairs) | 15-min | Z-score stat-arb on correlated pairs |
+| Strategy | Timeframe | Edge | Weight |
+|---|---|---|---|
+| EMA Crossover (9/21) | 15-min | Trend initiation | 0.08 |
+| RSI Mean Reversion | 15-min | Oversold/overbought reversals | 0.07 |
+| Bollinger Breakout | 15-min | Volatility expansion | 0.07 |
+| Price-Volume Momentum | 15-min | Trend continuation | 0.08 |
+| **VWAP Momentum Pullback** | 15-min | Pullback-to-VWAP in trend direction — highest weight, best backtested Sharpe (~2.1) per `config.py` | **0.20** |
+| Opening Range Breakout (ORB) | 15-min | 09:15-09:30 range breakout | 0.16 |
+| VWAP Reversion | 15-min | Mean reversion to VWAP ± band | 0.10 |
+| Supertrend (10, 3.0) | 15-min | Trend direction filter | 0.12 |
+| Gap-and-go / Gap-fade | 15-min | First-30-min gap edge | 0.08 |
+| Pair Trading (8 pairs) | 15-min | Z-score stat-arb on correlated pairs | 0.04 |
+
+Weights are `config.STRATEGY_WEIGHTS` as of this writing — see
+`openspec/specs/intraday-trading/` for the maintained current values.
 
 Pair trading universe: HDFCBANK/ICICIBANK, RELIANCE/ONGC, TCS/INFY,
 HCLTECH/WIPRO, MARUTI/TATAMOTORS, SBIN/AXISBANK, HINDUNILVR/ITC, TATASTEEL/JSWSTEEL.
@@ -303,15 +318,20 @@ Falls back to a hardcoded Tier-1 list of 24 NIFTY 50 large-caps when the DB is c
 
 ### Positional strategies
 
-| Strategy | Weight | Setup | Typical hold |
+The 4 files below plus the Minervini scanner (`positional/scanner.py`, not in
+`strategies/`) are the real, current lineup — this replaces an earlier version of this
+table that named 7 files no longer (or never) present in the repo.
+
+| Strategy | Weight | Setup | Source |
 |---|---|---|---|
-| Quality Momentum | 25% | Quality ≥ 70 + 63d return > 15% + RSI cross 50 | 15–25 days |
-| Trend Following | 20% | EMA ribbon 9>21>55 + ADX > 25, pullback entry | 12–18 days |
-| Breakout Retest | 20% | 52W high breakout + retest (prior resistance → support) | 8–15 days |
-| VCP Breakout | 15% | Minervini pattern: 2+ contracting corrections + volume dry-up | 10–20 days |
-| Sector Rotation | 10% | Top-3 NSE sector indices by 20d return, catching-up stocks | 10–20 days |
-| Mean Reversion | 5% | Quality stock 15–25% below 52W high + RSI < 35 + vol spike | 8–12 days |
-| Earnings Momentum | 5% | Post-earnings drift: positive surprise gap + consolidation entry | 10–15 days |
+| Minervini VCP | 30% | Trend-template filter + Volatility Contraction Pattern (2+ contracting corrections, volume dry-up) | `positional/scanner.py` |
+| Brahma-Vishnu-Mahesh | 25% | 3-part top-down: NIFTY above rising 20-week SMA, top-3 sector by 3M/6M relative strength, 1.5–3y+ base breakout on >3x weekly volume | `strategies/brahma_vishnu_mahesh.py` |
+| Fun-Tech Momentum | 25% | CANSLIM-style: quarterly EPS/Sales acceleration screen + tight consolidation base breakout on >100% volume expansion | `strategies/fun_tech_momentum.py` |
+| Young Momentum ("1-2-3-4") | 20% | Base breakout → 20–50% impulse leg in 5–15 sessions → pause not breaching 38.2% Fib retracement → buy-stop above pause high | `strategies/young_momentum.py` |
+
+Weights are `config.POSITIONAL_STRATEGY_WEIGHTS`. See
+`openspec/specs/positional-swing-trading/` for the maintained current lineup and scoring
+detail.
 
 ### Positional risk model
 

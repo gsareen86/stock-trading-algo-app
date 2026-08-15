@@ -1,6 +1,18 @@
 # Investment Engine — Design Document
 
-Status: **proposal** (no behaviour change yet) · Scope: swing positional + long-term books
+Status: **as-built** — every phase in §10's roadmap table is marked done; this document
+now records the shipped conviction-engine architecture rather than a pending proposal
+(the "proposal" header below was never updated after the roadmap completed — a concrete
+example of the doc-drift problem `openspec/` exists to prevent). Scope: swing positional
++ long-term books.
+
+> **Living specification**: for current behavior, prefer
+> [`openspec/specs/conviction-engine-scoring-routing/`](../openspec/specs/conviction-engine-scoring-routing/spec.md)
+> and [`openspec/specs/long-term-book/`](../openspec/specs/long-term-book/spec.md). This
+> document remains valuable as the **"why"** behind the architecture (guiding principles,
+> stage-by-stage rationale) — that framing doesn't go stale the way exact current
+> thresholds/weights do.
+
 Companion fixes already merged on this branch: news ticker-matching precision, live LLM
 observability, grouped dashboard UI.
 
