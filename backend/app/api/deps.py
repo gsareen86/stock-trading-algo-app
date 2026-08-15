@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from fastapi import Request
 from sqlalchemy import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.settings import Settings
+from app.llm.budget import DailyBudget
 from app.llm.types import LLMGateway
 
 
@@ -22,5 +24,13 @@ def get_engine(request: Request) -> Engine:
     return request.app.state.engine
 
 
+def get_session_factory(request: Request) -> sessionmaker[Session]:
+    return request.app.state.session_factory
+
+
 def get_gateway(request: Request) -> LLMGateway:
     return request.app.state.gateway
+
+
+def get_budget(request: Request) -> DailyBudget:
+    return request.app.state.budget

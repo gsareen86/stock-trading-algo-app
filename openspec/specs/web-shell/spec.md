@@ -20,6 +20,12 @@ Stock, Performance and Engine — each reachable from persistent navigation.
 - THEN it renders a labelled placeholder naming the change that will fill it
 - AND it does not display fabricated trading data
 
+#### Scenario: Engine shows LLM usage
+- GIVEN the backend is reachable
+- WHEN `/engine` is visited
+- THEN it renders recorded LLM spend, token usage and recent calls
+- AND it is no longer a placeholder
+
 ### Requirement: The shell proves the backend seam
 The Today surface MUST fetch live status from the backend and render it, so a broken
 frontend-to-backend seam is visible in the UI rather than only in logs.
@@ -68,3 +74,29 @@ it.
 - GIVEN `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`
 - WHEN the Today surface fetches backend status
 - THEN the request is issued against `http://localhost:8000`
+
+### Requirement: Engine surfaces cost without an external service
+The Engine surface MUST render LLM spend and usage from the platform's own records, so cost
+is visible with no Langfuse account configured.
+
+#### Scenario: Usage rendered with observability unconfigured
+- GIVEN no Langfuse credentials are present
+- AND calls have been recorded
+- WHEN `/engine` is visited
+- THEN spend, token counts and recent calls are displayed
+
+#### Scenario: Budget shown when configured
+- GIVEN a daily budget is configured
+- WHEN `/engine` is visited
+- THEN today's spend is shown against the cap
+
+#### Scenario: No calls yet
+- GIVEN no calls have been recorded
+- WHEN `/engine` is visited
+- THEN it renders an explicit empty state rather than fabricated figures
+
+#### Scenario: Backend unreachable
+- GIVEN the backend is not running
+- WHEN `/engine` is visited
+- THEN the page still renders
+- AND it displays an explicit connection-failure state

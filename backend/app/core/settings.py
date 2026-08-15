@@ -93,9 +93,19 @@ class Settings(BaseSettings):
     #: model — with no code change.
     llm_route: dict[str, str] = Field(default_factory=dict)
 
+    #: Ordered fallback chain per task, comma-separated, e.g.
+    #: ``LLM_FALLBACK__NARRATIVE=anthropic/claude-sonnet-5,openai/gpt-4o``. Tried in order
+    #: after the primary route fails. A task with no entry keeps single-target behaviour.
+    llm_fallback: dict[str, str] = Field(default_factory=dict)
+
     #: Base URLs for OpenAI-compatible servers, e.g.
     #: ``LLM_PROVIDER_BASE_URL__LEMONADE=http://localhost:8000/v1``.
     llm_provider_base_url: dict[str, str] = Field(default_factory=dict)
+
+    #: Spend cap for the current IST day, in USD. Unset means unlimited. Only calls whose
+    #: provider reports a cost count against it — local models are free and stay available
+    #: after the cap is reached.
+    llm_daily_budget_usd: Annotated[float | None, Field(gt=0)] = None
 
     llm_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
     llm_max_retries: Annotated[int, Field(ge=0)] = 2
@@ -113,7 +123,7 @@ class Settings(BaseSettings):
     langfuse_secret_key: str | None = None
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    @field_validator("llm_route", "llm_provider_base_url", mode="after")
+    @field_validator("llm_route", "llm_provider_base_url", "llm_fallback", mode="after")
     @classmethod
     def _lowercase_keys(cls, value: dict[str, str]) -> dict[str, str]:
         """Normalise keys so ``LLM_ROUTE__NARRATIVE`` and ``llm_route={'narrative':...}``
@@ -129,8 +139,21 @@ class Settings(BaseSettings):
         return self.llm_route.get(task.lower(), self.llm_default_task_model)
 
     def provider_for_task(self, task: str) -> str:
-        """The provider prefix a task will dispatch to."""
+        """The provider prefix a task's *primary* rung dispatches to."""
         return self.model_for_task(task).split("/", 1)[0]
+
+    def chain_for_task(self, task: str) -> list[str]:
+        """Ordered ``<provider>/<model>`` targets for a task: primary first, then fallbacks.
+
+        Duplicates are dropped while preserving order — repeating a target would mean
+        retrying an already-failed rung, which the Router's own retries already cover.
+        """
+        chain = [self.model_for_task(task)]
+        raw = self.llm_fallback.get(task.lower(), "")
+        chain.extend(part.strip() for part in raw.split(",") if part.strip())
+
+        seen: set[str] = set()
+        return [target for target in chain if not (target in seen or seen.add(target))]
 
     def base_url_for(self, provider: str) -> str | None:
         """Configured base URL for an OpenAI-compatible provider, if any."""

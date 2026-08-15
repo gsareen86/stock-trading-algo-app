@@ -48,10 +48,13 @@ class TestCleanDatabase:
         assert {"verdicts", "insights", "alembic_version"} <= _tables(sqlite_url)
 
     def test_records_head_revision(self, migrated_url: str) -> None:
+        """Asserted against the real head, not a literal — head moves every migration."""
+        from app.persistence.status import head_revision
+
         with create_engine(migrated_url).connect() as conn:
             revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
 
-        assert revision == "0001_initial"
+        assert revision == head_revision()
 
     def test_verdict_indexes_created(self, migrated_url: str) -> None:
         indexes = {

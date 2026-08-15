@@ -56,10 +56,12 @@ class TestDegradedStatesAreReportedNotHidden:
         response = _client(Settings(app_env="test", database_url=sqlite_url)).get("/health")
         body = response.json()
 
+        from app.persistence.status import head_revision
+
         assert response.status_code == 200
         assert body["database"]["connected"] is True
         assert body["database"]["migrations_current"] is False
-        assert body["database"]["head_revision"] == "0001_initial"
+        assert body["database"]["head_revision"] == head_revision()
         assert body["status"] == "degraded"
 
     def test_no_provider_configured_is_degraded(self, migrated_url: str) -> None:

@@ -162,10 +162,12 @@ migration*, never a bare `ENABLE` (which locks the app out). Nothing is granted 
 `authenticated`: the backend uses the service role, and the browser never queries Supabase
 directly. A non-`public` schema is also not exposed by PostgREST unless opted in.
 
-⚠️ **Known, accepted exposure:** the 30 legacy `public` tables still have RLS disabled and are
-readable and writable by anyone holding the project's anon key. This is a recorded decision,
-not an oversight — securing them means changing the access posture of the old application,
-which is tracked separately from the rebuild.
+**Legacy `public` tables: closed, not outstanding.** They still have RLS disabled, and the
+Supabase security advisor reports 30 ERRORs for them. This is an accepted risk, decided
+deliberately: the data is entirely paper-trading output — no real money, no personal data, no
+credentials — so the exposure has no meaningful consequence. Do not re-raise it as a finding,
+and do not "fix" it opportunistically. If those tables are ever retired, the guard in
+`app/persistence/legacy.py` is what does it.
 
 ## Surfaces
 

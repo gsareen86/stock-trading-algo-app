@@ -17,10 +17,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.llm import router as llm_router
 from app.core.logging import configure_logging
 from app.core.settings import Settings
+from app.llm.budget import DailyBudget
 from app.llm.gateway import LiteLLMGateway
-from app.persistence.session import make_engine
+from app.llm.recorder import CallRecorder
+from app.persistence.session import make_engine, make_session_factory
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +40,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.state.settings = settings
     app.state.engine = make_engine(settings)
-    app.state.gateway = LiteLLMGateway(settings)
+    app.state.session_factory = make_session_factory(app.state.engine)
+
+    # The recorder and budget share the session factory: one writes the ledger, the other
+    # reads it back to decide whether the platform may keep spending.
+    app.state.recorder = CallRecorder(app.state.session_factory)
+    app.state.budget = DailyBudget(app.state.session_factory, settings.llm_daily_budget_usd)
+    app.state.gateway = LiteLLMGateway(
+        settings, recorder=app.state.recorder, budget=app.state.budget
+    )
 
     # The browser is not a database client here; it reaches data only through this API, so
     # exactly one origin needs to be allowed.
@@ -50,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.include_router(health_router)
+    app.include_router(llm_router)
 
     log.info("app ready (env=%s, version=%s)", settings.app_env, settings.app_version)
     return app

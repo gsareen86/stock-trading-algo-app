@@ -8,9 +8,26 @@ what keeps the routing library swappable and, more importantly, what lets caller
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Literal, Protocol, runtime_checkable
 
 Role = Literal["system", "user", "assistant"]
+
+
+class CallStatus(StrEnum):
+    """Outcome of one call attempt.
+
+    A closed set rather than a boolean: these fail in different ways and have different
+    fixes, and collapsing them would throw away the diagnosis. "Narratives stopped
+    appearing" is answered by *which* of these is filling the log.
+    """
+
+    OK = "ok"
+    CACHED = "cached"
+    FAILED = "failed"
+    RATE_LIMITED = "rate_limited"
+    BREAKER_OPEN = "breaker_open"
+    BUDGET_EXCEEDED = "budget_exceeded"
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,9 +41,15 @@ class LLMResult:
     """A successful completion, plus what observability needs to account for it."""
 
     text: str
-    #: Full ``<provider>/<model>`` the request was dispatched to.
+    #: The model that actually **answered**, which is not necessarily the one configured —
+    #: with fallbacks, "which model produced this?" stops being knowable from settings, and a
+    #: narrative that claims an origin it did not have is worse than one with no origin.
     model: str
     provider: str
+
+    #: What configuration asked for. Differs from ``model`` exactly when a fallback served it.
+    requested_model: str = ""
+    used_fallback: bool = False
 
     prompt_tokens: int | None = None
     completion_tokens: int | None = None

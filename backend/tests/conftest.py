@@ -73,6 +73,14 @@ def settings(migrated_url: str, tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
+def session_factory(migrated_url: str):
+    """Session factory against a migrated throwaway database, schema translation applied."""
+    from app.persistence.session import make_engine, make_session_factory
+
+    return make_session_factory(make_engine(Settings(database_url=migrated_url)))
+
+
+@pytest.fixture
 def client(settings: Settings) -> Iterator:
     from fastapi.testclient import TestClient
 
