@@ -14,8 +14,10 @@ behavior that hasn't shipped. If you need to change what the system does, that g
 | `llm-observability` | The local call ledger — cost, tokens, failure modes, IST-day rollup |
 | `market-data` | Price history and the universe — validated, cached, reproducible offline |
 | `market-calendar` | NSE trading days and session hours, with staleness made visible |
+| `decision-model` | Verdicts, evidence and gates — independence and traceability enforced |
+| `strategies` | Strategy discovery and the Minervini Trend Template + VCP implementation |
 | `skills-registry` | Declared, schema-validated capabilities returning evidence-shaped items |
-| `platform-api` | `GET /health`, `GET /llm/usage`, `GET /llm/calls`, `GET /skills` |
+| `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/skills`, `/strategies`, `/verdicts` |
 | `web-shell` | The six surfaces, design tokens, the backend seam, the Engine LLM panel |
 
 These carry full Requirement+Scenario depth because they describe code that was just written;
@@ -23,4 +25,4 @@ later capabilities may enter at `Status: baseline` depth and be promoted the fir
 change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
-`market-data-foundation`, `skills-registry`.
+`market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`.
