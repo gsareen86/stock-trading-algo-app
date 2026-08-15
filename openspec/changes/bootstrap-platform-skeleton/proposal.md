@@ -24,8 +24,8 @@ evidence, strategies, agents) lands in later changes, on top of seams that alrea
   structured logging, IST clock
 - `backend/persistence/` — SQLAlchemy models and the first Alembic migration, applied to
   both SQLite and the Supabase Postgres project
-- Dropping the 30 empty legacy tables and creating `insights` and `verdicts` **with RLS
-  enabled and policies in the same migration**
+- Creating `insights` and `verdicts` in a dedicated `trading` schema, **with RLS enabled
+  and policies in the same migration**, leaving the predecessor's `public` tables untouched
 - `backend/app/llm/` — LiteLLM-backed gateway behind a narrow internal interface, with
   circuit breaker, disk cache, config-driven routing for 7 providers, Langfuse wiring
 - `GET /health` reporting app, database and LLM-provider status
@@ -47,9 +47,24 @@ Explicitly deferred, each to its own change:
 
 ## Risks
 
-- **Supabase migration is destructive.** It drops 30 tables. All are verified empty (0 rows)
-  and the drop is confined to that explicit list; the migration fails rather than proceeds
-  if an unexpected table is present.
 - **Langfuse and most LLM providers need credentials that may be absent.** The gateway must
   degrade to a clearly-reported unconfigured state, never crash the app, and `/health` must
   say which providers are actually reachable.
+- **The legacy tables stay exposed.** All 30 remain in `public` with RLS disabled, which the
+  Supabase security advisor reports as 30 ERRORs. This change deliberately does not touch
+  them; securing them is tracked separately.
+
+## Correction: the legacy tables were not empty
+
+This change was proposed on the basis that all 30 legacy tables held 0 rows, and originally
+planned to drop them. That was wrong. `list_tables` reports *estimated* row counts from
+Postgres statistics; an exact `COUNT(*)` found roughly **47,500 rows**, including 472 trades,
+206 positions, 325 signal outcomes and ~20,000 signals — history that `backtesting` and
+`books-ledger-and-analytics` will want.
+
+The scope changed in response: the rebuild takes its own `trading` schema and nothing is
+dropped. The emptiness guard survives, unwired, for the future cleanup milestone.
+
+Two things worth carrying forward: estimated row counts are not evidence for a destructive
+decision, and the assert-empty guard would have refused this drop even if it had been
+attempted.

@@ -65,36 +65,51 @@ back out, which is what later lets a `Verdict` link its narrative to the exact t
 produced it. With no Langfuse credentials configured the callback is simply not registered —
 tracing degrades to off, calls still work.
 
-## 4. The destructive migration
+## 4. Namespacing instead of a destructive migration
 
-The first Alembic revision drops the 30 legacy tables. Two safeguards, because this is the
-one irreversible step in the change:
+The rebuild creates a `trading` schema and puts its tables there. The predecessor's 30 tables
+stay in `public`, untouched.
 
-- The drop list is **explicit and hard-coded** — not `DROP SCHEMA` or a reflection-driven
-  loop. A table that isn't on the list is never touched.
-- The migration **asserts each table is empty before dropping it** and aborts the whole
-  transaction otherwise. All 30 were verified at 0 rows when this was written; the assertion
-  is there for the case where that stops being true before it runs.
+This replaces an earlier plan to drop them. That plan rested on all 30 being empty, which
+came from `list_tables`' *estimated* row counts; an exact `COUNT(*)` found ~47,500 rows,
+including 472 trades and 206 positions. Estimates are not evidence for a destructive
+decision — that is the lesson worth keeping, more than the schema choice itself.
 
-`downgrade()` recreates the new tables but deliberately **cannot** restore the legacy ones —
-they carry no data worth reconstructing, and a downgrade that fabricated 30 empty tables
-would imply a rollback path that doesn't really exist.
+Namespacing turns out to be better on the merits anyway:
+
+- Nothing is destroyed, so `backtesting` and `books-ledger-and-analytics` can still read real
+  history rather than starting from an empty ledger.
+- "Is this the new app or the old one?" is answerable from the table name alone — the same
+  clarity the drop was meant to buy.
+- A non-`public` schema is not exposed by PostgREST unless someone opts it in, so the new
+  tables are unreachable over the REST API by construction.
+
+SQLite has no schemas. Rather than keep two model definitions, the `trading` namespace is
+translated away for SQLite via SQLAlchemy's `schema_translate_map`.
+
+One ordering trap, worth recording because the failure is not obvious: Alembic creates its
+own version table *before* running the first revision, and that table lives in `trading`. So
+the schema has to exist before Alembic touches anything — `env.py` creates it, not the
+migration. Rendering the SQL offline is what surfaced this; the generated script had
+`CREATE TABLE trading.alembic_version` above `CREATE SCHEMA trading`.
+
+The emptiness guard survives in `app/persistence/legacy.py`, unwired, for the future cleanup
+milestone. It is kept and tested now, while there is no pressure on it, rather than written
+in a hurry on the day someone decides to delete 47,500 rows.
 
 ## 5. RLS posture
 
-The legacy schema had RLS disabled on all 30 tables, meaning anyone with the anon key could
-read or write every row. The new posture:
-
-- RLS **enabled** on every table, in the same migration that creates it
+- RLS **enabled** on every table this platform creates, in the same migration that creates it
 - An explicit `service_role` full-access policy per table — technically redundant, since
   `service_role` bypasses RLS, but it documents intent in the schema itself and keeps the
   "RLS enabled, zero policies" lint from looking like an oversight
-- **No policy for `anon` or `authenticated`.** Under Postgres RLS, absence of a permissive
-  policy is a deny. The browser is not a database client here; it talks to FastAPI, which
-  holds the service-role credential server-side.
+- **Nothing granted to `anon` or `authenticated`**, on either the schema or its tables. Under
+  Postgres RLS, absence of a permissive policy is a deny. The browser is not a database
+  client here; it talks to FastAPI, which holds the service-role credential server-side.
 
-This is why the migration can enable RLS safely where the bare `ENABLE` the advisory
-suggested would have locked the app out — the backend was never relying on the anon role.
+The 30 legacy tables keep RLS disabled — a deliberate, recorded decision, not an oversight.
+Securing them is tracked separately, since doing it here would mean changing the access
+posture of an application this change is not otherwise touching.
 
 ## 6. What `/health` is for
 

@@ -14,6 +14,8 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, text
 
+from app.persistence.base import SCHEMA
+
 log = logging.getLogger(__name__)
 
 #: backend/ — the directory holding alembic.ini
@@ -50,9 +52,14 @@ def database_status(engine: Engine) -> DatabaseStatus:
     whole point of this endpoint is to make a broken seam visible.
     """
     head = head_revision()
+    # The version table lives beside the tables it describes: in the ``trading`` schema on
+    # Postgres, in the single namespace on SQLite.
+    version_table = (
+        "alembic_version" if engine.dialect.name == "sqlite" else f"{SCHEMA}.alembic_version"
+    )
     try:
         with engine.connect() as conn:
-            row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+            row = conn.execute(text(f"SELECT version_num FROM {version_table}")).fetchone()
             current = row[0] if row else None
     except Exception as exc:
         # Distinguish "cannot connect" from "connected, but never migrated".

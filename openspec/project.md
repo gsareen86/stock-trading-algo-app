@@ -151,10 +151,21 @@ disk cache for stable prompts — the two ideas worth keeping from the legacy `l
 SQLAlchemy + Alembic own the schema. Supabase project `zzhvzrxnesibjrklkcis`
 (`Stock Trading App`, ap-southeast-2, Postgres 17.6).
 
-**RLS is mandatory.** The legacy schema shipped 30 tables with Row Level Security disabled —
-readable and writable by anyone holding the anon key. Every new table enables RLS *with
-policies written in the same migration*, never a bare `ENABLE` (which locks the app out).
-The backend uses the service role; the browser never queries Supabase directly.
+**The platform owns the `trading` schema.** The predecessor's 30 tables stay in `public`,
+holding ~47,500 rows of real history — 472 trades, 206 positions, 325 signal outcomes and
+~20,000 signals — which `backtesting` and `books-ledger-and-analytics` will read. Migrations
+never drop, alter or write to a table this platform did not create. SQLite has no schemas, so
+the namespace is translated away there; one model definition serves both dialects.
+
+**RLS is mandatory on every table we create.** Enabled *with policies written in the same
+migration*, never a bare `ENABLE` (which locks the app out). Nothing is granted to `anon` or
+`authenticated`: the backend uses the service role, and the browser never queries Supabase
+directly. A non-`public` schema is also not exposed by PostgREST unless opted in.
+
+⚠️ **Known, accepted exposure:** the 30 legacy `public` tables still have RLS disabled and are
+readable and writable by anyone holding the project's anon key. This is a recorded decision,
+not an oversight — securing them means changing the access posture of the old application,
+which is tracked separately from the rebuild.
 
 ## Surfaces
 

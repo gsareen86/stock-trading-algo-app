@@ -27,53 +27,98 @@ The system MUST use the same SQLAlchemy model definitions for SQLite and Postgre
 - THEN both produce the same logical tables and columns
 - AND no dialect-specific model definition exists
 
-### Requirement: Legacy tables are dropped only when verifiably empty
-The first migration MUST drop the 30 named legacy tables, and MUST abort without dropping
-anything if any of them contains rows.
+### Requirement: The platform owns a dedicated namespace
+The system MUST create its tables in a dedicated `trading` schema on PostgreSQL, so its
+tables are distinguishable from the predecessor's by name alone.
 
-#### Scenario: All legacy tables empty
-- GIVEN all 30 named legacy tables exist and contain 0 rows
-- WHEN the first migration runs
-- THEN all 30 are dropped
-- AND the new tables are created
+#### Scenario: Tables created in the trading schema
+- GIVEN the migration runs against PostgreSQL
+- WHEN it completes
+- THEN `trading.verdicts` and `trading.insights` exist
+- AND no table is created in `public`
 
-#### Scenario: A legacy table has data
-- GIVEN one of the 30 named legacy tables contains at least one row
-- WHEN the first migration runs
-- THEN the migration raises an error naming that table
-- AND the transaction is rolled back so no table is dropped
+#### Scenario: Version table lives beside its tables
+- GIVEN the migration runs against PostgreSQL
+- WHEN it completes
+- THEN the Alembic version table is in the `trading` schema, not `public`
 
-#### Scenario: Unlisted tables are never touched
-- GIVEN a table exists that is not on the hard-coded legacy list
-- WHEN the first migration runs
-- THEN that table still exists afterwards
+#### Scenario: Namespace exists before Alembic writes its version table
+- GIVEN a PostgreSQL database with no `trading` schema
+- WHEN `alembic upgrade head` runs
+- THEN the schema is created before the version table is written
+- AND the migration completes without error
 
-#### Scenario: Legacy tables already absent
-- GIVEN a fresh database where none of the 30 legacy tables exist
-- WHEN the first migration runs
-- THEN the migration completes successfully
-- AND the new tables are created
+#### Scenario: Namespace collapses on SQLite
+- GIVEN the target database is SQLite, which has no schemas
+- WHEN the migration runs
+- THEN the `trading` namespace is translated away
+- AND the tables are created in the single available namespace
+
+### Requirement: Migrations never modify the predecessor's data
+The system's migrations MUST NOT drop, alter or write to any table it did not create.
+
+#### Scenario: Populated legacy tables survive
+- GIVEN the `public` schema holds the predecessor's 30 tables with data in them
+- WHEN `alembic upgrade head` runs
+- THEN every one of those tables still exists
+- AND their row counts are unchanged
+
+#### Scenario: Unrelated tables survive
+- GIVEN a table exists that this platform did not create
+- WHEN `alembic upgrade head` runs
+- THEN that table and its rows are unchanged
+
+#### Scenario: Downgrade removes only what the platform created
+- GIVEN the migration has been applied
+- WHEN `alembic downgrade base` runs
+- THEN `verdicts` and `insights` are removed
+- AND no legacy table is affected
+
+### Requirement: Retiring legacy tables is guarded by an emptiness check
+Any future removal of the predecessor's tables MUST verify each is empty first, and MUST
+abort naming every non-empty table rather than dropping any.
+
+#### Scenario: Guard rejects populated tables
+- GIVEN legacy tables containing rows
+- WHEN the emptiness guard runs
+- THEN it raises an error naming each non-empty table with its row count
+- AND no table is dropped
+
+#### Scenario: Guard passes on empty tables
+- GIVEN every present legacy table contains 0 rows
+- WHEN the emptiness guard runs
+- THEN it returns the list of tables safe to drop
+
+#### Scenario: Guard ignores tables outside the inventory
+- GIVEN a populated table that is not one of the 30 named legacy tables
+- WHEN the emptiness guard runs
+- THEN that table is not considered and does not cause an error
 
 ### Requirement: Row Level Security enabled with policies in the same migration
 Every table the system creates on PostgreSQL MUST have RLS enabled, and MUST have its
 access policies created in the same migration that creates the table.
 
 #### Scenario: New table is RLS-protected on creation
-- GIVEN the first migration runs against PostgreSQL
+- GIVEN the migration runs against PostgreSQL
 - WHEN it creates the `insights` table
-- THEN RLS is enabled on `insights`
-- AND a `service_role` full-access policy exists on `insights`
+- THEN RLS is enabled on `trading.insights`
+- AND a `service_role` full-access policy exists on it
 
-#### Scenario: Anonymous access is denied
+#### Scenario: Anonymous roles are granted nothing
 - GIVEN the migration has been applied to PostgreSQL
-- WHEN a client holding only the anon key queries `insights`
-- THEN no rows are returned and no rows can be written
+- WHEN the schema grants are inspected
+- THEN neither `anon` nor `authenticated` holds any privilege on the `trading` schema
 
 #### Scenario: RLS statements skipped on SQLite
 - GIVEN the target database is SQLite, which has no RLS
-- WHEN the first migration runs
+- WHEN the migration runs
 - THEN the RLS statements are skipped
 - AND the migration completes successfully
+
+#### Scenario: Migration introduces no new security advisory
+- GIVEN the migration has been applied to the Supabase project
+- WHEN the security advisors are read
+- THEN no `rls_disabled` advisory names a table in the `trading` schema
 
 ### Requirement: Backend connects with a server-side credential
 The system MUST access the database using a server-side credential, and MUST NOT expose

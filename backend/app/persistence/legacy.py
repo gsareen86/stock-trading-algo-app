@@ -1,8 +1,19 @@
-"""The predecessor's schema, and the guard that removes it safely.
+"""Inventory of the predecessor's schema, and the guard for eventually retiring it.
 
-Kept out of the migration file so it can be imported and tested directly — the guard is the
-only thing standing between a re-run of this migration and irreversible data loss, so it
-deserves tests of its own rather than being reachable only through Alembic.
+These 30 tables live in ``public`` and are **not** touched by this platform's migrations. The
+rebuild took its own ``trading`` schema instead, because they turned out to hold roughly
+47,500 rows of real history — 472 trades, 206 positions, 325 signal outcomes and ~20k signals
+— which later increments want for backtesting and outcome analysis.
+
+Two things live here:
+
+* :data:`LEGACY_TABLES` — the inventory, so "is this ours or the old app's?" is answerable in
+  code rather than from memory. The data port in ``market-data-foundation`` reads from it.
+* :func:`assert_all_empty` — the guard for the tracked cleanup milestone that eventually drops
+  these tables. It is deliberately kept and tested now, while there is no pressure on it,
+  rather than written in a hurry on the day someone decides to delete 47,500 rows.
+
+Nothing here is wired into a migration today. That is intentional.
 """
 
 from __future__ import annotations
