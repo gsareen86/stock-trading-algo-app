@@ -19,6 +19,8 @@ dependencies = [
     "pyarrow>=17",       # parquet price cache
     "yfinance>=0.2.40",
     "requests>=2.31",    # NSE constituent CSV
+    "feedparser>=6.0",   # RSS news skill
+    "jsonschema>=4.20",  # skill input/output contracts
 ]
 
 [project.optional-dependencies]

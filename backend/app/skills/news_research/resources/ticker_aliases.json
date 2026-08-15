@@ -1,0 +1,285 @@
+{
+  "_comment": "News articles almost never use the NSE symbol — headlines say 'Balrampur Chini', not 'BALRAMCHIN'. This name->ticker map is what makes matching work at all. Ported from the predecessor; additions welcome.",
+  "aliases": {
+    "ADANIENT": [
+      "ADANI ENTERPRISES"
+    ],
+    "ADANIGREEN": [
+      "ADANI GREEN"
+    ],
+    "ADANIPORTS": [
+      "ADANI PORT",
+      "ADANI PORTS"
+    ],
+    "AMBUJACEM": [
+      "AMBUJA CEMENTS"
+    ],
+    "APOLLOHOSP": [
+      "APOLLO HOSPITALS"
+    ],
+    "ASIANPAINT": [
+      "ASIAN PAINTS"
+    ],
+    "AXISBANK": [
+      "AXIS BANK"
+    ],
+    "BAJAJ-AUTO": [
+      "BAJAJ AUTO"
+    ],
+    "BAJAJFINSV": [
+      "BAJAJ FINSERV"
+    ],
+    "BAJFINANCE": [
+      "BAJAJ FINANCE"
+    ],
+    "BALRAMCHIN": [
+      "BALRAMPUR CHINI",
+      "BALRAMPUR SUGAR"
+    ],
+    "BERGEPAINT": [
+      "BERGER PAINTS"
+    ],
+    "BHARTIARTL": [
+      "AIRTEL",
+      "BHARTI AIRTEL"
+    ],
+    "BIOCON": [
+      "BIOCON"
+    ],
+    "BOSCHLTD": [
+      "BOSCH LIMITED",
+      "BOSCH LTD"
+    ],
+    "BPCL": [
+      "BHARAT PETROLEUM",
+      "BPCL"
+    ],
+    "BRITANNIA": [
+      "BRITANNIA",
+      "BRITANNIA INDUSTRIES"
+    ],
+    "CIPLA": [
+      "CIPLA"
+    ],
+    "COALINDIA": [
+      "COAL INDIA"
+    ],
+    "COLPAL": [
+      "COLGATE PALMOLIVE",
+      "COLGATE-PALMOLIVE"
+    ],
+    "DABUR": [
+      "DABUR",
+      "DABUR INDIA"
+    ],
+    "DIVISLAB": [
+      "DIVI'S LAB",
+      "DIVIS LABORATORIES"
+    ],
+    "DLF": [
+      "DLF LIMITED"
+    ],
+    "DMART": [
+      "AVENUE SUPERMARTS",
+      "D-MART",
+      "DMART"
+    ],
+    "DRREDDY": [
+      "DR REDDY",
+      "DR. REDDY"
+    ],
+    "EICHERMOT": [
+      "EICHER MOTORS"
+    ],
+    "GAIL": [
+      "GAIL (INDIA)",
+      "GAIL INDIA"
+    ],
+    "GRASIM": [
+      "GRASIM INDUSTRIES"
+    ],
+    "HAVELLS": [
+      "HAVELLS",
+      "HAVELLS INDIA"
+    ],
+    "HCLTECH": [
+      "HCL TECH",
+      "HCL TECHNOLOGIES"
+    ],
+    "HDFCBANK": [
+      "HDFC BANK"
+    ],
+    "HDFCLIFE": [
+      "HDFC LIFE"
+    ],
+    "HEROMOTOCO": [
+      "HERO MOTOCORP",
+      "HERO MOTORS"
+    ],
+    "HINDALCO": [
+      "HINDALCO"
+    ],
+    "HINDPETRO": [
+      "HINDUSTAN PETROLEUM",
+      "HPCL"
+    ],
+    "HINDUNILVR": [
+      "HINDUSTAN UNILEVER",
+      "HUL"
+    ],
+    "ICICIBANK": [
+      "ICICI BANK"
+    ],
+    "ICICIPRULI": [
+      "ICICI PRUDENTIAL"
+    ],
+    "INDUSINDBK": [
+      "INDUSIND BANK"
+    ],
+    "INFY": [
+      "INFOSYS"
+    ],
+    "IOC": [
+      "INDIAN OIL",
+      "IOCL"
+    ],
+    "IRCTC": [
+      "INDIAN RAILWAY CATERING",
+      "IRCTC"
+    ],
+    "IRFC": [
+      "INDIAN RAILWAY FINANCE"
+    ],
+    "ITC": [
+      "ITC LIMITED",
+      "ITC LTD"
+    ],
+    "JSWSTEEL": [
+      "JSW STEEL"
+    ],
+    "KOTAKBANK": [
+      "KOTAK BANK",
+      "KOTAK MAHINDRA BANK"
+    ],
+    "LT": [
+      "L&T",
+      "LARSEN & TOUBRO",
+      "LARSEN AND TOUBRO"
+    ],
+    "LTIM": [
+      "LTI MINDTREE",
+      "LTIMINDTREE"
+    ],
+    "LUPIN": [
+      "LUPIN LIMITED",
+      "LUPIN LTD"
+    ],
+    "M&M": [
+      "MAHINDRA & MAHINDRA",
+      "MAHINDRA AND MAHINDRA"
+    ],
+    "MARICO": [
+      "MARICO"
+    ],
+    "MARUTI": [
+      "MARUTI",
+      "MARUTI SUZUKI"
+    ],
+    "MUTHOOTFIN": [
+      "MUTHOOT FINANCE"
+    ],
+    "NAUKRI": [
+      "INFO EDGE"
+    ],
+    "NESTLEIND": [
+      "NESTLE",
+      "NESTLE INDIA"
+    ],
+    "NTPC": [
+      "NTPC"
+    ],
+    "NYKAA": [
+      "FSN E-COMMERCE",
+      "NYKAA"
+    ],
+    "ONGC": [
+      "OIL AND NATURAL GAS",
+      "ONGC"
+    ],
+    "PAYTM": [
+      "ONE97 COMMUNICATIONS",
+      "PAYTM"
+    ],
+    "PIDILITIND": [
+      "PIDILITE",
+      "PIDILITE INDUSTRIES"
+    ],
+    "POLICYBZR": [
+      "PB FINTECH",
+      "POLICYBAZAAR"
+    ],
+    "POWERGRID": [
+      "POWER GRID",
+      "POWER GRID CORPORATION"
+    ],
+    "RELIANCE": [
+      "RELIANCE",
+      "RELIANCE INDUSTRIES"
+    ],
+    "SBILIFE": [
+      "SBI LIFE"
+    ],
+    "SBIN": [
+      "SBI",
+      "STATE BANK OF INDIA"
+    ],
+    "SIEMENS": [
+      "SIEMENS"
+    ],
+    "SRF": [
+      "SRF LIMITED"
+    ],
+    "SUNPHARMA": [
+      "SUN PHARMA",
+      "SUN PHARMACEUTICAL"
+    ],
+    "TATACONSUM": [
+      "TATA CONSUMER"
+    ],
+    "TATAMOTORS": [
+      "TATA MOTORS"
+    ],
+    "TATASTEEL": [
+      "TATA STEEL"
+    ],
+    "TCS": [
+      "TATA CONSULTANCY SERVICES",
+      "TCS"
+    ],
+    "TECHM": [
+      "TECH MAHINDRA"
+    ],
+    "TITAN": [
+      "TITAN",
+      "TITAN COMPANY"
+    ],
+    "TVSMOTOR": [
+      "TVS MOTOR"
+    ],
+    "ULTRACEMCO": [
+      "ULTRATECH CEMENT"
+    ],
+    "UPL": [
+      "UPL LIMITED"
+    ],
+    "VEDL": [
+      "VEDANTA"
+    ],
+    "WIPRO": [
+      "WIPRO"
+    ],
+    "ZOMATO": [
+      "ZOMATO"
+    ]
+  }
+}

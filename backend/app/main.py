@@ -18,12 +18,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.llm import router as llm_router
+from app.api.skills import router as skills_router
 from app.core.logging import configure_logging
 from app.core.settings import Settings
 from app.llm.budget import DailyBudget
 from app.llm.gateway import LiteLLMGateway
 from app.llm.recorder import CallRecorder
 from app.persistence.session import make_engine, make_session_factory
+from app.skills.registry import SkillRegistry
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +51,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.gateway = LiteLLMGateway(
         settings, recorder=app.state.recorder, budget=app.state.budget
     )
+    # Discovered once at startup: importing every skill module per request would be wasteful,
+    # and load failures should surface at boot rather than on first use.
+    app.state.skills = SkillRegistry.discover()
 
     # The browser is not a database client here; it reaches data only through this API, so
     # exactly one origin needs to be allowed.
@@ -62,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(llm_router)
+    app.include_router(skills_router)
 
     log.info("app ready (env=%s, version=%s)", settings.app_env, settings.app_version)
     return app

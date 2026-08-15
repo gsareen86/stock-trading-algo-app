@@ -1,0 +1,33 @@
+{
+  "_comment": "Indian financial-news RSS feeds. No API fees, no keys. A feed that stops responding degrades the skill's coverage; it must not fail the call.",
+  "feeds": [
+    {
+      "source": "business_standard",
+      "url": "https://www.business-standard.com/rss/markets-106.rss"
+    },
+    {
+      "source": "et_markets",
+      "url": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"
+    },
+    {
+      "source": "et_stocks",
+      "url": "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms"
+    },
+    {
+      "source": "livemint_markets",
+      "url": "https://www.livemint.com/rss/markets"
+    },
+    {
+      "source": "moneycontrol_business",
+      "url": "https://www.moneycontrol.com/rss/business.xml"
+    },
+    {
+      "source": "moneycontrol_markets",
+      "url": "https://www.moneycontrol.com/rss/marketsnews.xml"
+    },
+    {
+      "source": "moneycontrol_results",
+      "url": "https://www.moneycontrol.com/rss/results.xml"
+    }
+  ]
+}
