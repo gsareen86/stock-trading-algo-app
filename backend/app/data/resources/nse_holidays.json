@@ -1,0 +1,24 @@
+{
+  "_comment": "NSE full-day trading holidays by year. Published yearly by NSE at https://www.nseindia.com/resources/exchange-communication-holidays. Add the new year each January; an uncovered year raises CalendarNotCovered rather than being assumed open.",
+  "holidays": {
+    "2026": [
+      "2026-01-26",
+      "2026-02-19",
+      "2026-03-03",
+      "2026-03-20",
+      "2026-04-03",
+      "2026-04-14",
+      "2026-04-21",
+      "2026-04-30",
+      "2026-05-01",
+      "2026-05-27",
+      "2026-08-15",
+      "2026-08-27",
+      "2026-10-02",
+      "2026-11-09",
+      "2026-11-10",
+      "2026-11-25",
+      "2026-12-25"
+    ]
+  }
+}

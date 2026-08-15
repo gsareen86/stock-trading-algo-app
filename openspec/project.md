@@ -58,7 +58,9 @@ Each one fixes a specific, observed failure of the predecessor.
 backend/app/
   core/         settings, logging, IST clock
   domain/       pure models: Instrument, Candle, Verdict, Evidence, GateResult, Position
-  data/         PORTED plumbing: prices, universe, screener, nse_calendar, surveillance
+  data/         PORTED plumbing: prices (+ cache), universe, NSE calendar
+                (fundamentals and Screener.in scraping land with the screening change;
+                 there was never a surveillance module to port — only an orphan table)
   skills/       manifest-driven capabilities, callable by agents
   strategies/   4 independent strategies, each → Verdict
   agents/       LangGraph nodes + A2A adapters

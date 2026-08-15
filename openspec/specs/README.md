@@ -12,6 +12,8 @@ behavior that hasn't shipped. If you need to change what the system does, that g
 | `data-persistence` | Migration ownership, the `trading` namespace, RLS, the cleanup guard |
 | `llm-gateway` | Task-named routing, fallback chains, failing soft, budget cap, tracing |
 | `llm-observability` | The local call ledger — cost, tokens, failure modes, IST-day rollup |
+| `market-data` | Price history and the universe — validated, cached, reproducible offline |
+| `market-calendar` | NSE trading days and session hours, with staleness made visible |
 | `platform-api` | `GET /health`, `GET /llm/usage`, `GET /llm/calls` |
 | `web-shell` | The six surfaces, design tokens, the backend seam, the Engine LLM panel |
 
@@ -19,4 +21,5 @@ These carry full Requirement+Scenario depth because they describe code that was 
 later capabilities may enter at `Status: baseline` depth and be promoted the first time a real
 change touches them.
 
-Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`.
+Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
+`market-data-foundation`.

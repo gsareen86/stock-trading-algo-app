@@ -1,0 +1,10 @@
+{
+  "_comment": "Symbols that persistently return 404s, empty frames or stale zeroes from the price provider. Excluded from every universe snapshot. This encodes expensively-learned knowledge \u2014 do not prune it without evidence.",
+  "symbols": [
+    "DUMMYVEDL1",
+    "DUMMYVEDL2",
+    "DUMMYVEDL3",
+    "DUMMYVEDL4",
+    "VEDL"
+  ]
+}

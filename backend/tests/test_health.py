@@ -201,3 +201,32 @@ class TestCors:
         response = _client(settings).get("/health", headers={"Origin": "http://evil.example"})
 
         assert response.headers.get("access-control-allow-origin") != "http://evil.example"
+
+
+class TestCalendarCoverage:
+    def test_covered_years_reported(self, client: TestClient) -> None:
+        body = client.get("/health").json()
+
+        assert body["calendar"]["covered_years"]
+        assert body["calendar"]["current_year_covered"] is True
+
+    def test_stale_calendar_degrades_without_failing(
+        self, migrated_url: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A holiday file that ran out is discovered on a Tuesday in January otherwise."""
+        import json
+
+        from app.api import health as health_module
+        from app.data.calendar import NseCalendar
+
+        stale = tmp_path / "stale.json"
+        stale.write_text(json.dumps({"holidays": {"1999": ["1999-01-26"]}}))
+        monkeypatch.setattr(health_module, "NseCalendar", lambda: NseCalendar(holidays_file=stale))
+
+        response = _client(Settings(app_env="test", database_url=migrated_url)).get("/health")
+        body = response.json()
+
+        assert response.status_code == 200
+        assert body["calendar"]["current_year_covered"] is False
+        assert body["calendar"]["covered_years"] == [1999]
+        assert body["status"] == "degraded"

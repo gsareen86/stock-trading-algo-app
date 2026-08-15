@@ -17,7 +17,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Engine
 
 from app.api.deps import get_engine, get_settings
+from app.core.clock import now_ist
 from app.core.settings import Settings
+from app.data.calendar import NseCalendar
 from app.llm import providers
 from app.persistence.status import database_status
 
@@ -44,7 +46,13 @@ async def health(
     default_provider = settings.llm_default_task_model.partition("/")[0]
     default_usable = any(p.name == default_provider and p.configured for p in provider_status)
 
-    healthy = db.connected and bool(db.migrations_current) and default_usable
+    # A holiday file that ran out in December is exactly the kind of thing nobody discovers
+    # until a Tuesday in January, when the engine reasons about a closed market as if open.
+    calendar = NseCalendar()
+    current_year = now_ist().year
+    calendar_current = calendar.covers(current_year)
+
+    healthy = db.connected and bool(db.migrations_current) and default_usable and calendar_current
 
     return {
         "status": "ok" if healthy else "degraded",
@@ -78,5 +86,10 @@ async def health(
         "observability": {
             "provider": "langfuse",
             "configured": settings.observability_configured,
+        },
+        "calendar": {
+            "covered_years": list(calendar.covered_years),
+            "current_year": current_year,
+            "current_year_covered": calendar_current,
         },
     }
