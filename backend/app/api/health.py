@@ -37,7 +37,14 @@ async def health(
     provider_status = await providers.status_all(settings, do_probe=probe)
 
     any_configured = any(p.configured for p in provider_status)
-    healthy = db.connected and bool(db.migrations_current) and any_configured
+
+    # Any task without an explicit route falls back to the default model. If *its* provider
+    # is unconfigured those tasks cannot run, however many other providers are set up — so
+    # "some provider is configured" is not sufficient to call the platform healthy.
+    default_provider = settings.llm_default_task_model.partition("/")[0]
+    default_usable = any(p.name == default_provider and p.configured for p in provider_status)
+
+    healthy = db.connected and bool(db.migrations_current) and default_usable
 
     return {
         "status": "ok" if healthy else "degraded",
@@ -65,6 +72,7 @@ async def health(
             ],
             "any_configured": any_configured,
             "default_model": settings.llm_default_task_model,
+            "default_model_usable": default_usable,
             "routes": settings.llm_route,
         },
         "observability": {

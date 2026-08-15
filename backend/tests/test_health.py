@@ -90,6 +90,38 @@ class TestDegradedStatesAreReportedNotHidden:
         assert lemonade["configured"] is True
         assert body["llm"]["any_configured"] is True
 
+    def test_degraded_when_only_a_non_default_provider_is_configured(
+        self, migrated_url: str
+    ) -> None:
+        """One configured provider is not enough if unrouted tasks still cannot run."""
+        settings = Settings(
+            app_env="test",
+            database_url=migrated_url,
+            llm_default_task_model="anthropic/claude-sonnet-5",  # no key
+            llm_route={"narrative": "lemonade/qwen3-8b"},  # configured, but only for one task
+        )
+
+        body = _client(settings).get("/health").json()
+
+        assert body["llm"]["any_configured"] is True
+        assert body["llm"]["default_model_usable"] is False
+        assert body["status"] == "degraded"
+
+    def test_ok_when_the_default_model_provider_is_configured(
+        self, migrated_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        settings = Settings(
+            app_env="test",
+            database_url=migrated_url,
+            llm_default_task_model="anthropic/claude-sonnet-5",
+        )
+
+        body = _client(settings).get("/health").json()
+
+        assert body["llm"]["default_model_usable"] is True
+        assert body["status"] == "ok"
+
 
 class TestProbing:
     def test_reachability_is_null_without_probe(self, client: TestClient) -> None:

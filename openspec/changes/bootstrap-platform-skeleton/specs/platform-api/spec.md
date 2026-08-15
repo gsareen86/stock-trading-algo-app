@@ -38,6 +38,24 @@ failing outright, so the cause is visible to the caller.
 - AND every provider is reported as not configured
 - AND overall `status` is `degraded`
 
+### Requirement: Health reflects whether unrouted tasks can actually run
+`GET /health` MUST report `status` as `degraded` when the provider backing the default task
+model is unconfigured, regardless of how many other providers are configured.
+
+#### Scenario: Only a non-default provider is configured
+- GIVEN the default task model routes to a provider with no credentials
+- AND one other provider is configured and routed to a single task
+- WHEN `GET /health` is requested
+- THEN `llm.any_configured` is true
+- AND `llm.default_model_usable` is false
+- AND overall `status` is `degraded`
+
+#### Scenario: Default model's provider is configured
+- GIVEN the provider backing the default task model has credentials
+- WHEN `GET /health` is requested
+- THEN `llm.default_model_usable` is true
+- AND overall `status` is `ok`
+
 ### Requirement: Provider status distinguishes configured from reachable
 `GET /health` MUST report separately whether a provider has credentials and whether it
 responded to a probe.

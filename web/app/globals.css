@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens — the single source of visual style.
+   Surfaces consume these; no surface hard-codes a colour. Changing a value here
+   changes every surface, which is the whole point of defining them up front
+   rather than after six screens have drifted apart.
+   --------------------------------------------------------------------------- */
+
+:root {
+  /* Neutrals — the chrome */
+  --surface-base: #f8fafc;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f5f9;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --accent: #4f46e5;
+  --accent-soft: #eef2ff;
+
+  /* Stance — domain tokens. Verdicts are BUY / WATCH / AVOID and these three
+     colours must mean the same thing on every surface that renders one. */
+  --stance-buy: #059669;
+  --stance-buy-soft: #ecfdf5;
+  --stance-watch: #d97706;
+  --stance-watch-soft: #fffbeb;
+  --stance-avoid: #dc2626;
+  --stance-avoid-soft: #fef2f2;
+
+  /* Seam status */
+  --status-ok: #059669;
+  --status-degraded: #d97706;
+  --status-down: #dc2626;
+
+  --radius: 0.5rem;
+  --radius-lg: 0.75rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-base: #0b1120;
+    --surface-raised: #131c31;
+    --surface-sunken: #0f1728;
+    --border-subtle: #1e293b;
+    --border-strong: #334155;
+
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+
+    --accent: #818cf8;
+    --accent-soft: #1e1b4b;
+
+    --stance-buy: #34d399;
+    --stance-buy-soft: #052e23;
+    --stance-watch: #fbbf24;
+    --stance-watch-soft: #3b2708;
+    --stance-avoid: #f87171;
+    --stance-avoid-soft: #3f1414;
+
+    --status-ok: #34d399;
+    --status-degraded: #fbbf24;
+    --status-down: #f87171;
+  }
+}
+
+@theme inline {
+  --color-surface-base: var(--surface-base);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-stance-buy: var(--stance-buy);
+  --color-stance-buy-soft: var(--stance-buy-soft);
+  --color-stance-watch: var(--stance-watch);
+  --color-stance-watch-soft: var(--stance-watch-soft);
+  --color-stance-avoid: var(--stance-avoid);
+  --color-stance-avoid-soft: var(--stance-avoid-soft);
+
+  --color-status-ok: var(--status-ok);
+  --color-status-degraded: var(--status-degraded);
+  --color-status-down: var(--status-down);
+
+  --radius-token: var(--radius);
+  --radius-token-lg: var(--radius-lg);
+
+  /* System stack: no build-time font fetch, so the build stays hermetic. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+body {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
