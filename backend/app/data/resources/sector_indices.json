@@ -1,0 +1,55 @@
+{
+  "_comment": "NSE sector indices, and the industry strings that map onto them. Two vocabularies feed this: the NSE constituent CSV's 'Industry' column, and yfinance's 'sector' string. Both are matched case-insensitively by substring, longest key first, so 'financial services' beats 'financial'. Adding a term is a data change, not a code change.",
+  "indices": {
+    "IT": "^CNXIT",
+    "Bank": "^NSEBANK",
+    "FMCG": "^CNXFMCG",
+    "Pharma": "^CNXPHARMA",
+    "Auto": "^CNXAUTO",
+    "Metal": "^CNXMETAL",
+    "Energy": "^CNXENERGY",
+    "Realty": "^CNXREALTY"
+  },
+  "industry_terms": {
+    "information technology": "IT",
+    "consumer technology": "IT",
+    "software": "IT",
+    "technology": "IT",
+    "it": "IT",
+
+    "financial services": "Bank",
+    "private sector bank": "Bank",
+    "public sector bank": "Bank",
+    "banks": "Bank",
+    "bank": "Bank",
+    "finance": "Bank",
+    "financial": "Bank",
+
+    "fast moving consumer goods": "FMCG",
+    "consumer defensive": "FMCG",
+    "consumer staples": "FMCG",
+    "fmcg": "FMCG",
+
+    "healthcare": "Pharma",
+    "pharmaceuticals": "Pharma",
+    "pharma": "Pharma",
+
+    "automobile and auto components": "Auto",
+    "consumer cyclical": "Auto",
+    "automobile": "Auto",
+    "auto": "Auto",
+
+    "basic materials": "Metal",
+    "metals & mining": "Metal",
+    "metals and mining": "Metal",
+    "metal": "Metal",
+
+    "oil gas & consumable fuels": "Energy",
+    "oil gas": "Energy",
+    "power": "Energy",
+    "energy": "Energy",
+
+    "real estate": "Realty",
+    "realty": "Realty"
+  }
+}

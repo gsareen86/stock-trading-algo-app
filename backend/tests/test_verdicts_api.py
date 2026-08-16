@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import Settings
 from app.data.fake import FakePriceSource
+from app.data.fundamentals import StaticFundamentalsSource
 from app.domain.verdict import Evidence, GateResult, Operator, Stance, Verdict
 from app.main import create_app
 from app.persistence.verdicts import VerdictRepository
@@ -50,9 +51,12 @@ def _verdict(ticker: str = "TCS", strategy: str = "minervini", **overrides) -> V
 
 @pytest.fixture
 def client(settings: Settings) -> TestClient:
-    """App wired to a deterministic price source, so evaluation never touches a provider."""
+    """App wired to deterministic sources, so evaluation never touches a provider."""
     app = create_app(settings)
     app.state.price_source = FakePriceSource(bars=400)
+    # Empty rather than absent: fun_tech_momentum then fails its fundamentals gate
+    # deterministically instead of reaching for yfinance.
+    app.state.fundamentals_source = StaticFundamentalsSource({})
     return TestClient(app)
 
 
@@ -111,29 +115,35 @@ class TestPersistence:
 
 
 class TestStrategiesEndpoint:
-    def test_lists_minervini(self, client: TestClient) -> None:
+    def test_lists_all_four(self, client: TestClient) -> None:
         body = client.get("/strategies").json()
 
-        assert body["count"] == 1
-        assert body["strategies"][0]["id"] == "minervini"
+        assert body["count"] == 4
+        assert {s["id"] for s in body["strategies"]} == {
+            "minervini",
+            "brahma_vishnu_mahesh",
+            "fun_tech_momentum",
+            "young_momentum",
+        }
         assert body["load_failures"] == []
 
     def test_description_explains_the_rs_substitution(self, client: TestClient) -> None:
         body = client.get("/strategies").json()
+        minervini = next(s for s in body["strategies"] if s["id"] == "minervini")
 
-        assert "benchmark" in body["strategies"][0]["description"]
+        assert "benchmark" in minervini["description"]
 
 
 class TestEvaluateEndpoint:
     def test_returns_a_verdict_with_evidence(self, client: TestClient) -> None:
         body = client.post("/verdicts/evaluate", json={"symbols": ["RELIANCE"]}).json()
 
-        assert body["count"] == 1
-        verdict = body["verdicts"][0]
-        assert verdict["strategy_id"] == "minervini"
-        assert verdict["stance"] in {"BUY", "WATCH", "AVOID"}
-        assert verdict["evidence"]
-        assert all(row["source_ref"] for row in verdict["evidence"])
+        # One per strategy, never merged.
+        assert body["count"] == 4
+        for verdict in body["verdicts"]:
+            assert verdict["stance"] in {"BUY", "WATCH", "AVOID"}
+            assert verdict["evidence"]
+            assert all(row["source_ref"] for row in verdict["evidence"])
 
     def test_no_combined_stance_in_the_response(self, client: TestClient) -> None:
         """Cross-strategy agreement is displayed, never computed."""
@@ -145,8 +155,11 @@ class TestEvaluateEndpoint:
     def test_one_verdict_per_strategy_per_symbol(self, client: TestClient) -> None:
         body = client.post("/verdicts/evaluate", json={"symbols": ["RELIANCE", "TCS"]}).json()
 
-        assert body["count"] == 2
+        assert body["count"] == 8  # 2 symbols x 4 strategies
         assert {v["ticker"] for v in body["verdicts"]} == {"RELIANCE", "TCS"}
+        for ticker in ("RELIANCE", "TCS"):
+            per_ticker = [v for v in body["verdicts"] if v["ticker"] == ticker]
+            assert len({v["strategy_id"] for v in per_ticker}) == 4
 
     def test_does_not_persist_by_default(self, client: TestClient) -> None:
         client.post("/verdicts/evaluate", json={"symbols": ["RELIANCE"]})
@@ -158,8 +171,8 @@ class TestEvaluateEndpoint:
             "/verdicts/evaluate", json={"symbols": ["RELIANCE"], "persist": True}
         ).json()
 
-        assert body["persisted"] == 1
-        assert client.get("/verdicts").json()["count"] == 1
+        assert body["persisted"] == 4
+        assert client.get("/verdicts").json()["count"] == 4
 
     def test_unknown_strategy_rejected(self, client: TestClient) -> None:
         response = client.post(

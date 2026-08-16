@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import get_session_factory, get_settings
 from app.core.settings import Settings
 from app.data.cache import CachingPriceSource
+from app.data.fundamentals import YFinanceFundamentalsSource
 from app.data.yfinance_source import YFinancePriceSource
 from app.domain.instrument import Instrument
 from app.domain.verdict import Verdict
@@ -35,6 +36,12 @@ def _price_source(request: Request, settings: Settings):
     if existing is not None:
         return existing
     return CachingPriceSource(YFinancePriceSource(), cache_dir=settings.llm_cache_dir + "/prices")
+
+
+def _fundamentals_source(request: Request):
+    """Only the fundamental strategy uses this; the others ignore it entirely."""
+    existing = getattr(request.app.state, "fundamentals_source", None)
+    return existing if existing is not None else YFinanceFundamentalsSource()
 
 
 def _serialise(verdict: Verdict) -> dict[str, Any]:
@@ -93,7 +100,10 @@ async def evaluate(
             status_code=422, detail=f"unknown strategy id(s): {', '.join(sorted(unknown))}"
         )
 
-    context = StrategyContext(price_source=_price_source(request, settings))
+    context = StrategyContext(
+        price_source=_price_source(request, settings),
+        fundamentals_source=_fundamentals_source(request),
+    )
     verdicts: list[Verdict] = []
     for symbol in payload.symbols:
         instrument = Instrument(symbol.strip().upper())

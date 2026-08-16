@@ -12,10 +12,10 @@ behavior that hasn't shipped. If you need to change what the system does, that g
 | `data-persistence` | Migration ownership, the `trading` namespace, RLS, the cleanup guard |
 | `llm-gateway` | Task-named routing, fallback chains, failing soft, budget cap, tracing |
 | `llm-observability` | The local call ledger — cost, tokens, failure modes, IST-day rollup |
-| `market-data` | Price history and the universe — validated, cached, reproducible offline |
+| `market-data` | Price history, universe, quarterly fundamentals and sector indices |
 | `market-calendar` | NSE trading days and session hours, with staleness made visible |
 | `decision-model` | Verdicts, evidence and gates — independence and traceability enforced |
-| `strategies` | Strategy discovery and the Minervini Trend Template + VCP implementation |
+| `strategies` | Strategy discovery and all four implementations, each with its own conviction |
 | `skills-registry` | Declared, schema-validated capabilities returning evidence-shaped items |
 | `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/skills`, `/strategies`, `/verdicts` |
 | `web-shell` | The six surfaces, design tokens, the backend seam, the Engine LLM panel |
@@ -25,4 +25,5 @@ later capabilities may enter at `Status: baseline` depth and be promoted the fir
 change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
-`market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`.
+`market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`,
+`remaining-three-strategies`.

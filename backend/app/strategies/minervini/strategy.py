@@ -44,7 +44,7 @@ class MinerviniStrategy:
     """Implements :class:`app.strategies.protocols.Strategy`."""
 
     def evaluate(self, instrument: Instrument, context: StrategyContext) -> Verdict:
-        as_of = (context.now() if context.now else now_utc)()
+        as_of = context.now() if context.now else now_utc()
         series = context.price_source.history(
             instrument, interval="1d", lookback_days=LOOKBACK_DAYS
         )

@@ -175,3 +175,137 @@ def volume_dry_up_ratio(
     if base <= 0:
         return None
     return round(recent / base, 4)
+
+
+def to_weekly(frame: pd.DataFrame) -> pd.DataFrame:
+    """Resample daily bars to weekly, aggregating OHLCV correctly.
+
+    Resampled rather than fetched as `1wk`: the platform already holds daily bars, and a
+    provider's weekly candles disagree at week boundaries (some anchor Friday, some Sunday),
+    which would make a weekly moving average silently different from the daily one it is
+    supposed to summarise.
+    """
+    if frame.empty:
+        return frame
+    weekly = frame.resample("W").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    )
+    return weekly.dropna()
+
+
+@dataclass(frozen=True, slots=True)
+class RangeBreakout:
+    """A horizontal base and whether price has emerged from it."""
+
+    range_high: float
+    range_low: float
+    range_bars: int
+    width_pct: float
+    broke_out: bool
+    close: float
+
+
+def horizontal_range_breakout(
+    frame: pd.DataFrame, min_bars: int, max_width_pct: float = 60.0, exclude_recent: int = 5
+) -> RangeBreakout | None:
+    """Whether the latest close has emerged above a long horizontal range.
+
+    The range is measured **excluding the most recent bars**, so the breakout itself does not
+    widen the range it is supposed to be breaking out of — that circularity would make every
+    new high look like a breakout from a range that includes it.
+    """
+    if len(frame) < min_bars + exclude_recent:
+        return None
+
+    base = frame.iloc[-(min_bars + exclude_recent) : -exclude_recent]
+    high = float(base["high"].max())
+    low = float(base["low"].min())
+    if high <= 0 or low <= 0:
+        return None
+
+    width = round((high / low - 1) * 100, 4)
+    close = float(frame["close"].iloc[-1])
+    return RangeBreakout(
+        range_high=high,
+        range_low=low,
+        range_bars=len(base),
+        width_pct=width,
+        # A "range" wider than max_width_pct is a trend, not a base — calling a new high in an
+        # ongoing advance a multi-year breakout would flatter every momentum name.
+        broke_out=bool(close > high and width <= max_width_pct),
+        close=close,
+    )
+
+
+def consolidation_tightness(frame: pd.DataFrame, bars: int) -> float | None:
+    """High-to-low range over the last ``bars``, as a percentage of the low."""
+    window = frame.tail(bars)
+    if len(window) < 2:
+        return None
+    high, low = float(window["high"].max()), float(window["low"].min())
+    if low <= 0:
+        return None
+    return round((high / low - 1) * 100, 4)
+
+
+@dataclass(frozen=True, slots=True)
+class ImpulseLeg:
+    """A vertical advance: trough to peak over a compressed window."""
+
+    start_index: int
+    end_index: int
+    low: float
+    high: float
+    gain_pct: float
+    bars: int
+
+
+def find_impulse_leg(
+    frame: pd.DataFrame,
+    min_gain_pct: float,
+    max_gain_pct: float,
+    min_bars: int,
+    max_bars: int,
+    search_window: int = 90,
+) -> ImpulseLeg | None:
+    """The most recent qualifying surge, or None.
+
+    Scans backwards so the *latest* impulse wins — an older, larger one is not the leg this
+    strategy is trading, and returning it would pair a stale impulse with a fresh pause.
+    """
+    window = frame.tail(search_window)
+    if len(window) < min_bars + 1:
+        return None
+
+    lows = window["low"].reset_index(drop=True)
+    highs = window["high"].reset_index(drop=True)
+    n = len(window)
+
+    for end in range(n - 1, min_bars - 1, -1):
+        for span in range(min_bars, min(max_bars, end) + 1):
+            start = end - span
+            low = float(lows.iloc[start])
+            high = float(highs.iloc[end])
+            if low <= 0:
+                continue
+            gain = (high / low - 1) * 100
+            if min_gain_pct <= gain <= max_gain_pct:
+                return ImpulseLeg(
+                    start_index=start,
+                    end_index=end,
+                    low=low,
+                    high=high,
+                    gain_pct=round(gain, 4),
+                    bars=span,
+                )
+    return None
+
+
+def fib_retracement_pct(
+    impulse_low: float, impulse_high: float, current_low: float
+) -> float | None:
+    """How far a pullback has retraced the impulse, as a percentage of its height."""
+    height = impulse_high - impulse_low
+    if height <= 0:
+        return None
+    return round(max(0.0, (impulse_high - current_low) / height * 100), 4)

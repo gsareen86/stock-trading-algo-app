@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from app.data.fundamentals import FundamentalsSource
 from app.data.protocols import PriceSource
 from app.domain.instrument import Instrument
 from app.domain.verdict import Verdict
@@ -29,6 +30,10 @@ class StrategyContext:
 
     price_source: PriceSource
     benchmark: Instrument = DEFAULT_BENCHMARK
+    #: Only the fundamental strategy needs this. Absent is a legitimate state — for the
+    #: price-only strategies it is simply irrelevant, and for the fundamental one its absence
+    #: is a failed gate rather than a crash.
+    fundamentals_source: FundamentalsSource | None = None
     now: Callable[[], datetime] | None = None
     #: Strategy-specific overrides, keyed by strategy id.
     options: dict[str, dict] = field(default_factory=dict)
