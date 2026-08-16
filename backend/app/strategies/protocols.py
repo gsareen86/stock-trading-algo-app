@@ -16,8 +16,9 @@ from app.data.protocols import PriceSource
 from app.domain.instrument import Instrument
 from app.domain.verdict import Verdict
 
-#: Index the relative-strength criterion compares against.
-DEFAULT_BENCHMARK = Instrument("NIFTY50")
+#: Index the relative-strength criterion compares against. `^NSEI` is yfinance's actual Nifty
+#: 50 ticker — a caret-prefixed index code, not an NSE equity symbol, so it is never suffixed.
+DEFAULT_BENCHMARK = Instrument("^NSEI")
 
 
 @dataclass(frozen=True, slots=True)

@@ -115,7 +115,9 @@ stale entry rather than nothing.
 
 ### Requirement: Instrument symbols are mapped to provider form at the boundary
 The system MUST translate NSE symbols to the provider's ticker form inside the source, and
-MUST NOT require callers to know that form.
+MUST NOT require callers to know that form. Index tickers, which the provider addresses by a
+caret-prefixed code with no suffix, MUST be passed through unchanged rather than treated as an
+NSE equity code needing `.NS` appended.
 
 #### Scenario: NSE symbol suffixed for the provider
 - GIVEN the instrument `RELIANCE`
@@ -126,6 +128,21 @@ MUST NOT require callers to know that form.
 - GIVEN the symbol `RELIANCE.NS`
 - WHEN history is fetched
 - THEN the provider is queried for `RELIANCE.NS`
+
+#### Scenario: Index ticker is not suffixed
+- GIVEN the benchmark or a sector index, e.g. `^NSEI` or `^CNXIT`
+- WHEN history is fetched from the yfinance source
+- THEN the provider is queried for that ticker unchanged, not `^NSEI.NS`
+
+<!--
+  Found live, not designed for: every strategy test before real-data testing used a fake
+  price source keyed by the raw symbol string, so nothing exercised this translation. Against
+  the real provider, the untranslated benchmark instrument resolved to `NIFTY50.NS`, which
+  does not exist — every relative-strength criterion built on it failed silently, because
+  "unavailable" is itself a valid, non-exceptional outcome for that criterion. Fixed at
+  `Instrument`/`to_provider_ticker`, the one seam every symbol crosses, rather than as a
+  special case in each caller. See `app/domain/instrument.py`.
+-->
 
 ### Requirement: Universe snapshots record how they were obtained
 A universe snapshot MUST record whether its constituents came from the live index source or

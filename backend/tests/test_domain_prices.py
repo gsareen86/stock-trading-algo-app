@@ -49,6 +49,28 @@ class TestSymbolMapping:
     def test_instrument_exposes_provider_form(self) -> None:
         assert Instrument("TCS").yf_ticker == "TCS.NS"
 
+    def test_index_ticker_is_not_suffixed(self) -> None:
+        """Found live: an unsuffixed benchmark resolved to NIFTY50.NS, which does not exist.
+
+        Every fixture before real data used a fake source keyed by the raw symbol string, so
+        nothing exercised this translation until it ran against yfinance for the first time.
+        """
+        assert to_provider_ticker("^NSEI") == "^NSEI"
+        assert to_provider_ticker("^nsei") == "^NSEI"
+        assert Instrument("^NSEI").yf_ticker == "^NSEI"
+
+    def test_sector_index_tickers_are_not_suffixed(self) -> None:
+        for ticker in ("^CNXIT", "^NSEBANK", "^CNXFMCG", "^CNXPHARMA", "^CNXAUTO"):
+            assert to_provider_ticker(ticker) == ticker
+
+    def test_is_index_flag(self) -> None:
+        assert Instrument("^NSEI").is_index is True
+        assert Instrument("RELIANCE").is_index is False
+
+    def test_index_round_trip_is_a_no_op(self) -> None:
+        """Indices have no suffix to strip — the round trip must not invent one."""
+        assert from_provider_ticker(to_provider_ticker("^NSEI")) == "^NSEI"
+
     def test_lowercase_symbol_rejected(self) -> None:
         """Normalising silently would make two spellings distinct dict keys that compare unequal."""
         with pytest.raises(ValueError, match="upper-case"):
