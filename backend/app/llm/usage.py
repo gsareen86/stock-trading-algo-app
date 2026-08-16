@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.clock import IST, now_utc
+from app.core.money import DEFAULT_USD_INR_RATE, usd_to_inr
 from app.llm.types import CallStatus
 from app.persistence.models import LlmCall
 
@@ -52,15 +53,21 @@ class Bucket:
             self.failed_calls += 1
         self.total_tokens += row.total_tokens or 0
 
-    def as_dict(self) -> dict:
+    def as_dict(self, rate: float) -> dict:
+        """Serialise for reporting, converting the accumulated dollars to rupees.
+
+        Conversion happens here rather than in ``add`` so the sum is taken in the currency the
+        amounts were billed in — converting each row first would round every one of them to
+        paise and accumulate that error across the window.
+        """
         return {
             "calls": self.calls,
             "priced_calls": self.priced_calls,
-            # Surfaced explicitly: without it, spend_usd looks like a total when it is only
-            # the paid subset. Local calls are free, not missing.
+            # Surfaced explicitly: without it, spend looks like a total when it is only the
+            # paid subset. Local calls are free, not missing.
             "unpriced_calls": self.unpriced_calls,
             "failed_calls": self.failed_calls,
-            "spend_usd": round(self.spend_usd, 6),
+            "spend_inr": usd_to_inr(self.spend_usd, rate),
             "total_tokens": self.total_tokens,
         }
 
@@ -73,13 +80,15 @@ class Usage:
     by_task: dict[str, Bucket] = field(default_factory=dict)
     by_provider: dict[str, Bucket] = field(default_factory=dict)
 
-    def as_dict(self) -> dict:
+    def as_dict(self, rate: float) -> dict:
         return {
             "days": self.days,
-            "totals": self.totals.as_dict(),
-            "by_day": {k: v.as_dict() for k, v in sorted(self.by_day.items(), reverse=True)},
-            "by_task": {k: v.as_dict() for k, v in sorted(self.by_task.items())},
-            "by_provider": {k: v.as_dict() for k, v in sorted(self.by_provider.items())},
+            "totals": self.totals.as_dict(rate),
+            "by_day": {
+                k: v.as_dict(rate) for k, v in sorted(self.by_day.items(), reverse=True)
+            },
+            "by_task": {k: v.as_dict(rate) for k, v in sorted(self.by_task.items())},
+            "by_provider": {k: v.as_dict(rate) for k, v in sorted(self.by_provider.items())},
         }
 
 
@@ -125,10 +134,18 @@ def collect_usage(
     return usage
 
 
-def recent_calls(session_factory: sessionmaker[Session], limit: int = 50) -> list[dict]:
+def recent_calls(
+    session_factory: sessionmaker[Session],
+    limit: int = 50,
+    rate: float = DEFAULT_USD_INR_RATE,
+) -> list[dict]:
     """Most recent call records, newest first.
 
     Returns no prompt or completion text — this is a ledger, not a transcript.
+
+    Each row carries both the stored dollar amount and its rupee equivalent: the first is
+    what the vendor will invoice and what makes the row auditable, the second is what gets
+    rendered. An unpriced local call is null in both — never zero in either.
     """
     with session_factory() as session:
         rows = (
@@ -152,6 +169,7 @@ def recent_calls(session_factory: sessionmaker[Session], limit: int = 50) -> lis
                 "status": row.status,
                 "total_tokens": row.total_tokens,
                 "cost_usd": row.cost_usd,
+                "cost_inr": usd_to_inr(row.cost_usd, rate),
                 "latency_ms": row.latency_ms,
                 "trace_id": row.trace_id,
                 "error_msg": row.error_msg,

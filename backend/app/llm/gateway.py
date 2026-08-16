@@ -80,7 +80,7 @@ class LiteLLMGateway:
         )
         self._cache = DiskCache(settings.llm_cache_dir, enabled=settings.llm_cache_enabled)
         self._recorder = recorder or CallRecorder(None)
-        self._budget = budget or DailyBudget(None, settings.llm_daily_budget_usd)
+        self._budget = budget or DailyBudget(None, settings.daily_budget_usd)
         self._tracing = observability.configure(settings)
 
     # ── routing ───────────────────────────────────────────────────────────────

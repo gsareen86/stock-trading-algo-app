@@ -36,18 +36,25 @@ The system MUST NOT read configuration values from the database at runtime.
 - AND every setting resolves from environment, `.env`, or defaults
 
 ### Requirement: Typed settings with validation
-The system MUST reject invalid configuration at construction time rather than at first use.
+Configuration MUST be a typed settings object validated at load time, so an invalid value
+fails at startup rather than at the moment it is first used. Monetary settings MUST be
+denominated in INR and named accordingly.
 
-#### Scenario: Malformed value fails fast
-- GIVEN the environment sets `LLM_TIMEOUT_SECONDS=not-a-number`
-- WHEN `Settings` is constructed
-- THEN construction raises a validation error naming the offending field
+#### Scenario: Invalid value rejected at startup
+- GIVEN a setting whose value violates its declared constraint
+- WHEN the application starts
+- THEN startup fails with an error naming the setting
 
-#### Scenario: Unknown environment rejected
-- GIVEN the environment sets `APP_ENV=production`
-- WHEN `Settings` is constructed
-- THEN construction raises a validation error
-- AND the message lists the permitted values `dev`, `test`, `prod`
+#### Scenario: Spend cap is expressed in rupees
+- GIVEN `LLM_DAILY_BUDGET_INR=500`
+- WHEN settings are loaded
+- THEN the daily cap is five hundred rupees
+- AND the equivalent cap in the provider's billing currency is derived from the configured rate
+
+#### Scenario: Unset cap means unlimited
+- GIVEN `LLM_DAILY_BUDGET_INR` is not set
+- WHEN settings are loaded
+- THEN no daily cap is in effect
 
 ### Requirement: Per-task LLM routing is declarative
 The system MUST allow the model backing any single LLM task to be overridden by
@@ -69,3 +76,34 @@ than a module-level singleton.
 - WHEN the settings dependency is overridden with a test `Settings` instance
 - THEN request handlers observe the test values
 - AND no module-level import needs to be patched
+
+### Requirement: Money is reported in rupees at a configured rate
+The platform MUST report monetary amounts to the operator in INR, and MUST obtain the
+USD→INR rate from configuration rather than a network call. The rate MUST be positive.
+
+#### Scenario: Default rate available with no configuration
+- GIVEN `USD_INR_RATE` is not set
+- WHEN settings are loaded
+- THEN a positive default rate is in effect
+- AND no network request is made to obtain it
+
+#### Scenario: Operator overrides the rate
+- GIVEN `USD_INR_RATE=90.5`
+- WHEN a dollar amount is converted for reporting
+- THEN it is converted at 90.5
+
+#### Scenario: Non-positive rate rejected
+- GIVEN `USD_INR_RATE=0`
+- WHEN settings are loaded
+- THEN loading fails with a validation error
+
+### Requirement: A retired configuration key fails loudly
+When a configuration key is renamed such that its old value would be misread under the new
+meaning, the platform MUST reject the retired key at startup and name its replacement, rather
+than ignoring it or reinterpreting its value.
+
+#### Scenario: Retired budget key rejected
+- GIVEN `LLM_DAILY_BUDGET_USD=5.00` is set
+- WHEN settings are loaded
+- THEN loading fails with an error naming `LLM_DAILY_BUDGET_INR`
+- AND the value is not reinterpreted as rupees

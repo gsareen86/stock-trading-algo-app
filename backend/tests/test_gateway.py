@@ -571,7 +571,7 @@ class TestBudgetGuardrail:
         settings = _settings(
             tmp_path,
             llm_route={"narrative": "anthropic/claude-sonnet-5"},
-            llm_daily_budget_usd=1.0,
+            llm_daily_budget_inr=88.0,
             llm_cache_enabled=False,
         )
         budget = DailyBudget(None, 1.0)
@@ -592,7 +592,7 @@ class TestBudgetGuardrail:
         settings = _settings(
             tmp_path,
             llm_route={"narrative": "ollama/llama3.1"},
-            llm_daily_budget_usd=1.0,
+            llm_daily_budget_inr=88.0,
             llm_cache_enabled=False,
         )
         budget = DailyBudget(None, 1.0)
@@ -612,7 +612,7 @@ class TestBudgetGuardrail:
             tmp_path,
             llm_route={"narrative": "anthropic/claude-sonnet-5"},
             llm_fallback={"narrative": "ollama/llama3.1"},
-            llm_daily_budget_usd=1.0,
+            llm_daily_budget_inr=88.0,
             llm_cache_enabled=False,
         )
         budget = DailyBudget(None, 1.0)

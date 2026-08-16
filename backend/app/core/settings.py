@@ -20,10 +20,13 @@ module-level singleton — that is what makes the precedence chain testable.
 
 from __future__ import annotations
 
+import os
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.money import DEFAULT_USD_INR_RATE, inr_to_usd
 
 # The seven providers the gateway supports. The last four are OpenAI-compatible local
 # servers and need no adapter code — only a base URL.
@@ -84,6 +87,12 @@ class Settings(BaseSettings):
     #: models and migrations serve both.
     database_url: str = "sqlite+pysqlite:///./trading.db"
 
+    # ── Money ─────────────────────────────────────────────────────────────────
+    #: Rupees to the dollar, used to report LLM vendor costs in the platform's own currency.
+    #: Operator-set rather than fetched: see ``app.core.money`` for why a live rate would be
+    #: false precision on a figure this small.
+    usd_inr_rate: Annotated[float, Field(gt=0)] = DEFAULT_USD_INR_RATE
+
     # ── LLM gateway ───────────────────────────────────────────────────────────
     #: Model used for any task without an explicit route, as ``<provider>/<model>``.
     llm_default_task_model: str = "anthropic/claude-sonnet-5"
@@ -102,10 +111,14 @@ class Settings(BaseSettings):
     #: ``LLM_PROVIDER_BASE_URL__LEMONADE=http://localhost:8000/v1``.
     llm_provider_base_url: dict[str, str] = Field(default_factory=dict)
 
-    #: Spend cap for the current IST day, in USD. Unset means unlimited. Only calls whose
-    #: provider reports a cost count against it — local models are free and stay available
-    #: after the cap is reached.
-    llm_daily_budget_usd: Annotated[float | None, Field(gt=0)] = None
+    #: Spend cap for the current IST day, in **rupees**. Unset means unlimited. Only calls
+    #: whose provider reports a cost count against it — local models are free and stay
+    #: available after the cap is reached.
+    #:
+    #: Rupees, not dollars, because this is a number the operator chooses rather than one a
+    #: provider hands us. It is converted to the ledger's currency for comparison; see
+    #: ``daily_budget_usd`` and ``app.core.money``.
+    llm_daily_budget_inr: Annotated[float | None, Field(gt=0)] = None
 
     llm_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
     llm_max_retries: Annotated[int, Field(ge=0)] = 2
@@ -130,7 +143,34 @@ class Settings(BaseSettings):
         resolve identically regardless of how they were supplied."""
         return {k.lower(): v for k, v in value.items()}
 
+    #: Retired keys whose old value would be silently misread under the current meaning.
+    #: ``extra="ignore"`` would drop them without a word, so they are rejected by name.
+    _RETIRED_KEYS = {
+        # Deliberately ASCII: this surfaces on a console at startup, and a Windows codepage
+        # renders an em-dash as a replacement character in the one message meant to be clear.
+        "LLM_DAILY_BUDGET_USD": (
+            "LLM_DAILY_BUDGET_INR. The cap is now in rupees; a value set in dollars would "
+            "otherwise be read as rupees and cut your real cap by roughly the exchange rate."
+        ),
+    }
+
+    @model_validator(mode="after")
+    def _reject_retired_keys(self) -> Settings:
+        for old, guidance in self._RETIRED_KEYS.items():
+            if old in os.environ:
+                raise ValueError(f"{old} is no longer supported; use {guidance}")
+        return self
+
     # ── Derived accessors ─────────────────────────────────────────────────────
+    @property
+    def daily_budget_usd(self) -> float | None:
+        """The rupee cap in the ledger's currency.
+
+        `DailyBudget` sums a dollar column, so the comparison happens in dollars; converting
+        the threshold once here is cheaper and clearer than converting every sum.
+        """
+        return inr_to_usd(self.llm_daily_budget_inr, self.usd_inr_rate)
+
     def model_for_task(self, task: str) -> str:
         """Resolve a task name to a ``<provider>/<model>`` string.
 

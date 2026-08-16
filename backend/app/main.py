@@ -49,7 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The recorder and budget share the session factory: one writes the ledger, the other
     # reads it back to decide whether the platform may keep spending.
     app.state.recorder = CallRecorder(app.state.session_factory)
-    app.state.budget = DailyBudget(app.state.session_factory, settings.llm_daily_budget_usd)
+    app.state.budget = DailyBudget(app.state.session_factory, settings.daily_budget_usd)
     app.state.gateway = LiteLLMGateway(
         settings, recorder=app.state.recorder, budget=app.state.budget
     )

@@ -33,7 +33,7 @@ class TestUsageEndpoint:
         body = client.get("/llm/usage").json()
 
         assert body["totals"]["calls"] == 2
-        assert body["totals"]["spend_usd"] == pytest.approx(0.05)
+        assert body["totals"]["spend_inr"] == pytest.approx(0.05 * body["usd_inr_rate"])
         assert set(body["by_task"]) == {"narrative", "research"}
         assert set(body["by_provider"]) == {"anthropic", "openai"}
 
@@ -43,7 +43,7 @@ class TestUsageEndpoint:
 
         assert response.status_code == 200
         assert body["totals"]["calls"] == 0
-        assert body["totals"]["spend_usd"] == 0.0
+        assert body["totals"]["spend_inr"] == 0.0
         assert body["by_day"] == {}
 
     def test_window_is_bounded(self, client: TestClient) -> None:
@@ -68,29 +68,103 @@ class TestBudgetReporting:
     def test_budget_absent_when_unconfigured(self, client: TestClient) -> None:
         body = client.get("/llm/usage").json()
 
-        assert body["budget"]["cap_usd"] is None
-        assert body["budget"]["remaining_usd"] is None
+        assert body["budget"]["cap_inr"] is None
+        assert body["budget"]["remaining_inr"] is None
         assert body["budget"]["exhausted"] is False
 
     def test_budget_reported_when_configured(self, migrated_url: str, session_factory) -> None:
         _seed(session_factory, cost_usd=0.25)
-        settings = Settings(app_env="test", database_url=migrated_url, llm_daily_budget_usd=1.0)
+        settings = Settings(
+            app_env="test",
+            database_url=migrated_url,
+            llm_daily_budget_inr=88.0,
+            usd_inr_rate=88.0,
+        )
 
         body = _client(settings).get("/llm/usage").json()
 
-        assert body["budget"]["cap_usd"] == pytest.approx(1.0)
-        assert body["budget"]["spent_today_usd"] == pytest.approx(0.25)
-        assert body["budget"]["remaining_usd"] == pytest.approx(0.75)
+        assert body["budget"]["cap_inr"] == pytest.approx(88.0)
+        assert body["budget"]["spent_today_inr"] == pytest.approx(22.0)
+        assert body["budget"]["remaining_inr"] == pytest.approx(66.0)
         assert body["budget"]["exhausted"] is False
 
     def test_exhausted_reported(self, migrated_url: str, session_factory) -> None:
+        """A rupee cap is enforced at the equivalent dollar spend, not the rupee number."""
         _seed(session_factory, cost_usd=2.0)
-        settings = Settings(app_env="test", database_url=migrated_url, llm_daily_budget_usd=1.0)
+        settings = Settings(
+            app_env="test",
+            database_url=migrated_url,
+            llm_daily_budget_inr=88.0,  # == $1.00
+            usd_inr_rate=88.0,
+        )
 
         body = _client(settings).get("/llm/usage").json()
 
         assert body["budget"]["exhausted"] is True
-        assert body["budget"]["remaining_usd"] == 0.0
+        assert body["budget"]["remaining_inr"] == 0.0
+
+
+class TestCurrencyReporting:
+    def test_spend_reported_in_rupees_with_its_rate(
+        self, migrated_url: str, session_factory
+    ) -> None:
+        _seed(session_factory, cost_usd=0.50)
+        settings = Settings(app_env="test", database_url=migrated_url, usd_inr_rate=90.0)
+
+        body = _client(settings).get("/llm/usage").json()
+
+        assert body["usd_inr_rate"] == pytest.approx(90.0)
+        assert body["totals"]["spend_inr"] == pytest.approx(45.0)
+
+    def test_reported_rupees_invert_to_the_stored_dollars(
+        self, migrated_url: str, session_factory
+    ) -> None:
+        """The rate is returned precisely so a reported figure is never unattributable.
+
+        Recovery is exact only to the paise the figure was rounded to — half a paisa back in
+        dollars is the tightest honest bound, and that is the cost of reporting a currency
+        people actually count in.
+        """
+        _seed(session_factory, cost_usd=0.25)
+        settings = Settings(app_env="test", database_url=migrated_url, usd_inr_rate=83.5)
+
+        body = _client(settings).get("/llm/usage").json()
+
+        rate = body["usd_inr_rate"]
+        assert abs(body["totals"]["spend_inr"] / rate - 0.25) < (0.01 / rate)
+
+    def test_call_records_carry_both_currencies(
+        self, migrated_url: str, session_factory
+    ) -> None:
+        _seed(session_factory, cost_usd=0.10)
+        settings = Settings(app_env="test", database_url=migrated_url, usd_inr_rate=88.0)
+
+        record = _client(settings).get("/llm/calls").json()["calls"][0]
+
+        assert record["cost_usd"] == pytest.approx(0.10)
+        assert record["cost_inr"] == pytest.approx(8.80)
+
+    def test_unpriced_call_is_null_in_both_currencies(
+        self, client: TestClient, session_factory
+    ) -> None:
+        """Zero rupees would read as "a paid call that was free" — it is neither."""
+        _seed(session_factory, provider="ollama", model="ollama/gemma4:12b", cost_usd=None)
+
+        record = client.get("/llm/calls").json()["calls"][0]
+
+        assert record["cost_usd"] is None
+        assert record["cost_inr"] is None
+
+    def test_stored_amount_is_never_converted_on_write(
+        self, migrated_url: str, session_factory
+    ) -> None:
+        """The ledger holds what the vendor bills, so a row reconciles against an invoice."""
+        _seed(session_factory, cost_usd=0.25)
+        rows = _client(
+            Settings(app_env="test", database_url=migrated_url, usd_inr_rate=88.0)
+        ).get("/llm/calls").json()["calls"]
+
+        assert rows[0]["cost_usd"] == pytest.approx(0.25)
 
 
 class TestCallsEndpoint:

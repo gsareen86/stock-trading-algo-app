@@ -19,13 +19,17 @@ const STATUS_TONE: Record<string, string> = {
   budget_exceeded: "text-stance-watch",
 };
 
+/** A paisa — below this an amount is real but not renderable as a two-decimal figure. */
+const PAISA = 0.01;
+
 function money(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
-  // Four decimals everywhere so columns line up, widened only when that would round a real
-  // amount away to $0.0000 — a spend of "zero" that isn't zero is the one misreading worth
-  // spending two extra digits to avoid.
-  const decimals = value !== 0 && Math.abs(value) < 0.0001 ? 6 : 4;
-  return `$${value.toFixed(decimals)}`;
+  if (value === 0) return "₹0.00";
+  // A real spend must never render as ₹0.00. Below a paisa the exact figure is noise nobody
+  // can act on — this panel answers "is this getting expensive", and the auditable amount is
+  // the dollar figure the vendor actually billed, which the API returns alongside.
+  if (Math.abs(value) < PAISA) return "< ₹0.01";
+  return `₹${value.toFixed(2)}`;
 }
 
 function Card({
@@ -61,19 +65,19 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 }
 
 function BudgetBar({ budget }: { budget: Usage["budget"] }) {
-  if (budget.cap_usd === null) {
+  if (budget.cap_inr === null) {
     return (
       <p className="text-sm text-text-secondary">
         No daily cap set. Configure{" "}
         <code className="rounded-token bg-surface-sunken px-1.5 py-0.5 font-mono text-xs">
-          LLM_DAILY_BUDGET_USD
+          LLM_DAILY_BUDGET_INR
         </code>{" "}
         to limit spend on paid providers.
       </p>
     );
   }
 
-  const pct = Math.min(100, (budget.spent_today_usd / budget.cap_usd) * 100);
+  const pct = Math.min(100, (budget.spent_today_inr / budget.cap_inr) * 100);
   const tone = budget.exhausted
     ? "bg-status-down"
     : pct > 75
@@ -84,10 +88,10 @@ function BudgetBar({ budget }: { budget: Usage["budget"] }) {
     <div>
       <div className="flex items-baseline justify-between text-sm">
         <span className="font-mono text-text-primary">
-          {money(budget.spent_today_usd)} / {money(budget.cap_usd)}
+          {money(budget.spent_today_inr)} / {money(budget.cap_inr)}
         </span>
         <span className="text-xs text-text-secondary">
-          {budget.exhausted ? "cap reached" : `${money(budget.remaining_usd)} left`}
+          {budget.exhausted ? "cap reached" : `${money(budget.remaining_inr)} left`}
         </span>
       </div>
       <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken">
@@ -133,7 +137,7 @@ function Breakdown({ title, buckets }: { title: string; buckets: Record<string, 
                   {bucket.total_tokens.toLocaleString()}
                 </td>
                 <td className="py-2 text-right font-mono text-xs text-text-secondary">
-                  {bucket.priced_calls === 0 ? "free" : money(bucket.spend_usd)}
+                  {bucket.priced_calls === 0 ? "free" : money(bucket.spend_inr)}
                 </td>
               </tr>
             ))}
@@ -202,7 +206,7 @@ function RecentCalls({ calls }: { calls: CallRecord[] }) {
                   {call.total_tokens ?? "—"}
                 </td>
                 <td className="py-2 text-right font-mono text-xs text-text-secondary">
-                  {money(call.cost_usd)}
+                  {money(call.cost_inr)}
                 </td>
               </tr>
             ))}
@@ -247,6 +251,12 @@ export default async function EnginePage() {
             LLM cost and activity, from the platform&apos;s own ledger — last {usage.days} IST
             days
           </p>
+          {/* Vendors bill in dollars; the rate that produced every ₹ figure here is stated
+              rather than assumed, so any number can be traced back to what was charged. */}
+          <p className="mt-0.5 text-xs text-text-muted">
+            Converted at ₹{usage.usd_inr_rate.toFixed(2)} to the dollar (
+            <code className="font-mono">USD_INR_RATE</code>)
+          </p>
         </div>
       </div>
 
@@ -255,7 +265,7 @@ export default async function EnginePage() {
           <div className="grid grid-cols-3 gap-4">
             <Stat
               label="Priced"
-              value={money(totals.spend_usd)}
+              value={money(totals.spend_inr)}
               hint={`${totals.priced_calls} call${totals.priced_calls === 1 ? "" : "s"}`}
             />
             <Stat

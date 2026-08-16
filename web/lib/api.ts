@@ -45,7 +45,7 @@ export type Bucket = {
   /** Calls whose provider reported no cost — local models. Free, not missing. */
   unpriced_calls: number;
   failed_calls: number;
-  spend_usd: number;
+  spend_inr: number;
   total_tokens: number;
 };
 
@@ -55,10 +55,12 @@ export type Usage = {
   by_day: Record<string, Bucket>;
   by_task: Record<string, Bucket>;
   by_provider: Record<string, Bucket>;
+  /** Rate every INR figure below was converted at. Vendors bill in USD. */
+  usd_inr_rate: number;
   budget: {
-    cap_usd: number | null;
-    spent_today_usd: number;
-    remaining_usd: number | null;
+    cap_inr: number | null;
+    spent_today_inr: number;
+    remaining_inr: number | null;
     exhausted: boolean;
   };
 };
@@ -73,7 +75,10 @@ export type CallRecord = {
   used_fallback: boolean;
   status: string;
   total_tokens: number | null;
+  /** What the vendor bills, unconverted — the auditable amount. Null for local models. */
   cost_usd: number | null;
+  /** The same amount in rupees, for display. Null when unpriced — never 0. */
+  cost_inr: number | null;
   latency_ms: number | null;
   trace_id: string | null;
   error_msg: string | null;

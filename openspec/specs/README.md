@@ -26,4 +26,4 @@ change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
 `market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`,
-`remaining-three-strategies`.
+`remaining-three-strategies`, `inr-cost-reporting`.

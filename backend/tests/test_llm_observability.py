@@ -141,11 +141,11 @@ class TestAggregation:
         recorder.record(_record(task="narrative", cost_usd=0.01))
         recorder.record(_record(task="research", provider="openai", cost_usd=0.03))
 
-        usage = collect_usage(session_factory).as_dict()
+        usage = collect_usage(session_factory).as_dict(rate=100.0)
 
         assert set(usage["by_task"]) == {"narrative", "research"}
         assert set(usage["by_provider"]) == {"anthropic", "openai"}
-        assert usage["by_task"]["research"]["spend_usd"] == pytest.approx(0.03)
+        assert usage["by_task"]["research"]["spend_inr"] == pytest.approx(3.0)
 
     def test_failed_calls_counted(self, session_factory) -> None:
         recorder = CallRecorder(session_factory)
@@ -164,10 +164,10 @@ class TestAggregation:
         assert collect_usage(session_factory).totals.failed_calls == 0
 
     def test_empty_log_yields_zeroes(self, session_factory) -> None:
-        usage = collect_usage(session_factory).as_dict()
+        usage = collect_usage(session_factory).as_dict(rate=88.0)
 
         assert usage["totals"]["calls"] == 0
-        assert usage["totals"]["spend_usd"] == 0.0
+        assert usage["totals"]["spend_inr"] == 0.0
 
 
 class TestIstDayAttribution:
@@ -190,7 +190,7 @@ class TestIstDayAttribution:
             )
             session.commit()
 
-        usage = collect_usage(session_factory, days=2).as_dict()
+        usage = collect_usage(session_factory, days=2).as_dict(rate=88.0)
 
         assert just_after_midnight.date().isoformat() in usage["by_day"]
 

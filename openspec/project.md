@@ -195,19 +195,30 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 - **Skill** — a manifest-declared capability an agent can call.
 - **Cycle** — one end-to-end agent run producing verdicts and insights.
 - **IST** — Asia/Kolkata. All market timestamps are IST; all storage is UTC.
+- **INR** — the platform's reporting currency, everywhere. LLM vendors are the one exception
+  and they bill in USD: the ledger stores their dollars unconverted so a row reconciles
+  against an invoice, and `USD_INR_RATE` is applied when that ledger is *read*, never when it
+  is written. Same rule as yfinance's `.NS` suffix — a provider artefact, translated at one
+  seam. See `app/core/money.py`.
 
 ## Roadmap
 
-1. `bootstrap-platform-skeleton` ← current
+1. `bootstrap-platform-skeleton`
 2. `llm-gateway-and-observability`
 3. `market-data-foundation`
 4. `skills-registry`
 5. `verdict-model-and-minervini`
 6. `remaining-three-strategies`
-7. `verdict-narratives`
+7. `verdict-narratives` ← next
 8. `agent-graph-and-a2a`
 9. `screening-universe-and-gates`
 10. `books-ledger-and-analytics`
 11. `insights-feed`
 12. `backtesting`
 13. `gui-shell-and-design-system` → `gui-surfaces`
+
+Changes that arrive outside this sequence are archived alongside it rather than renumbered:
+
+- `inr-cost-reporting` — report money in rupees. Raised while validating the gateway against
+  a local model on real hardware, which is also where the roadmap's numbering stops being the
+  only thing that drives work.
