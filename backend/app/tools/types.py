@@ -1,6 +1,6 @@
-"""What a skill is.
+"""What a tool is.
 
-A skill is a *declared* capability: a manifest describing its contract plus a handler that
+A tool is a *declared* capability: a manifest describing its contract plus a handler that
 fulfils it. Declaring rather than exporting a function is what lets the same definition become
 both an LLM tool and an entry in an A2A agent card, and what lets the contract be enforced
 instead of documented.
@@ -24,7 +24,7 @@ class FailureReason(StrEnum):
     boolean would mean triaging every failure from scratch.
     """
 
-    UNKNOWN_SKILL = "unknown_skill"
+    UNKNOWN_TOOL = "unknown_tool"
     INVALID_INPUT = "invalid_input"
     INVALID_OUTPUT = "invalid_output"
     HANDLER_ERROR = "handler_error"
@@ -32,10 +32,10 @@ class FailureReason(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class SkillContext:
+class ToolContext:
     """Collaborators handed to a handler.
 
-    Injected rather than imported so a skill is testable against a fake source, and so no skill
+    Injected rather than imported so a tool is testable against a fake source, and so no tool
     quietly acquires its own database connection or HTTP client.
     """
 
@@ -43,17 +43,17 @@ class SkillContext:
     calendar: MarketCalendar | None = None
     #: Overridable for tests that need a fixed "now".
     now: Callable[[], Any] | None = None
-    #: Per-skill overrides — e.g. a recorded feed fetcher in place of the live one.
+    #: Per-tool overrides — e.g. a recorded feed fetcher in place of the live one.
     fetchers: dict[str, Any] = field(default_factory=dict)
 
 
 #: A handler receives validated arguments and the context, and returns output to be validated.
-SkillHandler = Callable[[dict[str, Any], SkillContext], dict[str, Any]]
+ToolHandler = Callable[[dict[str, Any], ToolContext], dict[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)
-class SkillManifest:
-    """A skill's full declaration."""
+class ToolManifest:
+    """A tool's full declaration."""
 
     name: str
     version: str
@@ -65,33 +65,33 @@ class SkillManifest:
     description: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
-    handler: SkillHandler
+    handler: ToolHandler
     tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.name or not self.name.replace("_", "").isalnum():
-            raise ValueError(f"skill name must be alphanumeric/underscore, got {self.name!r}")
+            raise ValueError(f"tool name must be alphanumeric/underscore, got {self.name!r}")
         if not self.summary:
-            raise ValueError(f"skill {self.name} must declare a summary")
+            raise ValueError(f"tool {self.name} must declare a summary")
 
 
 @dataclass(frozen=True, slots=True)
-class SkillResult:
+class ToolResult:
     """The outcome of one invocation. Never an exception."""
 
-    skill: str
+    tool: str
     ok: bool
     data: dict[str, Any] | None = None
     reason: FailureReason | None = None
     error: str | None = None
 
     @classmethod
-    def success(cls, skill: str, data: dict[str, Any]) -> SkillResult:
-        return cls(skill=skill, ok=True, data=data)
+    def success(cls, tool: str, data: dict[str, Any]) -> ToolResult:
+        return cls(tool=tool, ok=True, data=data)
 
     @classmethod
-    def failure(cls, skill: str, reason: FailureReason, error: str) -> SkillResult:
-        return cls(skill=skill, ok=False, reason=reason, error=error)
+    def failure(cls, tool: str, reason: FailureReason, error: str) -> ToolResult:
+        return cls(tool=tool, ok=False, reason=reason, error=error)
 
     @property
     def items(self) -> list[dict[str, Any]]:
@@ -103,8 +103,8 @@ class SkillResult:
 
 
 @dataclass(frozen=True, slots=True)
-class SkillLoadFailure:
-    """A skill directory that could not be imported.
+class ToolLoadFailure:
+    """A tool directory that could not be imported.
 
     Recorded rather than swallowed: a capability that vanished because of a typo should not
     look like one that was never written.

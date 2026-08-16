@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.skills.types import SkillManifest
+from app.tools.types import ToolManifest
 
 
-def to_tool_definition(manifest: SkillManifest) -> dict[str, Any]:
+def to_tool_definition(manifest: ToolManifest) -> dict[str, Any]:
     """OpenAI-style function schema — what a model sees when choosing a tool.
 
     Uses ``summary`` rather than ``description``: this text competes for attention with every
@@ -31,7 +31,7 @@ def to_tool_definition(manifest: SkillManifest) -> dict[str, Any]:
     }
 
 
-def to_a2a_skill(manifest: SkillManifest) -> dict[str, Any]:
+def to_a2a_skill(manifest: ToolManifest) -> dict[str, Any]:
     """An entry for an A2A agent card's `skills` array."""
     return {
         "id": manifest.name,
@@ -43,8 +43,8 @@ def to_a2a_skill(manifest: SkillManifest) -> dict[str, Any]:
     }
 
 
-def to_public_dict(manifest: SkillManifest) -> dict[str, Any]:
-    """What `GET /skills` returns.
+def to_public_dict(manifest: ToolManifest) -> dict[str, Any]:
+    """What `GET /tools` returns.
 
     Deliberately excludes the handler — an import path is an implementation detail, and
     publishing one tells a reader how to reach code the API never intended to expose.

@@ -1,8 +1,8 @@
-"""The shape every skill's output items share.
+"""The shape every tool's output items share.
 
 `verdict-narratives` will reject any narrative containing a number that does not trace to an
 `Evidence` row, and `Evidence.source_ref` has to come from somewhere. Requiring a reference at
-the skill boundary means the traceability chain cannot be broken later by a skill that simply
+the tool boundary means the traceability chain cannot be broken later by a tool that simply
 forgot — and because the requirement lives in the output schema, forgetting is a validation
 failure rather than a convention nobody checks.
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-#: Fields every returned item carries, whatever the skill.
+#: Fields every returned item carries, whatever the tool.
 EVIDENCE_FIELDS: dict[str, Any] = {
     "source_ref": {
         "type": "string",

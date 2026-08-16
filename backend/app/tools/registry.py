@@ -1,11 +1,11 @@
 """Discovery, validation and invocation.
 
-Skills live in `app/skills/<name>/skill.py` exporting a module-level `SKILL`. Discovery is by
+Tools live in `app/tools/<name>/tool.py` exporting a module-level `TOOL`. Discovery is by
 convention rather than an explicit list because a list is one more place to forget — at the
-cost that a skill with an import error would disappear silently, which is why load failures
+cost that a tool with an import error would disappear silently, which is why load failures
 are recorded and surfaced rather than swallowed.
 
-`invoke` never raises. A skill is called from an agent loop, and one RSS feed being down must
+`invoke` never raises. A tool is called from an agent loop, and one RSS feed being down must
 not end a cycle — the same rule the LLM gateway follows, for the same reason.
 """
 
@@ -18,82 +18,82 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from app.skills.types import (
+from app.tools.types import (
     FailureReason,
-    SkillContext,
-    SkillLoadFailure,
-    SkillManifest,
-    SkillResult,
+    ToolContext,
+    ToolLoadFailure,
+    ToolManifest,
+    ToolResult,
 )
 
 log = logging.getLogger(__name__)
 
-SKILLS_PACKAGE = "app.skills"
-#: Subpackages that are registry machinery, not skills.
-_NOT_SKILLS = {"types", "registry", "bindings", "evidence"}
+TOOLS_PACKAGE = "app.tools"
+#: Subpackages that are registry machinery, not tools.
+_NOT_TOOLS = {"types", "registry", "bindings", "evidence"}
 
 
-class SkillRegistry:
-    """Holds the discovered skills and runs them under their declared contracts."""
+class ToolRegistry:
+    """Holds the discovered tools and runs them under their declared contracts."""
 
-    def __init__(self, manifests: dict[str, SkillManifest] | None = None) -> None:
-        self._skills: dict[str, SkillManifest] = dict(manifests or {})
-        self._failures: list[SkillLoadFailure] = []
+    def __init__(self, manifests: dict[str, ToolManifest] | None = None) -> None:
+        self._tools: dict[str, ToolManifest] = dict(manifests or {})
+        self._failures: list[ToolLoadFailure] = []
         self._validators: dict[str, tuple[Draft202012Validator, Draft202012Validator]] = {}
-        for manifest in self._skills.values():
+        for manifest in self._tools.values():
             self._compile(manifest)
 
     # ── registration ──────────────────────────────────────────────────────────
-    def _compile(self, manifest: SkillManifest) -> None:
+    def _compile(self, manifest: ToolManifest) -> None:
         self._validators[manifest.name] = (
             Draft202012Validator(manifest.input_schema),
             Draft202012Validator(manifest.output_schema),
         )
 
-    def register(self, manifest: SkillManifest) -> None:
-        if manifest.name in self._skills:
+    def register(self, manifest: ToolManifest) -> None:
+        if manifest.name in self._tools:
             raise ValueError(
-                f"duplicate skill name {manifest.name!r} — a silent overwrite would make one "
+                f"duplicate tool name {manifest.name!r} — a silent overwrite would make one "
                 "of the two capabilities unreachable with no error"
             )
-        self._skills[manifest.name] = manifest
+        self._tools[manifest.name] = manifest
         self._compile(manifest)
 
     @classmethod
-    def discover(cls, package: str = SKILLS_PACKAGE) -> SkillRegistry:
-        """Import every skill subpackage and collect its manifest."""
+    def discover(cls, package: str = TOOLS_PACKAGE) -> ToolRegistry:
+        """Import every tool subpackage and collect its manifest."""
         registry = cls()
         root = importlib.import_module(package)
 
         for module_info in pkgutil.iter_modules(root.__path__):
-            if not module_info.ispkg or module_info.name in _NOT_SKILLS:
+            if not module_info.ispkg or module_info.name in _NOT_TOOLS:
                 continue
-            dotted = f"{package}.{module_info.name}.skill"
+            dotted = f"{package}.{module_info.name}.tool"
             try:
                 module = importlib.import_module(dotted)
-                manifest = getattr(module, "SKILL", None)
+                manifest = getattr(module, "TOOL", None)
                 if manifest is None:
-                    raise AttributeError("module defines no module-level SKILL")
+                    raise AttributeError("module defines no module-level TOOL")
                 registry.register(manifest)
             except Exception as exc:
-                log.warning("skill %s failed to load: %s", dotted, exc)
+                log.warning("tool %s failed to load: %s", dotted, exc)
                 registry._failures.append(
-                    SkillLoadFailure(module=dotted, error=f"{type(exc).__name__}: {exc}")
+                    ToolLoadFailure(module=dotted, error=f"{type(exc).__name__}: {exc}")
                 )
         return registry
 
     # ── inspection ────────────────────────────────────────────────────────────
     def names(self) -> list[str]:
-        return sorted(self._skills)
+        return sorted(self._tools)
 
-    def manifests(self) -> list[SkillManifest]:
-        return [self._skills[name] for name in self.names()]
+    def manifests(self) -> list[ToolManifest]:
+        return [self._tools[name] for name in self.names()]
 
-    def get(self, name: str) -> SkillManifest | None:
-        return self._skills.get(name)
+    def get(self, name: str) -> ToolManifest | None:
+        return self._tools.get(name)
 
     @property
-    def load_failures(self) -> list[SkillLoadFailure]:
+    def load_failures(self) -> list[ToolLoadFailure]:
         return list(self._failures)
 
     # ── invocation ────────────────────────────────────────────────────────────
@@ -101,12 +101,12 @@ class SkillRegistry:
         self,
         name: str,
         arguments: dict[str, Any] | None = None,
-        context: SkillContext | None = None,
-    ) -> SkillResult:
-        manifest = self._skills.get(name)
+        context: ToolContext | None = None,
+    ) -> ToolResult:
+        manifest = self._tools.get(name)
         if manifest is None:
-            return SkillResult.failure(
-                name, FailureReason.UNKNOWN_SKILL, f"no skill named {name!r}"
+            return ToolResult.failure(
+                name, FailureReason.UNKNOWN_TOOL, f"no tool named {name!r}"
             )
 
         input_validator, output_validator = self._validators[name]
@@ -116,13 +116,13 @@ class SkillRegistry:
         if problems:
             # The handler is deliberately not called: running on arguments known to be wrong
             # produces a failure further from its cause.
-            return SkillResult.failure(name, FailureReason.INVALID_INPUT, problems)
+            return ToolResult.failure(name, FailureReason.INVALID_INPUT, problems)
 
         try:
-            output = manifest.handler(payload, context or SkillContext())
+            output = manifest.handler(payload, context or ToolContext())
         except Exception as exc:
-            log.warning("skill %s raised: %s", name, exc)
-            return SkillResult.failure(
+            log.warning("tool %s raised: %s", name, exc)
+            return ToolResult.failure(
                 name, FailureReason.HANDLER_ERROR, f"{type(exc).__name__}: {exc}"
             )
 
@@ -130,10 +130,10 @@ class SkillRegistry:
         if problems:
             # A source that changed shape fails here, loudly, rather than becoming a strangely
             # worded narrative nobody can trace.
-            log.warning("skill %s returned non-conforming output: %s", name, problems)
-            return SkillResult.failure(name, FailureReason.INVALID_OUTPUT, problems)
+            log.warning("tool %s returned non-conforming output: %s", name, problems)
+            return ToolResult.failure(name, FailureReason.INVALID_OUTPUT, problems)
 
-        return SkillResult.success(name, output)
+        return ToolResult.success(name, output)
 
 
 def _describe(validator: Draft202012Validator, instance: Any) -> str | None:

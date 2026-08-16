@@ -16,8 +16,8 @@ behavior that hasn't shipped. If you need to change what the system does, that g
 | `market-calendar` | NSE trading days and session hours, with staleness made visible |
 | `decision-model` | Verdicts, evidence and gates — independence and traceability enforced |
 | `strategies` | Strategy discovery and all four implementations, each with its own conviction |
-| `skills-registry` | Declared, schema-validated capabilities returning evidence-shaped items |
-| `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/skills`, `/strategies`, `/verdicts` |
+| `tool-registry` | Declared, schema-validated capabilities returning evidence-shaped items |
+| `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/tools`, `/strategies`, `/verdicts` |
 | `web-shell` | The six surfaces, design tokens, the backend seam, the Engine LLM panel |
 
 These carry full Requirement+Scenario depth because they describe code that was just written;
@@ -26,4 +26,4 @@ change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
 `market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`,
-`remaining-three-strategies`, `inr-cost-reporting`.
+`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`.

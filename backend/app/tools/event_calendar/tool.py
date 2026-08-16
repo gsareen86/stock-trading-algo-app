@@ -2,10 +2,10 @@
 
 Earnings dates and dividend actions are the events that most often invalidate a technical
 setup — a breakout two days before results is a different proposition from the same breakout
-two days after. This skill reports the dates; whether one blocks an entry is a gate, decided
+two days after. This tool reports the dates; whether one blocks an entry is a gate, decided
 in a strategy.
 
-The provider lookup is injectable, so the skill is exercised offline against recorded
+The provider lookup is injectable, so the tool is exercised offline against recorded
 responses. Live verification needs a network this environment does not permit.
 """
 
@@ -16,8 +16,8 @@ from datetime import date, datetime
 
 from app.core.clock import now_utc
 from app.domain.instrument import Instrument
-from app.skills.evidence import item_schema, items_output_schema
-from app.skills.types import SkillContext, SkillManifest
+from app.tools.evidence import item_schema, items_output_schema
+from app.tools.types import ToolContext, ToolManifest
 
 log = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def _classify(key: str) -> str:
     return "other"
 
 
-def handle(arguments: dict, context: SkillContext) -> dict:
+def handle(arguments: dict, context: ToolContext) -> dict:
     symbol = arguments["symbol"].strip().upper()
     horizon = int(arguments.get("horizon_days", 45))
 
@@ -129,10 +129,14 @@ def handle(arguments: dict, context: SkillContext) -> dict:
     }
 
 
-SKILL = SkillManifest(
+TOOL = ToolManifest(
     name="event_calendar",
     version="1.0.0",
-    summary="List upcoming earnings and dividend events for a stock within a horizon.",
+    summary=(
+        "Lists scheduled earnings and dividend events for a stock within a horizon. Use when "
+        "checking what is due before entering or holding a position, or when a price move may "
+        "be event-driven."
+    ),
     description=(
         "Returns scheduled corporate events — earnings dates, dividend actions — for an NSE "
         "instrument within a given number of days. Reports whether the source was reachable, "

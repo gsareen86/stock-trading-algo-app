@@ -16,8 +16,8 @@ import logging
 from datetime import UTC, datetime
 
 from app.core.clock import now_utc
-from app.skills.evidence import item_schema, items_output_schema
-from app.skills.types import SkillContext, SkillManifest
+from app.tools.evidence import item_schema, items_output_schema
+from app.tools.types import ToolContext, ToolManifest
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def _parse_filed_at(value) -> datetime | None:
     return None
 
 
-def handle(arguments: dict, context: SkillContext) -> dict:
+def handle(arguments: dict, context: ToolContext) -> dict:
     symbol = arguments["symbol"].strip().upper()
     days = int(arguments.get("days", 30))
     limit = int(arguments.get("limit", 20))
@@ -141,10 +141,14 @@ def handle(arguments: dict, context: SkillContext) -> dict:
     }
 
 
-SKILL = SkillManifest(
+TOOL = ToolManifest(
     name="filings_scan",
     version="1.0.0",
-    summary="List recent exchange announcements and filings for a stock.",
+    summary=(
+        "Lists recent NSE exchange announcements and filings for a stock. Use when checking "
+        "for disclosed corporate actions, board decisions or regulatory notices that may "
+        "explain a move or affect a holding."
+    ),
     description=(
         "Returns corporate announcements filed with NSE for an instrument within a recent "
         "window — board meetings, allotments, pledge disclosures, rating actions. Each item "

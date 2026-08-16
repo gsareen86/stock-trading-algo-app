@@ -1,6 +1,6 @@
 """The strategy seam.
 
-Mirrors the skills registry deliberately: two registries with different shapes would be two
+Mirrors the tool registry deliberately: two registries with different shapes would be two
 things to learn, and one pattern used twice is one.
 """
 

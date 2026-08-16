@@ -1,6 +1,6 @@
 """Strategy discovery.
 
-Same convention as skills: `app/strategies/<id>/strategy.py` exporting `STRATEGY`. Load
+Same convention as tools: `app/strategies/<id>/strategy.py` exporting `STRATEGY`. Load
 failures are recorded rather than swallowed, because a strategy that vanished from a typo
 should not look like one that was never written — and here, a missing strategy silently
 narrows what the platform considers.

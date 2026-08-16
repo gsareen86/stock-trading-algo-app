@@ -61,7 +61,7 @@ backend/app/
   data/         PORTED plumbing: prices (+ cache), universe, NSE calendar
                 (fundamentals and Screener.in scraping land with the screening change;
                  there was never a surveillance module to port — only an orphan table)
-  skills/       manifest-driven capabilities, callable by agents
+  tools/        manifest-driven capabilities, callable by agents
   strategies/   4 independent strategies, each → Verdict
   agents/       LangGraph nodes + A2A adapters
   llm/          LiteLLM gateway, routing, Langfuse wiring
@@ -126,13 +126,19 @@ Each agent is also wrapped as an **A2A server** exposing an agent card at
 is letting these agents be driven by, or delegate to, outside agents later. It is a thin
 adapter over the LangGraph nodes, deliberately kept as a seam rather than a dependency.
 
-## Skills
+## Tools
 
-Capabilities are packaged in `backend/app/skills/` as a manifest (`name`, `description`,
-input/output JSON Schema) plus a handler. One definition is bound both as a LangGraph tool
-and as an advertised skill in the agent's A2A card. Adding a skill is one directory and no
-orchestration changes. Seed set: `news_research`, `event_calendar`, `filings_scan`,
-`peer_compare`.
+Capabilities are packaged in `backend/app/tools/` as a manifest (`name`, `summary`,
+`description`, input/output JSON Schema) plus a handler. One definition is bound both as a
+LangGraph tool and as an entry in the agent's A2A card — where the format's own term for it
+is "skill", which is why `to_a2a_skill` keeps that name and nothing else does. Adding a tool
+is one directory and no orchestration changes. Seed set: `news_research`, `event_calendar`,
+`filings_scan`, `peer_compare`.
+
+`summary` is the selection signal a model reads when choosing among tools, so it must state
+both what the tool does **and when to reach for it**; `description` is the longer form for the
+A2A card and human readers. External MCP tools (Zerodha Kite) join this set at
+`agent-graph-and-a2a` without becoming part of this registry.
 
 ## LLM routing
 
@@ -192,7 +198,19 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 - **Verdict** — one strategy's independent opinion on one ticker at one point in time.
 - **Conviction** — 0-100 strength *within a single strategy*. Not comparable across them.
 - **Stance** — `BUY` | `WATCH` | `AVOID`.
-- **Skill** — a manifest-declared capability an agent can call.
+- **Tool** — a manifest-declared capability, executed by the *application* under a JSON
+  Schema contract. Lives in `app/tools/<name>/tool.py`. Was called a "skill" until
+  `tool-registry`; the distinction below is why it is not.
+- **Agent Skill** — Anthropic's artefact: a `SKILL.md` file of procedural knowledge that a
+  *model* reads through progressive disclosure. No schema, no handler, no return value. The
+  first one arrives with `verdict-narratives`, to teach explanation — never to decide, which
+  stays in deterministic gate code.
+- **MCP tool** — a tool defined by an *external* server (Zerodha Kite, arriving with
+  `agent-graph-and-a2a`) rather than by this repo.
+
+  The three differ by **who executes them**, which is why they must not share a name: a tool
+  is called by code and fails with a schema violation you can assert on; an Agent Skill is
+  read by a model and fails by being ignored.
 - **Cycle** — one end-to-end agent run producing verdicts and insights.
 - **IST** — Asia/Kolkata. All market timestamps are IST; all storage is UTC.
 - **INR** — the platform's reporting currency, everywhere. LLM vendors are the one exception

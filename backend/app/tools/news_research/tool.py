@@ -20,8 +20,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.core.clock import now_utc
-from app.skills.evidence import item_schema, items_output_schema
-from app.skills.types import SkillContext, SkillManifest
+from app.tools.evidence import item_schema, items_output_schema
+from app.tools.types import ToolContext, ToolManifest
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ def _entry_time(entry) -> datetime | None:
         return None
 
 
-def handle(arguments: dict, context: SkillContext) -> dict:
+def handle(arguments: dict, context: ToolContext) -> dict:
     symbol = arguments["symbol"].strip().upper()
     limit = int(arguments.get("limit", 20))
     hours = int(arguments.get("hours", 72))
@@ -174,10 +174,14 @@ def handle(arguments: dict, context: SkillContext) -> dict:
     }
 
 
-SKILL = SkillManifest(
+TOOL = ToolManifest(
     name="news_research",
     version="1.0.0",
-    summary="Fetch recent news articles mentioning a stock, from Indian financial RSS feeds.",
+    summary=(
+        "Fetches recent news articles mentioning a stock from Indian financial RSS feeds. Use "
+        "when explaining an unexplained price move, or when recent coverage or sentiment "
+        "around a company is in question. Returns articles, not a sentiment score."
+    ),
     description=(
         "Reads seven Indian financial news feeds and returns articles mentioning the given "
         "NSE symbol, matched via a curated company-name alias map because headlines use "

@@ -5,7 +5,7 @@ comparison cannot be built honestly yet. Price-based relative strength is genuin
 its own right — Brahma-Vishnu-Mahesh ranks sectors on exactly this — and it is buildable now
 on the `PriceSource` seam.
 
-It also runs entirely offline, which makes it the skill that proves the whole registry path in
+It also runs entirely offline, which makes it the tool that proves the whole registry path in
 an environment where the other three cannot reach their sources.
 
 **It measures; it does not rank.** No "winner", no score. A strategy decides what
@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from app.core.clock import now_utc
 from app.data.fake import FakePriceSource
-from app.skills.evidence import item_schema, items_output_schema
-from app.skills.types import SkillContext, SkillManifest
+from app.tools.evidence import item_schema, items_output_schema
+from app.tools.types import ToolContext, ToolManifest
 
 INPUT_SCHEMA = {
     "type": "object",
@@ -70,14 +70,14 @@ def _window_return(series, lookback_days: int) -> tuple[float | None, int]:
     return round((last / first - 1) * 100, 4), len(frame)
 
 
-def handle(arguments: dict, context: SkillContext) -> dict:
+def handle(arguments: dict, context: ToolContext) -> dict:
     from app.domain.instrument import Instrument
 
     symbol = arguments["symbol"].strip().upper()
     peers = [p.strip().upper() for p in arguments["peers"]]
     lookback = int(arguments.get("lookback_days", 90))
 
-    # A source is always injected in the platform; the fake keeps the skill runnable in
+    # A source is always injected in the platform; the fake keeps the tool runnable in
     # isolation rather than raising on a missing collaborator.
     source = context.price_source or FakePriceSource()
     observed_at = (context.now() if context.now else now_utc()).isoformat()
@@ -120,10 +120,14 @@ def handle(arguments: dict, context: SkillContext) -> dict:
     }
 
 
-SKILL = SkillManifest(
+TOOL = ToolManifest(
     name="peer_compare",
     version="1.0.0",
-    summary="Compare a stock's recent price performance against named peers.",
+    summary=(
+        "Compares a stock's recent price return against named peers. Use when judging whether "
+        "a move is company-specific or sector-wide, or when relative strength against "
+        "competitors is in question."
+    ),
     description=(
         "Computes percentage return over a lookback window for a subject instrument and each "
         "named peer, plus the subject's performance relative to each. Returns measurements "
