@@ -370,6 +370,29 @@ class TestObservability:
         assert result.cost_usd == pytest.approx(0.00012)
         assert result.latency_ms is not None
 
+    async def test_local_model_is_unpriced_not_zero_priced(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Found live against Ollama, not in these fakes.
+
+        LiteLLM populates ``response_cost`` for *every* call, computing exactly ``0.0`` for a
+        provider it has no pricing for, rather than omitting the field. The gateway read that
+        number faithfully and recorded a local call as costing zero dollars — priced, at a
+        price of nothing — when the ledger's whole distinction is priced vs. unpriced. Every
+        fake here reported a hosted-shaped cost, so nothing exercised the real value.
+        """
+        settings = _settings(tmp_path, llm_route={"narrative": "ollama/gemma4:12b"})
+        free = FakeResponse()
+        free._hidden_params = {"response_cost": 0.0}
+        _record_calls(monkeypatch, result=free)
+
+        result = await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert result is not None
+        assert result.cost_usd is None
+        # Tokens are still real; it is only the *price* that does not exist.
+        assert result.total_tokens == 15
+
 
 class TestIsolation:
     def test_no_module_outside_app_llm_imports_litellm(self) -> None:

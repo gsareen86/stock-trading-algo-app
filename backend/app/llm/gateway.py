@@ -343,7 +343,13 @@ class LiteLLMGateway:
 
     @staticmethod
     def _cost_of(response: Any) -> float | None:
-        """LiteLLM attaches a computed cost for hosted providers; local models have none."""
+        """LiteLLM populates a cost for every call, including free/local ones — where it
+        reports exactly 0.0 rather than omitting the field (confirmed live against Ollama).
+        Treated as unpriced (None), not zero-cost, so SUM(cost) over recorded calls means "the
+        priced subset" and never silently drifts to mean "the total" once a free call lands.
+        """
         hidden = getattr(response, "_hidden_params", None) or {}
         cost = hidden.get("response_cost") if isinstance(hidden, dict) else None
-        return float(cost) if isinstance(cost, int | float) else None
+        if not isinstance(cost, int | float) or isinstance(cost, bool):
+            return None
+        return float(cost) if cost > 0 else None
