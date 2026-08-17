@@ -16,6 +16,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import router as auth_router
 from app.api.books import router as books_router
 from app.api.cycles import router as cycles_router
 from app.api.health import router as health_router
@@ -25,6 +26,8 @@ from app.api.root import router as root_router
 from app.api.screening import router as screening_router
 from app.api.tools import router as tools_router
 from app.api.verdicts import router as verdicts_router
+from app.auth.guard import AuthGuard
+from app.auth.service import AuthService
 from app.core.logging import configure_logging
 from app.core.settings import Settings
 from app.llm.budget import DailyBudget
@@ -60,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     # Discovered once at startup: importing every tool module per request would be wasteful,
     # and load failures should surface at boot rather than on first use.
+    app.state.auth = AuthService(app.state.session_factory, settings)
     app.state.tools = ToolRegistry.discover()
     app.state.strategies = StrategyRegistry.discover()
 
@@ -73,6 +77,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Added after CORS so CORS is the outer layer: a 401 still needs its headers, or the
+    # browser reports a cross-origin error instead of an auth failure.
+    app.add_middleware(AuthGuard)
+
+    app.include_router(auth_router)
     app.include_router(root_router)
     app.include_router(health_router)
     app.include_router(llm_router)

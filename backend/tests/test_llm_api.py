@@ -9,10 +9,11 @@ from app.core.settings import Settings
 from app.llm.recorder import CallRecord, CallRecorder
 from app.llm.types import CallStatus
 from app.main import create_app
+from tests.conftest import authed_client
 
 
 def _client(settings: Settings) -> TestClient:
-    return TestClient(create_app(settings))
+    return authed_client(create_app(settings))
 
 
 def _seed(factory, **overrides) -> None:

@@ -17,6 +17,7 @@ from app.domain.instrument import Instrument
 from app.domain.prices import build_series, empty_series
 from app.screening import filters
 from app.screening.screener import ScreenCriteria, Screener
+from tests.conftest import authed_client
 
 TODAY = date(2026, 8, 17)
 RELIANCE = Instrument("RELIANCE")
@@ -372,7 +373,6 @@ class TestScreenNode:
 class TestScreeningApi:
     @staticmethod
     def _client(settings):
-        from fastapi.testclient import TestClient
 
         from app.data.fake import FakePriceSource
         from app.data.fundamentals import StaticFundamentalsSource
@@ -392,7 +392,7 @@ class TestScreeningApi:
                 )
 
         app.state.universe_source = Universe()
-        return TestClient(app)
+        return authed_client(app)
 
     def test_universe_reports_origin_and_exclusions(self, settings) -> None:
         body = self._client(settings).get("/universe").json()

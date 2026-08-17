@@ -13,6 +13,7 @@ from app.data.fundamentals import StaticFundamentalsSource
 from app.domain.verdict import Evidence, GateResult, Operator, Stance, Verdict
 from app.main import create_app
 from app.persistence.verdicts import VerdictRepository
+from tests.conftest import authed_client
 
 AS_OF = datetime(2026, 8, 14, tzinfo=UTC)
 
@@ -57,7 +58,7 @@ def client(settings: Settings) -> TestClient:
     # Empty rather than absent: fun_tech_momentum then fails its fundamentals gate
     # deterministically instead of reaching for yfinance.
     app.state.fundamentals_source = StaticFundamentalsSource({})
-    return TestClient(app)
+    return authed_client(app)
 
 
 class TestPersistence:
@@ -242,7 +243,7 @@ class TestNarrationFlag:
         # Cites nothing and states no figure, so it passes the guard for every strategy.
         app.state.gateway = self._gateway("The setup is constructive on the evidence shown.")
 
-        body = TestClient(app).post(
+        body = authed_client(app).post(
             "/verdicts/evaluate", json={"symbols": ["RELIANCE"], "narrate": True}
         ).json()
 
@@ -256,7 +257,7 @@ class TestNarrationFlag:
         app.state.fundamentals_source = StaticFundamentalsSource({})
         app.state.gateway = self._gateway("The stock has gained 41.7% since the breakout.")
 
-        response = TestClient(app).post(
+        response = authed_client(app).post(
             "/verdicts/evaluate", json={"symbols": ["RELIANCE"], "narrate": True}
         )
         body = response.json()
@@ -272,7 +273,7 @@ class TestNarrationFlag:
         app.state.fundamentals_source = StaticFundamentalsSource({})
         app.state.gateway = self._gateway(None)
 
-        body = TestClient(app).post(
+        body = authed_client(app).post(
             "/verdicts/evaluate", json={"symbols": ["RELIANCE"], "narrate": True}
         ).json()
 

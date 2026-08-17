@@ -18,6 +18,7 @@ from app.health import components as comp
 from app.health import score as health_score
 from app.insights.actions import Action, ActionRefused, actions_for, execute, plan
 from app.insights.kinds import Kind
+from tests.conftest import authed_client
 
 
 def _code_only(source: str) -> str:
@@ -339,14 +340,13 @@ class TestPreviewMatchesExecution:
 class TestHealthAndActionsApi:
     @staticmethod
     def _client(settings):
-        from fastapi.testclient import TestClient
 
         from app.data.fake import FakePriceSource
         from app.main import create_app
 
         app = create_app(settings)
         app.state.price_source = FakePriceSource(bars=400)
-        return TestClient(app)
+        return authed_client(app)
 
     def test_health_publishes_components_and_guidance(self, settings) -> None:
         client = self._client(settings)

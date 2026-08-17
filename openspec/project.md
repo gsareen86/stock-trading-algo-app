@@ -69,6 +69,7 @@ backend/app/
   risk/         portfolio gates and sizing
   insights/     what reaches the reader, what is suppressed, and acting on it
   health/       structural scoring of a book, and its next steps
+  auth/         password hashing, JWT issue/verify, the application-wide guard
   persistence/  SQLAlchemy models + Alembic migrations
   api/          FastAPI routers
 backend/tests/
@@ -228,6 +229,33 @@ where every narrative call timed out and the feature looked broken rather than s
 `run-local.ps1` is the supported way to start the stack locally — the routing and timeout
 settings are environment variables, so a server started any other way loses them silently.
 
+## Authentication
+
+Username and password, Argon2id hashed. Sessions are JWT: a **30-minute access token** carried
+as a bearer credential, and a **14-day refresh token** in an httpOnly cookie.
+
+Three things are load-bearing:
+
+- **Protected by default.** The guard runs for every request and exemptions are a named list
+  (`/`, `/health`, `/auth/*`, docs, the agent card). A test walks the served route table and
+  fails on anything unlisted that answers anonymously — so an endpoint added later is protected
+  because it exists, not because someone remembered.
+- **The `type` claim is checked on every decode.** Without it a refresh token is a valid
+  signature over a valid subject and would be accepted as a two-week access token.
+- **Logout revokes.** A JWT cannot be un-issued, so refresh `jti`s are stored and checked;
+  refresh also rotates, meaning a stolen token dies as soon as the real session refreshes.
+
+`AUTH_SECRET_KEY` has **no usable default**: prod refuses to start without one, dev generates a
+random key per process (tokens die on restart — safe, and impossible to mistake for production).
+Minimum 32 characters, per RFC 7518 §3.2.
+
+The first user is created explicitly — `python -m app.auth.cli create-user <name>` — never
+conjured at startup from environment variables, which is how a default admin reaches
+production.
+
+The web app holds **no token in page script**: both live in httpOnly cookies on the Next origin
+and a proxy route attaches them, refreshing once on a 401 before redirecting to `/login`.
+
 ## Data & security
 
 SQLAlchemy + Alembic own the schema. Supabase project `zzhvzrxnesibjrklkcis`
@@ -312,9 +340,9 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 9. `screening-universe-and-gates`
 10. `books-ledger-and-analytics`
 11. `insights-feed`
-12. `portfolio-health-and-actions` ← next
+12. `portfolio-health-and-actions`
 13. `authentication`
-14. `backtesting` (no legacy data — see Data & security)
+14. `backtesting` (never from legacy data) ← next
 15. `gui-shell-and-design-system` → `gui-surfaces`
 
 Changes that arrive outside this sequence are archived alongside it rather than renumbered:

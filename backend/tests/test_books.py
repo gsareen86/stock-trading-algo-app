@@ -21,6 +21,7 @@ from app.domain.position import (
 )
 from app.domain.verdict import Evidence, Stance, Verdict
 from app.risk.rules import PortfolioState, RiskLimits, RiskOutcome, assess
+from tests.conftest import authed_client
 
 T0 = datetime(2026, 8, 1, tzinfo=UTC)
 
@@ -352,14 +353,13 @@ class TestRiskVetoesButNeverRewrites:
 class TestBooksApi:
     @staticmethod
     def _client(settings):
-        from fastapi.testclient import TestClient
 
         from app.data.fake import FakePriceSource
         from app.main import create_app
 
         app = create_app(settings)
         app.state.price_source = FakePriceSource(bars=400)
-        return TestClient(app)
+        return authed_client(app)
 
     def test_fill_then_read_the_position(self, settings) -> None:
         client = self._client(settings)

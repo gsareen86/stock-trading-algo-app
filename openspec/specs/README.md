@@ -24,7 +24,8 @@ behavior that hasn't shipped. If you need to change what the system does, that g
 | `risk-management` | Portfolio gates and sizing — vetoes acting, never alters a verdict |
 | `insights-feed` | What reaches the reader: portfolio consequences, deduped, in-app only |
 | `portfolio-health` | Structural scoring of the book, and deterministic next steps |
-| `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/tools`, `/strategies`, `/verdicts`, `/cycles/run`, `/screen`, `/universe`, `/books/{book}/*`, `/insights`, `/insights/{id}/act` |
+| `authentication` | Password login, revocable JWT sessions, protected-by-default routing |
+| `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/tools`, `/strategies`, `/verdicts`, `/cycles/run`, `/screen`, `/universe`, `/books/{book}/*`, `/insights`, `/auth/*` |
 | `web-shell` | The six surfaces, design tokens, the backend seam, the Engine LLM panel |
 
 These carry full Requirement+Scenario depth because they describe code that was just written;
@@ -33,4 +34,4 @@ change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
 `market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`,
-`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`, `portfolio-health-and-actions`.
+`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`, `portfolio-health-and-actions`, `authentication`.

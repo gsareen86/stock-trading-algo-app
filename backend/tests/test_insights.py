@@ -16,6 +16,7 @@ from app.insights import rules
 from app.insights.feed import InsightFeed
 from app.insights.kinds import SPECS, Kind, Severity, spec
 from app.insights.rules import Candidate
+from tests.conftest import authed_client
 
 T0 = datetime(2026, 8, 17, tzinfo=UTC)
 
@@ -328,11 +329,10 @@ class TestNoDeliveryChannel:
 class TestInsightsApi:
     @staticmethod
     def _client(settings):
-        from fastapi.testclient import TestClient
 
         from app.main import create_app
 
-        return TestClient(create_app(settings))
+        return authed_client(create_app(settings))
 
     def test_empty_feed_reads_cleanly(self, settings) -> None:
         body = self._client(settings).get("/insights").json()

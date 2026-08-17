@@ -6,8 +6,14 @@
  * gain a Supabase key.
  */
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+/**
+ * Everything goes through the Next.js proxy, never straight to the backend.
+ *
+ * The proxy attaches the access token from an httpOnly cookie, so no token is ever handled by
+ * page code — and the browser never needs a cross-origin credential. `BACKEND_URL` (server
+ * only) is where the proxy forwards to.
+ */
+export const API_BASE_URL = "/api/backend";
 
 export type ProviderStatus = {
   name: string;
@@ -99,11 +105,17 @@ export type HealthResult =
  * page — a broken seam should be visible, not fatal.
  */
 async function getJson<T>(path: string): Promise<Fetched<T>> {
-  const url = `${API_BASE_URL}${path}`;
+  // Relative on the client; absolute on the server, where `fetch` has no origin to resolve
+  // against. Both land on the same proxy route.
+  const base = typeof window === "undefined"
+    ? `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}${API_BASE_URL}`
+    : API_BASE_URL;
+  const url = `${base}${path}`;
   try {
     const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) {
-      return { ok: false, error: `HTTP ${response.status}`, attemptedUrl: url };
+      const label = response.status === 401 ? "not signed in" : `HTTP ${response.status}`;
+      return { ok: false, error: label, attemptedUrl: url };
     }
     return { ok: true, data: (await response.json()) as T };
   } catch (error) {

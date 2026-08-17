@@ -25,6 +25,7 @@ from app.strategies.protocols import StrategyContext
 from app.strategies.registry import StrategyRegistry
 from app.tools.registry import ToolRegistry
 from app.tools.types import ToolContext
+from tests.conftest import authed_client
 
 AS_OF = datetime(2026, 8, 17, tzinfo=UTC)
 RELIANCE = Instrument("RELIANCE")
@@ -349,7 +350,6 @@ class TestCycleApi:
 
     @staticmethod
     def _client(settings):
-        from fastapi.testclient import TestClient
 
         from app.main import create_app
 
@@ -357,7 +357,7 @@ class TestCycleApi:
         app.state.price_source = FakePriceSource(bars=400)
         app.state.fundamentals_source = StaticFundamentalsSource({})
         app.state.gateway = SilentGateway()
-        return TestClient(app)
+        return authed_client(app)
 
     def test_cycle_returns_one_verdict_per_strategy(self, settings) -> None:
         body = self._client(settings).post(

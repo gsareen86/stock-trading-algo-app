@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import authed_client
+
 
 class TestSkillsEndpoint:
     def test_lists_seed_tools_with_their_contracts(self, client: TestClient) -> None:
@@ -42,7 +44,7 @@ class TestSkillsEndpoint:
         monkeypatch.setattr(importlib, "import_module", explode)
         app = create_app(Settings(app_env="test", database_url=migrated_url))
 
-        body = TestClient(app).get("/tools").json()
+        body = authed_client(app).get("/tools").json()
 
         assert body["count"] == 3
         assert any("filings_scan" in f["module"] for f in body["load_failures"])

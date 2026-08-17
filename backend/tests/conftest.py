@@ -6,6 +6,7 @@ touches a developer's real ``.env`` or the Supabase project.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -87,4 +88,36 @@ def client(settings: Settings) -> Iterator:
     from app.main import create_app
 
     with TestClient(create_app(settings)) as test_client:
+        authenticate(test_client)
         yield test_client
+
+
+# ── authentication ────────────────────────────────────────────────────────────
+#: Credentials every API test logs in with. The password clears the minimum length so the
+#: hashing path under test is the real one.
+TEST_USERNAME = "tester"
+TEST_PASSWORD = "correct-horse-battery-staple"
+
+
+def authenticate(test_client) -> None:
+    """Create the test user and attach a bearer token to every subsequent request.
+
+    Tests exercise endpoints, not the login form, so they authenticate once here rather than
+    each carrying the ceremony. `test_authentication.py` is where login itself is tested.
+    """
+    service = test_client.app.state.auth
+    with contextlib.suppress(ValueError):
+        # Already created by an earlier client against the same database.
+        service.create_user(TEST_USERNAME, TEST_PASSWORD)
+
+    session = service.login(TEST_USERNAME, TEST_PASSWORD)
+    test_client.headers.update({"Authorization": f"Bearer {session.access_token}"})
+
+
+def authed_client(app):
+    """A `TestClient` for an app, already logged in."""
+    from fastapi.testclient import TestClient
+
+    test_client = TestClient(app)
+    authenticate(test_client)
+    return test_client

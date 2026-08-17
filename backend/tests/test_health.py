@@ -13,10 +13,11 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import PROVIDERS, Settings
 from app.main import create_app
+from tests.conftest import authed_client
 
 
 def _client(settings: Settings) -> TestClient:
-    return TestClient(create_app(settings))
+    return authed_client(create_app(settings))
 
 
 class TestHealthyState:
@@ -40,10 +41,23 @@ class TestHealthyState:
 
 
 class TestDegradedStatesAreReportedNotHidden:
+    """These use an *unauthenticated* client on purpose.
+
+    `/health` is public precisely so it works when the database is down — which is exactly
+    when logging in is impossible, since credentials live in that database. A health check that
+    needed a token could not tell a monitor the difference between "down" and "misconfigured".
+    """
+
+    @staticmethod
+    def _open_client(settings: Settings) -> TestClient:
+        return TestClient(create_app(settings))
+
     def test_unreachable_database_still_answers_200(self, tmp_path: Path) -> None:
         unreachable = f"sqlite+pysqlite:///{tmp_path / 'no-such-dir' / 'x.db'}"
 
-        response = _client(Settings(app_env="test", database_url=unreachable)).get("/health")
+        response = self._open_client(
+            Settings(app_env="test", database_url=unreachable)
+        ).get("/health")
         body = response.json()
 
         assert response.status_code == 200
@@ -53,7 +67,9 @@ class TestDegradedStatesAreReportedNotHidden:
 
     def test_unmigrated_database_reports_both_revisions(self, sqlite_url: str) -> None:
         """Reachable, but migrations never ran."""
-        response = _client(Settings(app_env="test", database_url=sqlite_url)).get("/health")
+        response = self._open_client(
+            Settings(app_env="test", database_url=sqlite_url)
+        ).get("/health")
         body = response.json()
 
         from app.persistence.status import head_revision

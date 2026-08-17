@@ -236,3 +236,57 @@ class Trade(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class User(Base):
+    """A person who may use the platform.
+
+    One row per human. There is deliberately no role column: one person owns this book, and a
+    permission system with nothing to permit is machinery that has to be maintained without
+    ever being exercised. Roles arrive with a change that has a second kind of user.
+    """
+
+    __tablename__ = "users"
+    __table_args__ = (Index("ix_users_username", "username", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+
+    #: Argon2id. The only representation of a password this platform stores, and it never
+    #: leaves the database — no endpoint returns this column.
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class RefreshToken(Base):
+    """A refresh token that can actually be revoked.
+
+    A JWT cannot be un-issued. Storing the `jti` and checking it on every use is what makes
+    logout mean something — without this row, "log out" would delete a cookie and leave a
+    credential valid for a fortnight.
+    """
+
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        Index("ix_refresh_tokens_jti", "jti", unique=True),
+        Index("ix_refresh_tokens_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: The token's own identifier, not the token: possessing this row must not let anyone
+    #: reconstruct a usable credential.
+    jti: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

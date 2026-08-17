@@ -21,12 +21,16 @@ module-level singleton — that is what makes the precedence chain testable.
 from __future__ import annotations
 
 import os
+import secrets
 from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.money import DEFAULT_USD_INR_RATE, inr_to_usd
+
+#: RFC 7518 §3.2 — an HS256 key below the hash output length weakens the signature.
+MIN_SECRET_KEY_LENGTH = 32
 
 # The seven providers the gateway supports. The last four are OpenAI-compatible local
 # servers and need no adapter code — only a base URL.
@@ -151,6 +155,24 @@ class Settings(BaseSettings):
     #: finished is one that occasionally never finishes.
     research_max_tool_rounds: Annotated[int, Field(ge=0, le=10)] = 3
 
+    # ── Authentication ────────────────────────────────────────────────────────
+    #: JWT signing key. **There is deliberately no usable default.** A platform that boots with
+    #: a well-known signing key is one where every token is forgeable by anyone who has read
+    #: this repository. In prod, absence is a startup failure; in dev and test a random secret
+    #: is generated per process, so tokens do not survive a restart — mildly annoying, and
+    #: impossible to mistake for a production configuration.
+    auth_secret_key: str | None = None
+
+    #: Short, because a JWT cannot be un-issued: this is the window during which a logged-out
+    #: session still works.
+    auth_access_token_minutes: Annotated[int, Field(gt=0, le=1440)] = 30
+
+    #: Long, because it is revocable — checked against a stored row on every use.
+    auth_refresh_token_days: Annotated[int, Field(gt=0, le=90)] = 14
+
+    #: Set only when serving the web app over HTTPS. The refresh cookie is httpOnly either way.
+    auth_cookie_secure: bool = False
+
     # ── Observability ─────────────────────────────────────────────────────────
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
@@ -181,6 +203,30 @@ class Settings(BaseSettings):
         for old, guidance in self._RETIRED_KEYS.items():
             if old in os.environ:
                 raise ValueError(f"{old} is no longer supported; use {guidance}")
+        return self
+
+    @model_validator(mode="after")
+    def _require_a_real_signing_key(self) -> Settings:
+        """No usable default, ever — and a loud failure in prod rather than a quiet one.
+
+        Generating a key in dev is safe precisely because it does not persist: a restart
+        invalidates every token, which is impossible to mistake for a working production
+        configuration. Falling back to a constant would be the opposite.
+        """
+        if self.auth_secret_key:
+            if len(self.auth_secret_key) < MIN_SECRET_KEY_LENGTH:
+                # RFC 7518 §3.2: an HS256 key shorter than the hash output weakens the
+                # signature. PyJWT warns; refusing is better than a warning nobody reads.
+                raise ValueError(
+                    f"AUTH_SECRET_KEY must be at least {MIN_SECRET_KEY_LENGTH} characters"
+                )
+            return self
+        if self.app_env == "prod":
+            raise ValueError(
+                "AUTH_SECRET_KEY must be set in prod. Generate one with: "
+                "python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+            )
+        object.__setattr__(self, "auth_secret_key", secrets.token_urlsafe(48))
         return self
 
     # ── Derived accessors ─────────────────────────────────────────────────────
