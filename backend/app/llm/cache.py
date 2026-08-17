@@ -22,13 +22,26 @@ from app.llm.types import LLMResult, Message
 log = logging.getLogger(__name__)
 
 
-def cache_key(*, task: str, model: str, messages: list[Message], schema: Any | None) -> str:
-    """Stable hash over everything that could change the answer."""
+def cache_key(
+    *,
+    task: str,
+    model: str,
+    messages: list[Message],
+    schema: Any | None,
+    tools: Any | None = None,
+) -> str:
+    """Stable hash over everything that could change the answer.
+
+    ``tools`` is part of that: the same prompt with a different callable set is a different
+    question, and serving a cached answer across the two would hand back tool calls naming
+    tools that are not currently available.
+    """
     payload = {
         "task": task,
         "model": model,
         "messages": [{"role": m.role, "content": m.content} for m in messages],
         "schema": schema,
+        "tools": tools,
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()

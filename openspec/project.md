@@ -111,11 +111,22 @@ they can click, and the verdict itself reproduces without the LLM.
 ## Agent cycle
 
 ```
-regime ─→ screen ─→ research ──┬─→ strategy.minervini ────┐
-                               ├─→ strategy.bvm ──────────┤
-                               ├─→ strategy.fun_tech ─────┼─→ risk ─→ insights
-                               └─→ strategy.young_mom ────┘
+regime ─→ research ──┬─→ strategy.minervini ────┐
+                     ├─→ strategy.bvm ──────────┤
+                     ├─→ strategy.fun_tech ─────┼─→ narrate ─→ END
+                     └─→ strategy.young_mom ────┘
 ```
+
+`screen`, `risk` and `insights` are absent until the increments they depend on land
+(`screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`). A placeholder
+node would be inventing behaviour to be thrown away.
+
+**External MCP tools** (Zerodha Kite) are offered to the research step namespaced by server
+(`kite:get_ltp`) and are never registered in `ToolRegistry` — that registry promises an output
+schema and evidence-shaped results, which we cannot promise for someone else's server. Any
+remote tool whose name contains a mutating verb (`place`, `cancel`, `modify`, `delete`, `exit`,
+`square`, `convert`) is refused at discovery and reported: this platform is paper-only
+(principle 7), and a research step is not the execution boundary.
 
 The four strategy nodes fan out **in parallel and never share state** — that isolation is
 what makes the verdicts genuinely independent rather than independent-looking. `risk`
@@ -237,8 +248,8 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 5. `verdict-model-and-minervini`
 6. `remaining-three-strategies`
 7. `verdict-narratives`
-8. `agent-graph-and-a2a` ← next
-9. `screening-universe-and-gates`
+8. `agent-graph-and-a2a`
+9. `screening-universe-and-gates` ← next
 10. `books-ledger-and-analytics`
 11. `insights-feed`
 12. `backtesting`

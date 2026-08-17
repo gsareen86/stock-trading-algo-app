@@ -37,6 +37,21 @@ class Message:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolCall:
+    """A tool the model asked to run.
+
+    ``arguments`` is already parsed. A provider hands them over as a JSON *string*, and every
+    caller would otherwise repeat the same parse-and-guard — including the guard for the case
+    that matters, which is a model emitting something that is not JSON at all. Parsed once,
+    here, so an unparseable call never reaches a tool.
+    """
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class LLMResult:
     """A successful completion, plus what observability needs to account for it."""
 
@@ -69,6 +84,10 @@ class LLMResult:
     #: Parsed object when the caller supplied a JSON schema.
     parsed: Any | None = None
 
+    #: Tools the model asked to run. Empty when it asked for none — which is a valid answer,
+    #: not a failure: "nothing here is worth looking up" is a real conclusion.
+    tool_calls: tuple[ToolCall, ...] = ()
+
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -87,4 +106,5 @@ class LLMGateway(Protocol):
         task: str,
         messages: list[Message],
         schema: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResult | None: ...

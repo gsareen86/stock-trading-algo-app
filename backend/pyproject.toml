@@ -30,6 +30,12 @@ llm = [
     "litellm>=1.55",
     "langfuse>=2.53",
 ]
+# The agent graph and the MCP client. Imported lazily by app/agents/, so the API, the
+# strategies and their tests all run without them.
+agents = [
+    "langgraph>=1.0",
+    "mcp>=2.0",
+]
 postgres = [
     "psycopg[binary]>=3.2",
 ]

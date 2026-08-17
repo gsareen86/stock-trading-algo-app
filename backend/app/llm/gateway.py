@@ -34,7 +34,7 @@ from app.llm.budget import DailyBudget
 from app.llm.cache import DiskCache, cache_key
 from app.llm.recorder import CallRecord, CallRecorder
 from app.llm.routing import Chain, Rung, SkipReason, resolve_chain
-from app.llm.types import CallStatus, LLMResult, Message
+from app.llm.types import CallStatus, LLMResult, Message, ToolCall
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +99,7 @@ class LiteLLMGateway:
         task: str,
         messages: list[Message],
         schema: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResult | None:
         settings = self._settings
         requested = settings.model_for_task(task)
@@ -107,7 +108,9 @@ class LiteLLMGateway:
         # able to withhold an answer the platform already has. Keyed on the *requested*
         # target, not the serving one — the cache answers "this prompt for this task", and a
         # result that arrived via fallback is still that answer.
-        key = cache_key(task=task, model=requested, messages=messages, schema=schema)
+        key = cache_key(
+            task=task, model=requested, messages=messages, schema=schema, tools=tools
+        )
         started = time.monotonic()
         hit = self._cache.get(key)
         if hit is not None:
@@ -147,7 +150,7 @@ class LiteLLMGateway:
             return None
 
         for rung in chain.rungs:
-            result = await self._attempt(litellm, task, rung, requested, messages, schema)
+            result = await self._attempt(litellm, task, rung, requested, messages, schema, tools)
             if result is not None:
                 self._cache.put(key, result)
                 return result
@@ -163,6 +166,7 @@ class LiteLLMGateway:
         requested: str,
         messages: list[Message],
         schema: dict[str, Any] | None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResult | None:
         settings = self._settings
         litellm_model, api_base = self._dispatch_target(rung)
@@ -182,6 +186,8 @@ class LiteLLMGateway:
         }
         if api_base:
             kwargs["api_base"] = api_base
+        if tools:
+            kwargs["tools"] = tools
         if schema:
             kwargs["response_format"] = {
                 "type": "json_schema",
@@ -263,7 +269,8 @@ class LiteLLMGateway:
         schema: dict[str, Any] | None,
     ) -> LLMResult | None:
         try:
-            text = response.choices[0].message.content or ""
+            message = response.choices[0].message
+            text = message.content or ""
         except (AttributeError, IndexError, TypeError):
             log.warning("unexpected response shape from %s", rung.provider)
             self._recorder.record(
@@ -306,6 +313,7 @@ class LiteLLMGateway:
                 )
                 return None
 
+        tool_calls = self._tool_calls_of(message)
         usage = getattr(response, "usage", None)
         cost = self._cost_of(response)
 
@@ -325,6 +333,7 @@ class LiteLLMGateway:
             trace_id=trace_id,
             cached=False,
             parsed=parsed,
+            tool_calls=tool_calls,
         )
 
         self._budget.add(cost)
@@ -346,6 +355,36 @@ class LiteLLMGateway:
             )
         )
         return result
+
+    @staticmethod
+    def _tool_calls_of(message: Any) -> tuple[ToolCall, ...]:
+        """Tool calls the model made, with arguments already parsed.
+
+        A call whose arguments are not valid JSON is dropped rather than passed on: it names a
+        tool but says nothing usable about how to run it, and handing that to a registry would
+        turn a model's malformed output into a confusing validation error one layer further
+        from the cause.
+        """
+        raw = getattr(message, "tool_calls", None) or []
+        calls: list[ToolCall] = []
+        for item in raw:
+            function = getattr(item, "function", None)
+            name = getattr(function, "name", None)
+            if not name:
+                continue
+            arguments = getattr(function, "arguments", None) or "{}"
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    log.warning("dropping tool call %s: arguments were not valid JSON", name)
+                    continue
+            if not isinstance(arguments, dict):
+                continue
+            calls.append(
+                ToolCall(id=str(getattr(item, "id", "") or name), name=name, arguments=arguments)
+            )
+        return tuple(calls)
 
     @staticmethod
     def _cost_of(response: Any) -> float | None:

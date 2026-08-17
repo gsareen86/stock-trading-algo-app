@@ -140,12 +140,25 @@ class Settings(BaseSettings):
     llm_cache_enabled: bool = True
     llm_cache_dir: str = "./.cache/llm"
 
+    # ── Agents ────────────────────────────────────────────────────────────────
+    #: External MCP servers whose tools the research step may call, as
+    #: ``MCP_SERVER__KITE=https://mcp.kite.trade/mcp``. Their tools are offered to the model
+    #: alongside the local registry but are never registered in it: this platform cannot
+    #: promise an output schema or an evidence-shaped result for someone else's server.
+    mcp_server: dict[str, str] = Field(default_factory=dict)
+
+    #: Bound on the research step's tool-calling loop. An agent that calls tools until it feels
+    #: finished is one that occasionally never finishes.
+    research_max_tool_rounds: Annotated[int, Field(ge=0, le=10)] = 3
+
     # ── Observability ─────────────────────────────────────────────────────────
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    @field_validator("llm_route", "llm_provider_base_url", "llm_fallback", mode="after")
+    @field_validator(
+        "llm_route", "llm_provider_base_url", "llm_fallback", "mcp_server", mode="after"
+    )
     @classmethod
     def _lowercase_keys(cls, value: dict[str, str]) -> dict[str, str]:
         """Normalise keys so ``LLM_ROUTE__NARRATIVE`` and ``llm_route={'narrative':...}``

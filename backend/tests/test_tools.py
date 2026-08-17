@@ -254,11 +254,22 @@ class TestBindings:
         assert entry["tags"] == list(manifest.tags)
 
     def test_bindings_need_no_agent_framework(self) -> None:
-        """Neither LangGraph nor an A2A SDK is installed; both bindings must still render."""
-        import importlib.util
+        """Both bindings render as plain dicts, independent of any agent framework.
 
-        assert importlib.util.find_spec("langgraph") is None
-        assert importlib.util.find_spec("a2a") is None
+        This asserted the *absence* of langgraph and a2a until `agent-graph-and-a2a`
+        installed one, which is a proxy that expires the moment it matters. What was always
+        meant is that the renderers do not depend on a framework, so it is now checked where
+        that lives — the source — the same way `app/llm` isolation is checked.
+        """
+        import re
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "app" / "tools" / "bindings.py").read_text(
+            encoding="utf-8"
+        )
+        forbidden = re.compile(r"^\s*(import|from)\s+(langgraph|langchain|a2a|mcp)\b", re.MULTILINE)
+
+        assert not forbidden.search(source)
         manifest = _echo_manifest()
 
         assert to_tool_definition(manifest)["type"] == "function"
