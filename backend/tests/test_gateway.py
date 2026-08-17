@@ -789,3 +789,67 @@ class TestGatewayRecording:
         )
 
         assert result is not None
+
+
+class TestTimeoutsByProvider:
+    """Local models are slow but free; hosted ones are fast but metered."""
+
+    async def test_local_rung_gets_the_local_timeout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Found live: every narrative call to a local 12B timed out at the hosted 30s.
+
+        The feature looked broken rather than slow, which is the expensive kind of wrong.
+        """
+        settings = _settings(
+            tmp_path,
+            llm_route={"narrative": "ollama/gemma4:12b"},
+            llm_timeout_seconds=30.0,
+            llm_local_timeout_seconds=300.0,
+        )
+        calls = _record_calls(monkeypatch)
+
+        await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert calls[0]["timeout"] == 300.0
+
+    async def test_hosted_rung_keeps_the_shorter_timeout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _settings(
+            tmp_path,
+            llm_route={"narrative": "anthropic/claude-sonnet-5"},
+            llm_timeout_seconds=30.0,
+            llm_local_timeout_seconds=300.0,
+        )
+        calls = _record_calls(monkeypatch)
+
+        await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert calls[0]["timeout"] == 30.0
+
+    async def test_each_rung_in_a_chain_gets_its_own(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hosted primary falling back to a local model must not carry the 30s budget down."""
+        settings = _settings(
+            tmp_path,
+            llm_route={"narrative": "anthropic/claude-sonnet-5"},
+            llm_fallback={"narrative": "ollama/gemma4:12b"},
+            llm_cache_enabled=False,
+            llm_timeout_seconds=30.0,
+            llm_local_timeout_seconds=300.0,
+        )
+        seen: list[float] = []
+
+        async def fake_acompletion(**kwargs):
+            seen.append(kwargs["timeout"])
+            if kwargs["model"].startswith("anthropic"):
+                raise RuntimeError("hosted down")
+            return FakeResponse()
+
+        monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+        await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert seen == [30.0, 300.0]

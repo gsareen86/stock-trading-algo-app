@@ -171,7 +171,13 @@ class LiteLLMGateway:
         kwargs: dict[str, Any] = {
             "model": litellm_model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "timeout": settings.llm_timeout_seconds,
+            # Local rungs get their own budget: same signal as the cost rule, same reason —
+            # a local model is slow but free, so the trade a timeout makes is different.
+            "timeout": (
+                settings.llm_local_timeout_seconds
+                if rung.is_local
+                else settings.llm_timeout_seconds
+            ),
             "num_retries": settings.llm_max_retries,
         }
         if api_base:

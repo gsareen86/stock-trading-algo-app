@@ -154,10 +154,14 @@ model while research runs on a frontier one.
 A failed LLM call must never crash a cycle. The gateway carries a circuit breaker and a
 disk cache for stable prompts — the two ideas worth keeping from the legacy `llm/client.py`.
 
-**`LLM_TIMEOUT_SECONDS` defaults to 30, which is a hosted-model number.** A 12B model running
-locally takes well over that to write a narrative from a dozen evidence rows — found the first
-time one ran on real hardware, where every call timed out and the feature looked broken rather
-than slow. Local routing wants 300 or so.
+**Local and hosted providers have separate timeouts.** `LLM_TIMEOUT_SECONDS` (30) is a
+hosted-model number; a request still running after it is hung, not slow.
+`LLM_LOCAL_TIMEOUT_SECONDS` (300) applies to local rungs, which are an order of magnitude
+slower and cost nothing to wait for. Found the first time a 12B model ran on real hardware,
+where every narrative call timed out and the feature looked broken rather than slow.
+
+`run-local.ps1` is the supported way to start the stack locally — the routing and timeout
+settings are environment variables, so a server started any other way loses them silently.
 
 ## Data & security
 

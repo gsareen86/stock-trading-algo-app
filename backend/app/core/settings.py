@@ -120,7 +120,16 @@ class Settings(BaseSettings):
     #: ``daily_budget_usd`` and ``app.core.money``.
     llm_daily_budget_inr: Annotated[float | None, Field(gt=0)] = None
 
+    #: Per-call timeout for **hosted** providers. Generous for a frontier model answering over
+    #: the network; a request still running after this is a hung one, not a slow one.
     llm_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
+
+    #: Per-call timeout for **local** providers, which are an order of magnitude slower and
+    #: cost nothing to wait for. A 12B model writing a narrative from a dozen evidence rows
+    #: takes minutes on consumer hardware — under the hosted timeout every such call failed,
+    #: and the feature looked broken rather than slow. Waiting is the right default when the
+    #: alternative is no answer and the wait is free.
+    llm_local_timeout_seconds: Annotated[float, Field(gt=0)] = 300.0
     llm_max_retries: Annotated[int, Field(ge=0)] = 2
 
     #: Consecutive rate-limit failures before the breaker opens for one provider.

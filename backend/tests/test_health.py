@@ -230,3 +230,32 @@ class TestCalendarCoverage:
         assert body["calendar"]["current_year_covered"] is False
         assert body["calendar"]["covered_years"] == [1999]
         assert body["status"] == "degraded"
+
+
+class TestRootIndex:
+    """Opening the base URL in a browser must not read as a broken server."""
+
+    def test_root_answers_instead_of_404(self, settings: Settings) -> None:
+        response = _client(settings).get("/")
+
+        assert response.status_code == 200
+
+    def test_root_points_at_the_real_endpoints(self, settings: Settings) -> None:
+        body = _client(settings).get("/").json()
+
+        assert body["docs"] == "/docs"
+        for path in body["endpoints"].values():
+            assert path.split(" ", 1)[-1].startswith("/")
+
+    def test_root_reports_version_and_env(self, settings: Settings) -> None:
+        body = _client(settings).get("/").json()
+
+        assert body["version"] == settings.app_version
+        assert body["env"] == settings.app_env
+
+    def test_root_does_not_duplicate_health(self, settings: Settings) -> None:
+        """Two answers to "is it up" is one too many; the root only points at /health."""
+        body = _client(settings).get("/").json()
+
+        assert "status" not in body
+        assert "database" not in body

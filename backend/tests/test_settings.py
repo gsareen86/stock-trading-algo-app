@@ -119,3 +119,15 @@ class TestNoRuntimeMutableConfig:
         assert Settings(
             langfuse_public_key="pk", langfuse_secret_key="sk", _env_file=None
         ).observability_configured
+
+
+class TestLocalModelLatency:
+    def test_local_timeout_defaults_higher_than_hosted(self) -> None:
+        """Tuning for hosted latency must not make local providers unusable."""
+        settings = Settings(app_env="test", _env_file=None)
+
+        assert settings.llm_local_timeout_seconds > settings.llm_timeout_seconds
+
+    def test_non_positive_local_timeout_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            Settings(app_env="test", llm_local_timeout_seconds=0, _env_file=None)
