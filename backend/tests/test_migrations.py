@@ -96,6 +96,23 @@ class TestLegacyTablesAreLeftAlone:
     def test_new_tables_do_not_collide_with_legacy_names(self) -> None:
         assert not ({"verdicts", "insights"} & set(LEGACY_TABLES))
 
+    def test_no_platform_table_shares_a_legacy_name(self) -> None:
+        """Generalised from the two-table version after `book_trades` nearly landed as `trades`.
+
+        The predecessor has `trades`, `pos_trades` and `lt_trades`; and `positions`,
+        `pos_positions`, `lt_positions` and `positional_positions` — which is design principle 2
+        written out as a schema. Postgres keeps ours apart by namespace, but SQLite has no
+        schemas, so a shared name is a real collision in dev and a confusing one everywhere.
+        Checking every model beats remembering to check each new one.
+        """
+        from app.persistence.base import Base
+
+        ours = set(Base.metadata.tables)
+        collisions = sorted(name.split(".")[-1] for name in ours)
+        overlap = {n for n in collisions if n in set(LEGACY_TABLES)}
+
+        assert overlap == set(), f"platform tables share legacy names: {sorted(overlap)}"
+
     def test_inventory_covers_the_thirty_known_tables(self) -> None:
         assert len(LEGACY_TABLES) == 30
         assert len(set(LEGACY_TABLES)) == 30

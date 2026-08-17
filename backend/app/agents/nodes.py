@@ -239,6 +239,45 @@ def make_strategy_node(strategy_id: str, registry: StrategyRegistry, context: St
     return run
 
 
+# ── risk ──────────────────────────────────────────────────────────────────────
+def make_risk_node(ledger, limits, book, price_source: PriceSource):
+    """Decide whether to act on each verdict, without touching any of them.
+
+    `Verdict` is frozen and its only mutator sets a narrative, so this node structurally cannot
+    downgrade a BUY to a WATCH — it can only decline to act on one. A strategy answers "is this
+    a good setup"; risk answers "should this portfolio take it".
+    """
+
+    async def risk(state: CycleState) -> dict[str, Any]:
+        verdicts = state.get("verdicts") or []
+        if not verdicts:
+            return {}
+
+        from app.risk.rules import PortfolioState, assess
+
+        portfolio = PortfolioState(book=book, positions=tuple(ledger.positions(book)))
+        decisions = []
+        for verdict in verdicts:
+            last_price = _last_price(price_source, verdict.ticker)
+            decisions.append(assess(verdict, portfolio, limits, last_price).as_dict())
+
+        actionable = sum(1 for d in decisions if d["outcome"] == "proceed")
+        return {
+            "risk": decisions,
+            "notes": [f"risk: {actionable}/{len(decisions)} actionable"],
+        }
+
+    return risk
+
+
+def _last_price(price_source: PriceSource, ticker: str) -> float | None:
+    try:
+        series = price_source.history(Instrument(ticker), interval="1d", lookback_days=30)
+    except Exception:  # pragma: no cover - sources are contracted not to raise
+        return None
+    return series.last_close
+
+
 # ── narrate ───────────────────────────────────────────────────────────────────
 def make_narrate_node(gateway: LLMGateway):
     """Attach prose to every verdict the fan-in collected. Optional by construction."""

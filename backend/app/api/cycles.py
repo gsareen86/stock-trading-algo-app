@@ -20,12 +20,15 @@ from app.agents.toolbelt import Toolbelt
 from app.api.deps import get_gateway, get_session_factory, get_settings
 from app.api.screening import _universe_source
 from app.api.verdicts import _fundamentals_source, _price_source, _serialise
+from app.books.ledger import Ledger
 from app.core.clock import now_utc
 from app.core.settings import Settings
 from app.data.surveillance import load as load_surveillance
 from app.domain.instrument import Instrument
+from app.domain.position import Book
 from app.llm.types import LLMGateway
 from app.persistence.verdicts import VerdictRepository
+from app.risk.rules import RiskLimits
 from app.screening.screener import ScreenCriteria, Screener
 from app.strategies.protocols import StrategyContext
 from app.strategies.registry import StrategyRegistry
@@ -47,6 +50,10 @@ class RunCycleRequest(BaseModel):
     #: Cap on screened names, applied in universe order. Four strategies over a 500-name
     #: universe is two thousand evaluations; a default keeps an unqualified request survivable.
     screen_limit: int = Field(default=10, ge=1, le=100)
+    #: Which book risk sizes against. Risk decides whether to *act*; it never alters a verdict.
+    book: Book = Book.SWING
+    #: Skip the risk pass entirely — verdicts are complete without it.
+    assess_risk: bool = True
 
 
 @router.post("/cycles/run")
@@ -88,6 +95,9 @@ async def run(
             screener=Screener(price_source, load_surveillance()) if screening else None,
             universe_source=_universe_source(request) if screening else None,
             screen_criteria=ScreenCriteria(limit=payload.screen_limit) if screening else None,
+            ledger=Ledger(session_factory) if payload.assess_risk else None,
+            risk_limits=RiskLimits() if payload.assess_risk else None,
+            book=payload.book if payload.assess_risk else None,
         )
     except ImportError as exc:
         # The `agents` extra is not installed. A 503 rather than a 500: the platform is fine,
@@ -118,6 +128,7 @@ async def run(
         "count": len(verdicts),
         "persisted": persisted,
         "screened": screening,
+        "book": payload.book.value,
         "mcp": [s.as_dict() for s in toolbelt.mcp_status],
         "tools_available": toolbelt.names(),
     }

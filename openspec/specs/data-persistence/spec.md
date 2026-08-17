@@ -131,3 +131,16 @@ database credentials to the browser.
 - WHEN its client-side bundle is inspected
 - THEN it contains no database connection string, service-role key, or anon key
 - AND all data reaches it through the backend API
+
+### Requirement: Platform tables never share a name with a legacy table
+Every table this platform creates MUST have a name distinct from the predecessor's tables.
+
+#### Scenario: No platform table collides
+- GIVEN the platform's declared tables
+- WHEN their names are compared with the legacy inventory
+- THEN no name appears in both
+
+#### Scenario: Populated legacy tables survive a migration
+- GIVEN legacy tables holding rows
+- WHEN migrations are run to head
+- THEN those tables and their rows are unchanged

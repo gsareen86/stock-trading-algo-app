@@ -16,6 +16,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.books import router as books_router
 from app.api.cycles import router as cycles_router
 from app.api.health import router as health_router
 from app.api.llm import router as llm_router
@@ -78,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(verdicts_router)
     app.include_router(cycles_router)
     app.include_router(screening_router)
+    app.include_router(books_router)
 
     log.info("app ready (env=%s, version=%s)", settings.app_env, settings.app_version)
     return app

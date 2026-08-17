@@ -20,7 +20,9 @@ behavior that hasn't shipped. If you need to change what the system does, that g
 | `verdict-narratives` | Generated prose, and the guard that keeps every figure in it traceable |
 | `screening` | Eligibility filters, turnover floors, surveillance and traceable exclusions |
 | `agent-graph` | The cycle, research bounds, MCP tools and the read-only rule |
-| `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/tools`, `/strategies`, `/verdicts`, `/cycles/run`, `/screen`, `/universe` |
+| `books-ledger` | One ledger parameterised by book, the execution boundary, gross analytics |
+| `risk-management` | Portfolio gates and sizing — vetoes acting, never alters a verdict |
+| `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/tools`, `/strategies`, `/verdicts`, `/cycles/run`, `/screen`, `/universe`, `/books/{book}/*` |
 | `web-shell` | The six surfaces, design tokens, the backend seam, the Engine LLM panel |
 
 These carry full Requirement+Scenario depth because they describe code that was just written;
@@ -29,4 +31,4 @@ change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
 `market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`,
-`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`.
+`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`.

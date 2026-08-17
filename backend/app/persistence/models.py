@@ -176,3 +176,52 @@ class Insight(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+#: Which book a row belongs to. A parameter, never a separate table or module — swing and
+#: long-term differ in holding period, not in what a position is.
+BOOKS = ("swing", "longterm")
+SIDES = ("buy", "sell")
+FILL_SOURCES = ("manual", "risk", "backtest")
+
+
+class Trade(Base):
+    """One paper fill — the unit of record.
+
+    Positions are *derived* from these rows rather than stored alongside them. Storing a
+    position independently is what made the predecessor's three ledgers unreconcilable: a
+    directly-written position that no sequence of trades explains gives no way to tell which of
+    the two is wrong.
+    """
+
+    __tablename__ = "book_trades"
+    __table_args__ = (
+        CheckConstraint("book IN ('swing', 'longterm')", name="ck_book_trades_book"),
+        CheckConstraint("side IN ('buy', 'sell')", name="ck_book_trades_side"),
+        CheckConstraint("quantity > 0", name="ck_book_trades_quantity"),
+        CheckConstraint("price > 0", name="ck_book_trades_price"),
+        Index("ix_book_trades_book_ticker", "book", "ticker"),
+        Index("ix_book_trades_executed_at", "executed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    book: Mapped[str] = mapped_column(String(16), nullable=False)
+    ticker: Mapped[str] = mapped_column(String(32), nullable=False)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Gross of brokerage, STT, stamp duty and GST — see `app/domain/position.py`.
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    #: What caused this fill, so a position's provenance stays answerable.
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    #: Which strategy's verdict prompted it, when one did. Never a claim that the strategy
+    #: decided — something still had to act.
+    strategy_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 SCREEN = "screen"
 REGIME = "regime"
 RESEARCH = "research"
+RISK = "risk"
 NARRATE = "narrate"
 STRATEGY_PREFIX = "strategy."
 
@@ -53,6 +54,9 @@ def build_graph(
     screener=None,
     universe_source=None,
     screen_criteria=None,
+    ledger=None,
+    risk_limits=None,
+    book=None,
 ):
     """Compile the cycle graph. Raises only if LangGraph is missing."""
     from langgraph.graph import END, START, StateGraph
@@ -64,6 +68,9 @@ def build_graph(
         graph.add_node(SCREEN, nodes.make_screen_node(screener, universe_source, screen_criteria))
     graph.add_node(REGIME, nodes.make_regime_node(price_source))
     graph.add_node(RESEARCH, nodes.make_research_node(toolbelt, gateway, max_tool_rounds))
+    risking = ledger is not None and risk_limits is not None and book is not None
+    if risking:
+        graph.add_node(RISK, nodes.make_risk_node(ledger, risk_limits, book, price_source))
     graph.add_node(NARRATE, nodes.make_narrate_node(gateway))
 
     if screening:
@@ -86,11 +93,15 @@ def build_graph(
         # inputs and none of them is downstream of another — that is the isolation, expressed
         # as topology rather than as a convention someone has to keep.
         graph.add_edge(RESEARCH, node_name)
-        graph.add_edge(node_name, NARRATE)
+        # Fan in to risk when it is present: risk needs every verdict, so it cannot run inside
+        # the fan-out without seeing what a sibling produced.
+        graph.add_edge(node_name, RISK if risking else NARRATE)
 
     if not strategy_ids:  # pragma: no cover - the registry always discovers four
         graph.add_edge(RESEARCH, NARRATE)
 
+    if risking:
+        graph.add_edge(RISK, NARRATE)
     graph.add_edge(NARRATE, END)
     return graph.compile()
 
@@ -109,4 +120,5 @@ async def run_cycle(
     summary = nodes.summarise(final)
     summary["verdicts"] = verdicts
     summary["screen"] = final.get("screen")
+    summary["risk"] = final.get("risk")
     return summary

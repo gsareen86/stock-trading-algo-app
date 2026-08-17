@@ -65,7 +65,8 @@ backend/app/
   agents/       LangGraph nodes + A2A adapters
   llm/          LiteLLM gateway, routing, Langfuse wiring
   engine/       cycle orchestration
-  books/        swing.py, longterm.py  (share ONE ledger)
+  books/        ONE ledger, book as a parameter; portfolio analytics
+  risk/         portfolio gates and sizing
   persistence/  SQLAlchemy models + Alembic migrations
   api/          FastAPI routers
 backend/tests/
@@ -112,13 +113,19 @@ they can click, and the verdict itself reproduces without the LLM.
 ```
 screen ─→ regime ─→ research ──┬─→ strategy.minervini ────┐
                                ├─→ strategy.bvm ──────────┤
-                               ├─→ strategy.fun_tech ─────┼─→ narrate ─→ END
+                               ├─→ strategy.fun_tech ─────┼─→ risk ─→ narrate ─→ END
                                └─→ strategy.young_mom ────┘
 ```
 
-`risk` and `insights` are absent until the increments they depend on land
-(`books-ledger-and-analytics`, `insights-feed`). A placeholder node would be inventing
+`insights` is absent until `insights-feed` lands. A placeholder node would be inventing
 behaviour to be thrown away.
+
+`risk` sits after the fan-in because it needs every verdict to judge portfolio impact. It
+returns a decision *about acting* — proceed with a size, or decline with a named gate — and
+never touches a verdict: `Verdict` is frozen and its only mutator sets a narrative, so risk
+structurally cannot downgrade a BUY. Sizing considers one verdict at a time and never ranks
+two against each other; a portfolio layer is exactly where the confluence scorecard would look
+reasonable.
 
 **`screen` runs only when the caller names no symbols.** Naming them asks about *those* names,
 which is a different question from "what is worth looking at today" — including for a name that
@@ -262,8 +269,8 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 7. `verdict-narratives`
 8. `agent-graph-and-a2a`
 9. `screening-universe-and-gates`
-10. `books-ledger-and-analytics` ← next
-11. `insights-feed`
+10. `books-ledger-and-analytics`
+11. `insights-feed` ← next
 12. `backtesting`
 13. `gui-shell-and-design-system` → `gui-surfaces`
 

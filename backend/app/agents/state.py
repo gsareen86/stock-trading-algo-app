@@ -82,6 +82,8 @@ class CycleState(TypedDict, total=False):
     narrate: bool
     #: What the screen decided, when one ran. Reported so an empty cycle is diagnosable.
     screen: dict[str, Any]
+    #: Per-verdict risk decisions. A decision *about acting*; the verdicts are untouched.
+    risk: list[dict[str, Any]]
     #: Written once by `narrate`, after the fan-in has closed. Separate from `verdicts` because
     #: that key's reducer appends: writing narrated copies back into it would duplicate every
     #: verdict rather than replace it. A node that must *replace* cannot share a key with one
