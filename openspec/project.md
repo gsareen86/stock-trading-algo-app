@@ -154,6 +154,11 @@ model while research runs on a frontier one.
 A failed LLM call must never crash a cycle. The gateway carries a circuit breaker and a
 disk cache for stable prompts — the two ideas worth keeping from the legacy `llm/client.py`.
 
+**`LLM_TIMEOUT_SECONDS` defaults to 30, which is a hosted-model number.** A 12B model running
+locally takes well over that to write a narrative from a dozen evidence rows — found the first
+time one ran on real hardware, where every call timed out and the feature looked broken rather
+than slow. Local routing wants 300 or so.
+
 ## Data & security
 
 SQLAlchemy + Alembic own the schema. Supabase project `zzhvzrxnesibjrklkcis`
@@ -227,8 +232,8 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 4. `skills-registry`
 5. `verdict-model-and-minervini`
 6. `remaining-three-strategies`
-7. `verdict-narratives` ← next
-8. `agent-graph-and-a2a`
+7. `verdict-narratives`
+8. `agent-graph-and-a2a` ← next
 9. `screening-universe-and-gates`
 10. `books-ledger-and-analytics`
 11. `insights-feed`

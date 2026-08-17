@@ -12,13 +12,15 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_session_factory, get_settings
+from app.api.deps import get_gateway, get_session_factory, get_settings
 from app.core.settings import Settings
 from app.data.cache import CachingPriceSource
 from app.data.fundamentals import YFinanceFundamentalsSource
 from app.data.yfinance_source import YFinancePriceSource
 from app.domain.instrument import Instrument
 from app.domain.verdict import Verdict
+from app.llm.types import LLMGateway
+from app.narratives.generator import narrate_all
 from app.persistence.verdicts import MAX_PAGE, VerdictRepository
 from app.strategies.protocols import StrategyContext
 from app.strategies.registry import StrategyRegistry
@@ -64,6 +66,9 @@ class EvaluateRequest(BaseModel):
     symbols: list[str] = Field(min_length=1, max_length=50)
     strategy_ids: list[str] | None = None
     persist: bool = False
+    #: Off by default. A verdict is complete without prose, and narrating a fifty-symbol
+    #: request means fifty model calls — that should be asked for, not arrived at.
+    narrate: bool = False
 
 
 @router.get("/strategies")
@@ -92,6 +97,7 @@ async def evaluate(
     registry: Annotated[StrategyRegistry, Depends(get_strategies)],
     settings: Annotated[Settings, Depends(get_settings)],
     session_factory: Annotated[Any, Depends(get_session_factory)],
+    gateway: Annotated[LLMGateway, Depends(get_gateway)],
 ) -> dict[str, Any]:
     selected = payload.strategy_ids or registry.ids()
     unknown = [s for s in selected if registry.get(s) is None]
@@ -111,16 +117,26 @@ async def evaluate(
             definition = registry.get(strategy_id)
             verdicts.append(definition.strategy.evaluate(instrument, context))
 
+    # Narrate before persisting, so a stored verdict carries the prose that was shown for it.
+    narration: list[dict] | None = None
+    if payload.narrate:
+        verdicts, narration = await narrate_all(verdicts, gateway)
+
     persisted = 0
     if payload.persist:
         persisted = VerdictRepository(session_factory).save_many(verdicts)
 
-    return {
+    body: dict[str, Any] = {
         # One entry per strategy per symbol. No merged stance appears anywhere.
         "verdicts": [_serialise(v) for v in verdicts],
         "count": len(verdicts),
         "persisted": persisted,
     }
+    if narration is not None:
+        # Reported rather than raised: one rejected narrative is not a failed request, and a
+        # silent `null` narrative would be indistinguishable from one never asked for.
+        body["narration"] = narration
+    return body
 
 
 @router.get("/verdicts")

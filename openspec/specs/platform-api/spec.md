@@ -188,7 +188,7 @@ failures.
 
 ### Requirement: Instruments can be evaluated on demand
 `POST /verdicts/evaluate` MUST evaluate named instruments and return one verdict per strategy
-per instrument.
+per instrument. Narration MUST be opt-in and MUST NOT be attempted unless requested.
 
 #### Scenario: Evaluation returns verdicts with evidence
 - GIVEN a symbol with price history
@@ -210,6 +210,12 @@ per instrument.
 - GIVEN an evaluation request asking to persist
 - WHEN it completes
 - THEN the verdicts are retrievable afterwards
+
+#### Scenario: Narration is off by default
+- GIVEN an evaluation request without a narrate flag
+- WHEN it completes
+- THEN no language model is called
+- AND every returned verdict has a null narrative
 
 #### Scenario: Unknown strategy requested
 - GIVEN a strategy id no strategy declares
@@ -268,3 +274,25 @@ stored provider-currency amount, so the reported figure is auditable rather than
 - GIVEN the registered tools
 - WHEN `GET /tools` is requested
 - THEN no handler reference or import path appears in the response
+
+### Requirement: Narration outcomes are reported per verdict
+When narration is requested, the response MUST report an outcome for each verdict, so an
+absent narrative is distinguishable from one that was never requested.
+
+#### Scenario: Successful narration reported
+- GIVEN narration is requested and validation passes
+- WHEN the response is returned
+- THEN the outcome for that verdict is reported as successful
+- AND the verdict carries prose
+
+#### Scenario: Rejected narrative does not fail the request
+- GIVEN a generated narrative containing an untraceable figure
+- WHEN the response is returned
+- THEN the request succeeds
+- AND that verdict's outcome names the rejection
+
+#### Scenario: Unavailable model does not cost the caller their verdicts
+- GIVEN no language model answers
+- WHEN narration was requested
+- THEN the verdicts are still returned
+- AND each outcome reports the model as unavailable

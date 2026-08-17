@@ -212,3 +212,69 @@ class TestVerdictsEndpoint:
         assert verdict["gates"][0]["evidence_ids"] == ["e1"]
         assert verdict["evidence"][0]["operator"] == ">"
         assert verdict["gates_passed"] is True
+
+
+class TestNarrationFlag:
+    """Narration is opt-in, reported per verdict, and never fails the request."""
+
+    @staticmethod
+    def _gateway(text: str | None):
+        from app.llm.types import LLMResult
+
+        class Gateway:
+            async def complete(self, *, task, messages, schema=None):
+                if text is None:
+                    return None
+                return LLMResult(text=text, model="ollama/x", provider="ollama")
+
+        return Gateway()
+
+    def test_off_by_default(self, client: TestClient) -> None:
+        body = client.post("/verdicts/evaluate", json={"symbols": ["RELIANCE"]}).json()
+
+        assert "narration" not in body
+        assert all(v["narrative"] is None for v in body["verdicts"])
+
+    def test_narration_reported_when_requested(self, settings: Settings) -> None:
+        app = create_app(settings)
+        app.state.price_source = FakePriceSource(bars=400)
+        app.state.fundamentals_source = StaticFundamentalsSource({})
+        # Cites nothing and states no figure, so it passes the guard for every strategy.
+        app.state.gateway = self._gateway("The setup is constructive on the evidence shown.")
+
+        body = TestClient(app).post(
+            "/verdicts/evaluate", json={"symbols": ["RELIANCE"], "narrate": True}
+        ).json()
+
+        assert len(body["narration"]) == body["count"]
+        assert {r["outcome"] for r in body["narration"]} == {"ok"}
+        assert all(v["narrative"] for v in body["verdicts"])
+
+    def test_invented_number_is_reported_not_raised(self, settings: Settings) -> None:
+        app = create_app(settings)
+        app.state.price_source = FakePriceSource(bars=400)
+        app.state.fundamentals_source = StaticFundamentalsSource({})
+        app.state.gateway = self._gateway("The stock has gained 41.7% since the breakout.")
+
+        response = TestClient(app).post(
+            "/verdicts/evaluate", json={"symbols": ["RELIANCE"], "narrate": True}
+        )
+        body = response.json()
+
+        assert response.status_code == 200
+        assert {r["outcome"] for r in body["narration"]} == {"rejected"}
+        assert all(v["narrative"] is None for v in body["verdicts"])
+
+    def test_unavailable_model_still_returns_verdicts(self, settings: Settings) -> None:
+        """A provider being down must not cost the caller their verdicts."""
+        app = create_app(settings)
+        app.state.price_source = FakePriceSource(bars=400)
+        app.state.fundamentals_source = StaticFundamentalsSource({})
+        app.state.gateway = self._gateway(None)
+
+        body = TestClient(app).post(
+            "/verdicts/evaluate", json={"symbols": ["RELIANCE"], "narrate": True}
+        ).json()
+
+        assert body["count"] == 4
+        assert {r["outcome"] for r in body["narration"]} == {"unavailable"}

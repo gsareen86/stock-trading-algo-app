@@ -17,12 +17,22 @@ may be displayed; it is never computed into a decision.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
 from app.core.clock import now_utc
+
+#: Bare numbers inside free text — used to read a metric's own name ("200-day", "52-week").
+_NUMBER_IN_TEXT = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _numbers_in(text: str | None) -> set[float]:
+    if not text:
+        return set()
+    return {float(match) for match in _NUMBER_IN_TEXT.findall(text)}
 
 
 class Stance(StrEnum):
@@ -217,6 +227,39 @@ class Verdict:
                 if isinstance(candidate, int | float) and not isinstance(candidate, bool):
                     found.add(float(candidate))
         return found
+
+    @property
+    def citable_numbers(self) -> set[float]:
+        """Every number a narrative about this verdict is allowed to state.
+
+        Wider than `numeric_values` by exactly the numbers the verdict already puts on the
+        page without measuring them: those inside a metric's own name, and the conviction.
+        "Price is above its 200-day moving average" cites a real row and is correct, but 200
+        is in that row's *label*, not its value — rejecting it would fail well-written prose.
+
+        Derived rather than kept as an allowlist of idiomatic constants: an allowlist is a
+        guess about which numbers are legitimate, needs editing whenever a strategy adds a
+        lookback, and would permit `50` in a narrative about a strategy that never mentions
+        it. This permits exactly the numbers *this* verdict names.
+        """
+        allowed = self.numeric_values | {float(self.conviction)}
+        for row in self.evidence:
+            allowed |= _numbers_in(row.label)
+            allowed |= _numbers_in(row.id)
+            if isinstance(row.value, str):
+                allowed |= _numbers_in(row.value)
+        return allowed
+
+    # ── narration ─────────────────────────────────────────────────────────────
+    def with_narrative(self, narrative: str, trace_id: str | None = None) -> Verdict:
+        """A copy carrying generated prose.
+
+        Deliberately the only mutator, and deliberately unable to touch anything else. The
+        LLM explains and never decides (principle 5) — that holds structurally because no code
+        path exists by which narrating a verdict can alter a stance, a conviction, a gate or
+        an evidence row.
+        """
+        return replace(self, narrative=narrative, trace_id=trace_id or self.trace_id)
 
     # ── serialisation ─────────────────────────────────────────────────────────
     def evidence_as_json(self) -> list[dict[str, Any]]:
