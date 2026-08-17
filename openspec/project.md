@@ -58,9 +58,8 @@ Each one fixes a specific, observed failure of the predecessor.
 backend/app/
   core/         settings, logging, IST clock
   domain/       pure models: Instrument, Candle, Verdict, Evidence, GateResult, Position
-  data/         PORTED plumbing: prices (+ cache), universe, NSE calendar
-                (fundamentals and Screener.in scraping land with the screening change;
-                 there was never a surveillance module to port — only an orphan table)
+  data/         prices (+ cache), universe, NSE calendar, surveillance lists
+  screening/    eligibility filters — turnover floors, surveillance, traceable exclusions
   tools/        manifest-driven capabilities, callable by agents
   strategies/   4 independent strategies, each → Verdict
   agents/       LangGraph nodes + A2A adapters
@@ -111,15 +110,28 @@ they can click, and the verdict itself reproduces without the LLM.
 ## Agent cycle
 
 ```
-regime ─→ research ──┬─→ strategy.minervini ────┐
-                     ├─→ strategy.bvm ──────────┤
-                     ├─→ strategy.fun_tech ─────┼─→ narrate ─→ END
-                     └─→ strategy.young_mom ────┘
+screen ─→ regime ─→ research ──┬─→ strategy.minervini ────┐
+                               ├─→ strategy.bvm ──────────┤
+                               ├─→ strategy.fun_tech ─────┼─→ narrate ─→ END
+                               └─→ strategy.young_mom ────┘
 ```
 
-`screen`, `risk` and `insights` are absent until the increments they depend on land
-(`screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`). A placeholder
-node would be inventing behaviour to be thrown away.
+`risk` and `insights` are absent until the increments they depend on land
+(`books-ledger-and-analytics`, `insights-feed`). A placeholder node would be inventing
+behaviour to be thrown away.
+
+**`screen` runs only when the caller names no symbols.** Naming them asks about *those* names,
+which is a different question from "what is worth looking at today" — including for a name that
+would not have survived a screen. Screening decides eligibility and never ranks: the eligible
+set comes back in universe order, and a limit truncates rather than selects.
+
+Three questions are kept apart, and were one number in the predecessor: **should we look at
+this** (screening), **can this strategy assess it** (`strategies/gates.py`), **is the setup
+attractive** (a strategy's criteria).
+
+Screening the live NIFTY500 costs ~330s on a cold price cache — 499 histories — and is fast on
+repeat. The ₹5 crore turnover floor excludes only a handful of NIFTY500 names, as expected: it
+earns its place against a wider universe, not this one.
 
 **External MCP tools** (Zerodha Kite) are offered to the research step namespaced by server
 (`kite:get_ltp`) and are never registered in `ToolRegistry` — that registry promises an output
@@ -249,8 +261,8 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 6. `remaining-three-strategies`
 7. `verdict-narratives`
 8. `agent-graph-and-a2a`
-9. `screening-universe-and-gates` ← next
-10. `books-ledger-and-analytics`
+9. `screening-universe-and-gates`
+10. `books-ledger-and-analytics` ← next
 11. `insights-feed`
 12. `backtesting`
 13. `gui-shell-and-design-system` → `gui-surfaces`

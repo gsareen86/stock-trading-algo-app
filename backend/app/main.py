@@ -20,6 +20,7 @@ from app.api.cycles import router as cycles_router
 from app.api.health import router as health_router
 from app.api.llm import router as llm_router
 from app.api.root import router as root_router
+from app.api.screening import router as screening_router
 from app.api.tools import router as tools_router
 from app.api.verdicts import router as verdicts_router
 from app.core.logging import configure_logging
@@ -76,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(tools_router)
     app.include_router(verdicts_router)
     app.include_router(cycles_router)
+    app.include_router(screening_router)
 
     log.info("app ready (env=%s, version=%s)", settings.app_env, settings.app_version)
     return app

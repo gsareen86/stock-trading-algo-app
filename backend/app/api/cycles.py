@@ -18,12 +18,15 @@ from app.agents.card import CARD_PATH, build_card
 from app.agents.graph import build_graph, run_cycle
 from app.agents.toolbelt import Toolbelt
 from app.api.deps import get_gateway, get_session_factory, get_settings
+from app.api.screening import _universe_source
 from app.api.verdicts import _fundamentals_source, _price_source, _serialise
 from app.core.clock import now_utc
 from app.core.settings import Settings
+from app.data.surveillance import load as load_surveillance
 from app.domain.instrument import Instrument
 from app.llm.types import LLMGateway
 from app.persistence.verdicts import VerdictRepository
+from app.screening.screener import ScreenCriteria, Screener
 from app.strategies.protocols import StrategyContext
 from app.strategies.registry import StrategyRegistry
 from app.tools.registry import ToolRegistry
@@ -33,12 +36,17 @@ router = APIRouter(tags=["cycles"])
 
 
 class RunCycleRequest(BaseModel):
-    symbols: list[str] = Field(min_length=1, max_length=25)
+    #: Omit to screen the universe instead. Supplying symbols asks about *those* names and
+    #: skips screening entirely — including for a name that would not have survived one.
+    symbols: list[str] | None = Field(default=None, max_length=25)
     narrate: bool = False
     persist: bool = False
     #: Off by default: research calls a model and external servers, and a cycle is useful
     #: without it. The verdicts are identical either way.
     research: bool = True
+    #: Cap on screened names, applied in universe order. Four strategies over a 500-name
+    #: universe is two thousand evaluations; a default keeps an unqualified request survivable.
+    screen_limit: int = Field(default=10, ge=1, le=100)
 
 
 @router.post("/cycles/run")
@@ -66,6 +74,9 @@ async def run(
     if payload.research:
         await toolbelt.connect()
 
+    # A screen only runs when the caller did not name symbols. Naming them asks about those
+    # names, which is a different question from "what is worth looking at today".
+    screening = not payload.symbols
     try:
         compiled = build_graph(
             registry=strategies,
@@ -74,6 +85,9 @@ async def run(
             toolbelt=toolbelt,
             gateway=gateway,
             max_tool_rounds=settings.research_max_tool_rounds if payload.research else 0,
+            screener=Screener(price_source, load_surveillance()) if screening else None,
+            universe_source=_universe_source(request) if screening else None,
+            screen_criteria=ScreenCriteria(limit=payload.screen_limit) if screening else None,
         )
     except ImportError as exc:
         # The `agents` extra is not installed. A 503 rather than a 500: the platform is fine,
@@ -87,7 +101,7 @@ async def run(
         {
             "cycle_id": uuid.uuid4().hex[:12],
             "as_of": now_utc(),
-            "instruments": [Instrument(s.strip().upper()) for s in payload.symbols],
+            "instruments": [Instrument(s.strip().upper()) for s in (payload.symbols or [])],
             "narrate": payload.narrate,
             "verdicts": [],
             "notes": [],
@@ -103,6 +117,7 @@ async def run(
         "verdicts": [_serialise(v) for v in verdicts],
         "count": len(verdicts),
         "persisted": persisted,
+        "screened": screening,
         "mcp": [s.as_dict() for s in toolbelt.mcp_status],
         "tools_available": toolbelt.names(),
     }

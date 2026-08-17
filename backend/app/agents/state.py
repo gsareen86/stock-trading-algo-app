@@ -80,6 +80,8 @@ class CycleState(TypedDict, total=False):
     verdicts: Annotated[list[Verdict], operator.add]
     notes: Annotated[list[str], operator.add]
     narrate: bool
+    #: What the screen decided, when one ran. Reported so an empty cycle is diagnosable.
+    screen: dict[str, Any]
     #: Written once by `narrate`, after the fan-in has closed. Separate from `verdicts` because
     #: that key's reducer appends: writing narrated copies back into it would duplicate every
     #: verdict rather than replace it. A node that must *replace* cannot share a key with one

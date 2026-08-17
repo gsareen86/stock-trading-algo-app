@@ -91,6 +91,44 @@ def make_regime_node(price_source: PriceSource):
     return regime
 
 
+# ── screen ────────────────────────────────────────────────────────────────────
+def make_screen_node(screener, universe_source, criteria):
+    """Narrow the universe to names worth evaluating.
+
+    Skipped entirely when the caller supplied instruments: asking about a specific stock should
+    return an answer about that stock, including when it would not have survived a screen. A
+    screen chooses *what to look at*; it never changes what a strategy concludes about a name
+    it does look at.
+    """
+
+    async def screen(state: CycleState) -> dict[str, Any]:
+        if state.get("instruments"):
+            return {"notes": ["screen: skipped, symbols supplied by caller"]}
+
+        try:
+            snapshot = universe_source.snapshot()
+        except Exception as exc:  # pragma: no cover - sources are contracted not to raise
+            log.warning("screen: universe unavailable: %s", exc)
+            return {"instruments": [], "notes": [f"screen: universe unavailable ({exc})"]}
+
+        result = screener.run(snapshot, criteria)
+        notes = [
+            f"screen: {len(result.eligible)}/{result.considered} eligible "
+            f"({result.excluded_by()})"
+        ]
+        if result.surveillance.get("stale"):
+            # A stale list under-excludes silently; saying so is the whole point of tracking age.
+            notes.append("screen: surveillance list is stale")
+
+        return {
+            "instruments": list(result.eligible),
+            "screen": result.as_dict(),
+            "notes": notes,
+        }
+
+    return screen
+
+
 # ── research ──────────────────────────────────────────────────────────────────
 def make_research_node(
     toolbelt: Toolbelt, gateway: LLMGateway, max_rounds: int = DEFAULT_MAX_TOOL_ROUNDS

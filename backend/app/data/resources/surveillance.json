@@ -1,0 +1,20 @@
+{
+  "_comment": "NSE surveillance measures. ASM = Additional Surveillance Measure, GSM = Graded Surveillance Measure. Names here are excluded from every screen: a stock under surveillance is one the platform should not be forming a view on, which is an eligibility question rather than an opinion about the setup. Refresh from https://www.nseindia.com/reports/asm and /reports/gsm — NSE serves those behind a browser-shaped session, so this is bundled rather than fetched. Update `as_of` when you refresh, because a stale list under-excludes silently.",
+  "as_of": "2026-08-01",
+  "source": "https://www.nseindia.com/reports/asm",
+  "asm": [
+    "BRIGHTCOM",
+    "GENSOL",
+    "IDEA",
+    "RPOWER",
+    "SUZLON",
+    "YESBANK",
+    "ZEEL"
+  ],
+  "gsm": [
+    "DHANI",
+    "MEP",
+    "SINTEX",
+    "VIKASECO"
+  ]
+}

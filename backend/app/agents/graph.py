@@ -35,6 +35,7 @@ from app.strategies.registry import StrategyRegistry
 
 log = logging.getLogger(__name__)
 
+SCREEN = "screen"
 REGIME = "regime"
 RESEARCH = "research"
 NARRATE = "narrate"
@@ -49,17 +50,29 @@ def build_graph(
     toolbelt: Toolbelt,
     gateway: LLMGateway,
     max_tool_rounds: int = nodes.DEFAULT_MAX_TOOL_ROUNDS,
+    screener=None,
+    universe_source=None,
+    screen_criteria=None,
 ):
     """Compile the cycle graph. Raises only if LangGraph is missing."""
     from langgraph.graph import END, START, StateGraph
 
     graph = StateGraph(CycleState)
 
+    screening = screener is not None and universe_source is not None
+    if screening:
+        graph.add_node(SCREEN, nodes.make_screen_node(screener, universe_source, screen_criteria))
     graph.add_node(REGIME, nodes.make_regime_node(price_source))
     graph.add_node(RESEARCH, nodes.make_research_node(toolbelt, gateway, max_tool_rounds))
     graph.add_node(NARRATE, nodes.make_narrate_node(gateway))
 
-    graph.add_edge(START, REGIME)
+    if screening:
+        # Screening first: narrowing the universe before the regime read means the cheap
+        # question is asked before any per-name work at all.
+        graph.add_edge(START, SCREEN)
+        graph.add_edge(SCREEN, REGIME)
+    else:
+        graph.add_edge(START, REGIME)
     graph.add_edge(REGIME, RESEARCH)
 
     strategy_ids = registry.ids()
@@ -95,4 +108,5 @@ async def run_cycle(
     verdicts = final.get("narrated") or final.get("verdicts") or []
     summary = nodes.summarise(final)
     summary["verdicts"] = verdicts
+    summary["screen"] = final.get("screen")
     return summary
