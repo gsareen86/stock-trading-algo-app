@@ -67,6 +67,7 @@ backend/app/
   engine/       cycle orchestration
   books/        ONE ledger, book as a parameter; portfolio analytics
   risk/         portfolio gates and sizing
+  insights/     what reaches the reader, and what is suppressed
   persistence/  SQLAlchemy models + Alembic migrations
   api/          FastAPI routers
 backend/tests/
@@ -113,12 +114,22 @@ they can click, and the verdict itself reproduces without the LLM.
 ```
 screen ─→ regime ─→ research ──┬─→ strategy.minervini ────┐
                                ├─→ strategy.bvm ──────────┤
-                               ├─→ strategy.fun_tech ─────┼─→ risk ─→ narrate ─→ END
+                               ├─→ strategy.fun_tech ─────┼─→ risk ─→ narrate ─→ insights ─→ END
                                └─→ strategy.young_mom ────┘
 ```
 
-`insights` is absent until `insights-feed` lands. A placeholder node would be inventing
-behaviour to be thrown away.
+The cycle is now complete end to end.
+
+`insights` runs last because it reads everything: narrated verdicts, risk decisions, research
+findings, the regime and the book's positions. It writes to the in-app feed and changes nothing
+else. The insight worth the increment is **`thesis_broken`** — a holding whose *own* buying
+strategy now says AVOID, matched on `strategy_id` from trade history so another strategy's
+opinion never invalidates a position it did not open.
+
+Severity is a property of the insight *kind*, declared up front, never a per-item score
+compared across kinds. Each kind carries a suppression window keyed on `kind:ticker:qualifier`,
+because a daily cycle otherwise repeats yesterday's observation until the feed is something
+people scroll past.
 
 `risk` sits after the fan-in because it needs every verdict to judge portfolio impact. It
 returns a decision *about acting* — proceed with a size, or decline with a named gate — and
@@ -270,8 +281,8 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 8. `agent-graph-and-a2a`
 9. `screening-universe-and-gates`
 10. `books-ledger-and-analytics`
-11. `insights-feed` ← next
-12. `backtesting`
+11. `insights-feed`
+12. `backtesting` ← next
 13. `gui-shell-and-design-system` → `gui-surfaces`
 
 Changes that arrive outside this sequence are archived alongside it rather than renumbered:

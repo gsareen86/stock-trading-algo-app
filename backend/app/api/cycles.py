@@ -26,6 +26,7 @@ from app.core.settings import Settings
 from app.data.surveillance import load as load_surveillance
 from app.domain.instrument import Instrument
 from app.domain.position import Book
+from app.insights.feed import InsightFeed
 from app.llm.types import LLMGateway
 from app.persistence.verdicts import VerdictRepository
 from app.risk.rules import RiskLimits
@@ -54,6 +55,8 @@ class RunCycleRequest(BaseModel):
     book: Book = Book.SWING
     #: Skip the risk pass entirely — verdicts are complete without it.
     assess_risk: bool = True
+    #: Write the cycle's findings to the in-app feed. Requires risk, which supplies the book.
+    surface_insights: bool = True
 
 
 @router.post("/cycles/run")
@@ -98,6 +101,7 @@ async def run(
             ledger=Ledger(session_factory) if payload.assess_risk else None,
             risk_limits=RiskLimits() if payload.assess_risk else None,
             book=payload.book if payload.assess_risk else None,
+            feed=InsightFeed(session_factory) if payload.surface_insights else None,
         )
     except ImportError as exc:
         # The `agents` extra is not installed. A 503 rather than a 500: the platform is fine,

@@ -40,6 +40,7 @@ REGIME = "regime"
 RESEARCH = "research"
 RISK = "risk"
 NARRATE = "narrate"
+INSIGHTS = "insights"
 STRATEGY_PREFIX = "strategy."
 
 
@@ -57,6 +58,7 @@ def build_graph(
     ledger=None,
     risk_limits=None,
     book=None,
+    feed=None,
 ):
     """Compile the cycle graph. Raises only if LangGraph is missing."""
     from langgraph.graph import END, START, StateGraph
@@ -72,6 +74,9 @@ def build_graph(
     if risking:
         graph.add_node(RISK, nodes.make_risk_node(ledger, risk_limits, book, price_source))
     graph.add_node(NARRATE, nodes.make_narrate_node(gateway))
+    surfacing = feed is not None and ledger is not None and book is not None
+    if surfacing:
+        graph.add_node(INSIGHTS, nodes.make_insights_node(feed, ledger, book, risk_limits))
 
     if screening:
         # Screening first: narrowing the universe before the regime read means the cheap
@@ -102,7 +107,12 @@ def build_graph(
 
     if risking:
         graph.add_edge(RISK, NARRATE)
-    graph.add_edge(NARRATE, END)
+    if surfacing:
+        # Last: it reads verdicts, narratives, risk decisions, research and the regime.
+        graph.add_edge(NARRATE, INSIGHTS)
+        graph.add_edge(INSIGHTS, END)
+    else:
+        graph.add_edge(NARRATE, END)
     return graph.compile()
 
 
@@ -121,4 +131,5 @@ async def run_cycle(
     summary["verdicts"] = verdicts
     summary["screen"] = final.get("screen")
     summary["risk"] = final.get("risk")
+    summary["insights"] = final.get("insights")
     return summary

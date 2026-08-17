@@ -156,6 +156,9 @@ class Insight(Base):
     __table_args__ = (
         Index("ix_insights_created_at", "created_at"),
         Index("ix_insights_ticker", "ticker"),
+        # Suppression asks "was this key raised since T" — this index is that question.
+        Index("ix_insights_dedupe_created", "dedupe_key", "created_at"),
+        Index("ix_insights_severity", "severity"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -169,6 +172,14 @@ class Insight(Base):
 
     #: Structured detail backing the rendered item.
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    #: `kind:ticker:qualifier`. Keeps a daily cycle from raising the same observation every
+    #: morning until the feed is something to scroll past.
+    dedupe_key: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+    #: A property of the *kind*, declared up front and stored — never a per-item score, which
+    #: compared across kinds would be a ranking.
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
 
     #: Null until the reader marks it seen in the app.
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
