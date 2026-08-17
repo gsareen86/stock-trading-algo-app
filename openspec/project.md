@@ -67,7 +67,8 @@ backend/app/
   engine/       cycle orchestration
   books/        ONE ledger, book as a parameter; portfolio analytics
   risk/         portfolio gates and sizing
-  insights/     what reaches the reader, and what is suppressed
+  insights/     what reaches the reader, what is suppressed, and acting on it
+  health/       structural scoring of a book, and its next steps
   persistence/  SQLAlchemy models + Alembic migrations
   api/          FastAPI routers
 backend/tests/
@@ -181,6 +182,29 @@ both what the tool does **and when to reach for it**; `description` is the longe
 A2A card and human readers. External MCP tools (Zerodha Kite) join this set at
 `agent-graph-and-a2a` without becoming part of this registry.
 
+## Portfolio health
+
+`health/` scores the **book's own structure** — concentration, diversification, deployment and
+thesis integrity — each with its own measurement, threshold and weight, and a weighted headline
+published *alongside* them rather than instead of them. A single number invites optimising the
+number; a number beside four components invites fixing the one that is low.
+
+This is deliberately **not** the confluence scorecard, and the distinction is the design:
+blending strategy verdicts into a figure is refused and stays refused; measuring how
+concentrated a book is, is a property of the portfolio. Nothing in `health/` reads a `Verdict`,
+a stance or a conviction, and there is no per-instrument score — so nothing can be sorted by
+health. Both are asserted by tests against the module source.
+
+Guidance is deterministic, with no model involved: every figure comes from the ledger or a
+threshold. Steps are ordered by their component's weight, never by a per-step score, because
+scoring steps would rank actions — the same mistake one level down.
+
+**Acting on an insight** re-derives quantity from the ledger at execution and never trusts the
+insight's payload: an insight raised on Monday saying "you hold 6" may be stale by Wednesday.
+`preview: true` is a flag on the same function, not a separate estimator, because two
+implementations of "what will this do" is how a preview starts lying. Every action goes through
+`Ledger.fill()` — the one execution boundary. Nothing in a cycle ever fills.
+
 ## LLM routing
 
 Config-driven per task (`LLM_ROUTE__<task>`), so narrative generation can run on a local
@@ -210,10 +234,16 @@ SQLAlchemy + Alembic own the schema. Supabase project `zzhvzrxnesibjrklkcis`
 (`Stock Trading App`, ap-southeast-2, Postgres 17.6).
 
 **The platform owns the `trading` schema.** The predecessor's 30 tables stay in `public`,
-holding ~47,500 rows of real history — 472 trades, 206 positions, 325 signal outcomes and
-~20,000 signals — which `backtesting` and `books-ledger-and-analytics` will read. Migrations
-never drop, alter or write to a table this platform did not create. SQLite has no schemas, so
-the namespace is translated away there; one model definition serves both dialects.
+holding ~47,500 rows. Migrations never drop, alter or write to a table this platform did not
+create. SQLite has no schemas, so the namespace is translated away there; one model definition
+serves both dialects.
+
+**The legacy data is never read.** An earlier version of this file expected `backtesting` to
+draw on the predecessor's ~20,000 signals and 325 signal outcomes. That is retired by decision:
+the platform starts completely fresh, and no change imports, joins to or backfills from any
+`public` table. Those rows were produced by a scoring system this rebuild exists to remove, so
+inheriting them would mean measuring the new engine against the old one's judgement. The tables
+stay where they are, untouched and unread. Do not propose importing them.
 
 **RLS is mandatory on every table we create.** Enabled *with policies written in the same
 migration*, never a bare `ENABLE` (which locks the app out). Nothing is granted to `anon` or
@@ -282,8 +312,10 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 9. `screening-universe-and-gates`
 10. `books-ledger-and-analytics`
 11. `insights-feed`
-12. `backtesting` ← next
-13. `gui-shell-and-design-system` → `gui-surfaces`
+12. `portfolio-health-and-actions` ← next
+13. `authentication`
+14. `backtesting` (no legacy data — see Data & security)
+15. `gui-shell-and-design-system` → `gui-surfaces`
 
 Changes that arrive outside this sequence are archived alongside it rather than renumbered:
 

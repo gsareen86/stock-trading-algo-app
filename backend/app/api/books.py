@@ -19,8 +19,15 @@ from app.books.ledger import MAX_TRADES, InsufficientQuantity, Ledger
 from app.core.settings import Settings
 from app.domain.instrument import Instrument
 from app.domain.position import Book, FillSource, Side
+from app.health import score as health_score
+from app.insights.feed import InsightFeed
+from app.insights.kinds import Kind
+from app.risk.rules import RiskLimits
 
 router = APIRouter(prefix="/books", tags=["books"])
+
+#: How far back to look for broken-thesis insights when scoring. Generous: the feed is small.
+MAX_INSIGHT_SCAN = 200
 
 
 def _ledger(session_factory) -> Ledger:
@@ -132,3 +139,36 @@ async def book_analytics(
     # this platform deliberately cannot answer with one number.
     report["attribution"] = analytics_module.attribution(book_trades)
     return report
+
+
+@router.get("/{book}/health")
+async def health(
+    book: Book,
+    session_factory: Annotated[Any, Depends(get_session_factory)],
+    capital_inr: float | None = None,
+) -> dict[str, Any]:
+    """Score the book's *structure* — never the stocks in it.
+
+    Blending strategy verdicts into a number is the confluence scorecard; measuring how
+    concentrated a book is, how much capital is working and how much sits in broken theses is a
+    measurement of the portfolio. Nothing here reads a conviction or ranks an instrument.
+    """
+    ledger = _ledger(session_factory)
+    positions = ledger.positions(book, open_only=False)
+
+    # Which holdings have a broken thesis, from insights already raised — the join lives in
+    # `insights.rules` and is not repeated inside a portfolio score.
+    feed_items = InsightFeed(session_factory).recent(
+        limit=MAX_INSIGHT_SCAN, kind=Kind.THESIS_BROKEN
+    )
+    broken = {i["ticker"] for i in feed_items if i.get("ticker")}
+
+    limits = RiskLimits()
+    report = health_score.build(
+        positions, capital_inr if capital_inr and capital_inr > 0 else limits.capital_inr, broken
+    )
+    body = report.as_dict()
+    body["book"] = book.value
+    body["capital_inr"] = capital_inr or limits.capital_inr
+    body["charges_included"] = False
+    return body

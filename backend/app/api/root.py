@@ -41,6 +41,8 @@ async def index(settings: Annotated[Settings, Depends(get_settings)]) -> dict[st
             "positions": "GET /books/{book}/positions",
             "trades": "GET /books/{book}/trades",
             "book_analytics": "GET /books/{book}/analytics",
+            "book_health": "GET /books/{book}/health",
+            "act_on_insight": "POST /insights/{id}/act",
             "fill": "POST /books/{book}/fill",
             "insights": "GET /insights",
             "llm_usage": "GET /llm/usage",
