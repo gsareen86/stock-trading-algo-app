@@ -70,6 +70,7 @@ backend/app/
   insights/     what reaches the reader, what is suppressed, and acting on it
   health/       structural scoring of a book, and its next steps
   auth/         password hashing, JWT issue/verify, the application-wide guard
+  backtest/     point-in-time replay: as-of source, runner, per-strategy results
   persistence/  SQLAlchemy models + Alembic migrations
   api/          FastAPI routers
 backend/tests/
@@ -229,6 +230,34 @@ where every narrative call timed out and the feature looked broken rather than s
 `run-local.ps1` is the supported way to start the stack locally — the routing and timeout
 settings are environment variables, so a server started any other way loses them silently.
 
+## Backtesting
+
+Replaying the strategies is only possible because verdicts are deterministic and reproducible
+with the LLM off (principle 5). The value is not a performance number; it is the three questions
+a live platform cannot answer: does a strategy fire often enough to matter, does its conviction
+mean anything, and does a failed gate precede a bad outcome.
+
+**Lookahead is prevented at the seam.** `AsOfPriceSource` wraps any `PriceSource` and truncates
+to bars at or before the evaluation date. Strategies are unmodified and cannot opt out — a
+strategy that wanted the future would have to reach around its own injected source. Threading a
+date through `evaluate` instead would depend on four strategies and every future one getting it
+right forever.
+
+**Fills happen at the next session's open.** A verdict formed from Tuesday's close could not have
+been acted on at Tuesday's close; the decision did not exist until the bar did.
+
+**The real `Ledger`** runs against an in-memory database — not a `BacktestPortfolio` with its own
+averaging. A fourth position ledger would be the worst of them, because it would be the one
+deciding whether a strategy looks good.
+
+**Results are per strategy with no combined curve.** Four independent verdicts do not compose
+into one portfolio unless something decides how to allocate between them, and that decision is
+the confluence scorecard with a chart attached.
+
+**Survivorship cannot be removed** with the data this platform has, so every result carries a
+`biases` block naming it alongside absent charges and slippage — attached to the result, because
+a number and its caveat travel together or the caveat does not travel.
+
 ## Authentication
 
 Username and password, Argon2id hashed. Sessions are JWT: a **30-minute access token** carried
@@ -342,8 +371,8 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 11. `insights-feed`
 12. `portfolio-health-and-actions`
 13. `authentication`
-14. `backtesting` (never from legacy data) ← next
-15. `gui-shell-and-design-system` → `gui-surfaces`
+14. `backtesting` (never from legacy data)
+15. `gui-shell-and-design-system` → `gui-surfaces` ← next
 
 Changes that arrive outside this sequence are archived alongside it rather than renumbered:
 

@@ -45,6 +45,7 @@ async def index(settings: Annotated[Settings, Depends(get_settings)]) -> dict[st
             "act_on_insight": "POST /insights/{id}/act",
             "fill": "POST /books/{book}/fill",
             "insights": "GET /insights",
+            "backtest": "POST /backtest/run",
             "llm_usage": "GET /llm/usage",
             "llm_calls": "GET /llm/calls",
         },
