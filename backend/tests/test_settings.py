@@ -131,3 +131,34 @@ class TestLocalModelLatency:
     def test_non_positive_local_timeout_rejected(self) -> None:
         with pytest.raises(ValidationError):
             Settings(app_env="test", llm_local_timeout_seconds=0, _env_file=None)
+
+
+class TestPowerShellScriptsAreReadableByPowerShell:
+    """PowerShell 5.1 reads a BOM-less file as ANSI, not UTF-8.
+
+    A UTF-8 em-dash then arrives as three cp1252 characters, one of which is a smart quote —
+    which unbalances the next string literal and fails the whole script with a parse error
+    pointing at an unrelated line. `run-local.ps1` shipped broken exactly this way.
+    """
+
+    @staticmethod
+    def _scripts() -> list:
+        from pathlib import Path
+
+        return list((Path(__file__).resolve().parents[2]).glob("*.ps1"))
+
+    def test_scripts_exist_to_check(self) -> None:
+        assert self._scripts(), "no PowerShell scripts found — has the layout changed?"
+
+    def test_no_script_contains_a_non_ascii_character(self) -> None:
+        for script in self._scripts():
+            body = script.read_bytes()
+            if body.startswith(b"\xef\xbb\xbf"):
+                body = body[3:]
+            offenders = [b for b in body if b > 127]
+            assert not offenders, f"{script.name} has {len(offenders)} non-ASCII bytes"
+
+    def test_every_script_carries_a_utf8_bom(self) -> None:
+        """Belt and braces: the BOM makes a future non-ASCII edit survive rather than break."""
+        for script in self._scripts():
+            assert script.read_bytes().startswith(b"\xef\xbb\xbf"), f"{script.name} has no BOM"

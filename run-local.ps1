@@ -1,10 +1,10 @@
-<#
+﻿<#
 .SYNOPSIS
     Start the platform locally against a local LLM.
 
 .DESCRIPTION
     The routing and timeout settings this needs are environment variables, so a server
-    started any other way silently loses them — which looks like a broken feature rather
+    started any other way silently loses them - which looks like a broken feature rather
     than a missing setting. This script is the one place they live.
 
 .EXAMPLE
@@ -45,7 +45,7 @@ try {
         Write-Warning "Ollama is up but '$Model' is not pulled. Run: ollama pull $Model"
     }
 } catch {
-    Write-Warning "Ollama is not reachable on localhost:11434 — narratives will report 'unavailable'."
+    Write-Warning "Ollama is not reachable on localhost:11434 - narratives will report 'unavailable'."
 }
 
 Push-Location (Join-Path $root "backend")
