@@ -1,5 +1,5 @@
 {
-  "_comment": "News articles almost never use the NSE symbol — headlines say 'Balrampur Chini', not 'BALRAMCHIN'. This name->ticker map is what makes matching work at all. Ported from the predecessor; additions welcome.",
+  "_comment": "News articles almost never use the NSE symbol — headlines say 'Balrampur Chini', not 'BALRAMCHIN'. This name->ticker map is what makes matching work at all. Additions welcome.",
   "aliases": {
     "ADANIENT": [
       "ADANI ENTERPRISES"

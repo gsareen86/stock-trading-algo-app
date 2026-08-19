@@ -64,7 +64,7 @@ class UniverseSource(Protocol):
 class CalendarNotCovered(LookupError):
     """The holiday data has nothing to say about this year.
 
-    Raised rather than guessed at: the predecessor warned and then returned "not a holiday",
+    Raised rather than guessed at: warning and then returning "not a holiday"
     which silently turns every holiday in an uncovered year into a trading day.
     """
 

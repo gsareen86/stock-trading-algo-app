@@ -1,6 +1,6 @@
 """NSE trading calendar.
 
-Extracted from the bottom of the predecessor's `data/fetcher.py`, with one behavioural change
+Separated from price fetching deliberately, with one behavioural choice
 that is the whole point of the port: **an uncovered year is refused, not assumed open.**
 
 The old version warned that it had no holidays for the current year and then returned "not a

@@ -1,12 +1,12 @@
 """Recent news for an instrument, from Indian financial RSS feeds.
 
-Ported from the predecessor's RSS approach — no API fees, no keys. The genuinely valuable part
-carried over is the **alias map**: headlines say "Balrampur Chini", never "BALRAMCHIN", so
+Indian financial RSS — no API fees, no keys. The part that makes it work at all is the
+**alias map**: headlines say "Balrampur Chini", never "BALRAMCHIN", so
 matching on the NSE symbol alone finds almost nothing.
 
-**Returns articles, not sentiment.** The predecessor scored sentiment inline and stored the
-score, which made it untraceable and unversioned — re-running against a better model would
-have silently rewritten history. Here, interpretation happens in a strategy or a narrative,
+**Returns articles, not sentiment.** Scoring sentiment inline and storing the score makes it
+untraceable and unversioned — re-running against a better model would silently rewrite
+history. Here, interpretation happens in a strategy or a narrative,
 both of which are explicitly traceable.
 """
 

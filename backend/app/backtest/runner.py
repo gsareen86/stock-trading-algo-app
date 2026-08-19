@@ -1,9 +1,9 @@
 """Replaying the strategies over history.
 
 Positions come from the **real `Ledger`**, pointed at an in-memory database. Not a
-`BacktestPortfolio` with its own averaging logic: the predecessor had three position ledgers
-that disagreed, and a fourth that only ran in backtests would be the worst of them, because it
-would be the one deciding whether a strategy looks good.
+`BacktestPortfolio` with its own averaging logic: a second position implementation that only
+ran in backtests would be the worst possible one to have, because it would be the one deciding
+whether a strategy looks good.
 
 Results are per strategy and there is deliberately no aggregate across them — four independent
 verdicts do not compose into one portfolio unless something decides how to allocate between

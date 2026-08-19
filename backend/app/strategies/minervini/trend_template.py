@@ -6,7 +6,7 @@ reconstruct the whole argument from the rows.
 
 **These are criteria, not gates.** Failing two makes a weaker setup, not an unassessable one,
 so they reduce conviction rather than forcing `AVOID`. Gates answer *may we*; criteria answer
-*how much*. Collapsing the two is exactly what the predecessor's confluence scorecard did.
+*how much*. Collapsing the two is exactly what a blended scorecard does.
 """
 
 from __future__ import annotations

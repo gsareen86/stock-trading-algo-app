@@ -1,14 +1,18 @@
-"""Inventory of the predecessor's schema, and the guard for eventually retiring it.
+"""Inventory of the 30 pre-existing tables in ``public``, and the guard for retiring them.
 
-These 30 tables live in ``public`` and are **not** touched by this platform's migrations. The
-rebuild took its own ``trading`` schema instead, because they turned out to hold roughly
-47,500 rows of real history — 472 trades, 206 positions, 325 signal outcomes and ~20k signals
-— which later increments want for backtesting and outcome analysis.
+These tables predate this platform and are **not** touched by its migrations. This platform
+took its own ``trading`` schema instead, because those tables hold roughly 47,500 rows and
+destroying data to make room is not a trade worth making.
+
+**Nothing reads them.** They are never imported, joined to or backfilled from — the rows were
+produced by a scoring approach this platform deliberately does not use, so measuring against
+them would measure the wrong thing. The inventory exists to keep them *safe*, not to reach
+into them.
 
 Two things live here:
 
-* :data:`LEGACY_TABLES` — the inventory, so "is this ours or the old app's?" is answerable in
-  code rather than from memory. The data port in ``market-data-foundation`` reads from it.
+* :data:`LEGACY_TABLES` — the inventory, so "is this table ours?" is answerable in code
+  rather than from memory.
 * :func:`assert_all_empty` — the guard for the tracked cleanup milestone that eventually drops
   these tables. It is deliberately kept and tested now, while there is no pressure on it,
   rather than written in a hurry on the day someone decides to delete 47,500 rows.

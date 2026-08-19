@@ -2,9 +2,9 @@
 
 One strategy's independent opinion about one instrument, and the evidence behind it.
 
-The rules this module enforces are the reason the platform was rebuilt. The predecessor ran
-four strategies and collapsed them into a single confluence scorecard, which let a strong score
-outvote a failed hard gate and left nobody able to say which strategy liked a name or why.
+The rules this module enforces are the reason the platform is shaped as it is. Running four
+strategies and collapsing them into a single blended score lets a strong score outvote a
+failed hard gate, and leaves nobody able to say which strategy liked a name or why.
 Both failures are prevented here by the *shape of the types* rather than by discipline:
 
 * a failed hard gate forces ``AVOID`` inside the constructor, so no code path produces a
@@ -122,8 +122,8 @@ class Evidence:
 class GateResult:
     """A hard pass/fail check, recorded separately from any score.
 
-    Gates answer *may we*; conviction answers *how much*. The predecessor had one number
-    answering both, which is how a failed gate could be averaged away.
+    Gates answer *may we*; conviction answers *how much*. One number answering both is how a
+    failed gate gets averaged away.
     """
 
     id: str
@@ -162,7 +162,7 @@ class Verdict:
     as_of: datetime
     stance: Stance
     #: 0–100, meaningful **only within this strategy**. Not comparable across strategies —
-    #: ranking on it across strategies would silently rebuild the confluence scorecard.
+    #: ranking on it across strategies would silently rebuild a blended scorecard.
     conviction: int
     evidence: tuple[Evidence, ...]
     gates: tuple[GateResult, ...] = ()

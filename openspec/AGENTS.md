@@ -5,11 +5,9 @@ source of truth for current system behavior; `openspec/changes/` is how behavior
 Read `openspec/project.md` first — it's the system map (architecture, stack, config
 inventory).
 
-This is a **rebuild**. The root-level `analytics/ dashboard/ data/ db/ engine/ llm/
-longterm/ nlp/ positional/ scheduler/ scoring/ strategies/` packages are the **legacy
-app**, kept read-only while data-acquisition plumbing is ported out of them, and deleted
-at a tracked milestone. Never add features there. All new code lives in `backend/` and
-`web/`.
+All code lives in `backend/` and `web/`. There is nothing else — the prototype this
+platform replaced was removed once the rebuild was complete, so anything you find at the
+repository root is current.
 
 ## Before changing behavior
 

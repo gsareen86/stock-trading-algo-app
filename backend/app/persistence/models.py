@@ -200,7 +200,7 @@ class Trade(Base):
     """One paper fill — the unit of record.
 
     Positions are *derived* from these rows rather than stored alongside them. Storing a
-    position independently is what made the predecessor's three ledgers unreconcilable: a
+    position independently is what makes duplicate ledgers unreconcilable: a
     directly-written position that no sequence of trades explains gives no way to tell which of
     the two is wrong.
     """

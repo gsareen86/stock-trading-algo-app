@@ -1,6 +1,6 @@
 """Parquet caching, as a layer over any price source.
 
-The predecessor interleaved TTL logic with the download, which made the fetch untestable
+Interleaving TTL logic with the download makes the fetch untestable
 without a filesystem and put cache policy in the same function as the HTTP call. Here the
 cache implements the same `PriceSource` protocol and wraps another one, so either can be
 tested — and used — without the other.
@@ -8,7 +8,7 @@ tested — and used — without the other.
 **A stale entry beats no data.** If the provider is down and a two-day-old daily file exists,
 returning it labelled `cache` is more useful than an empty frame: a strategy can decide
 staleness is unacceptable, but it can decide nothing at all from nothing. This is a
-deliberate change from the predecessor, which discarded expired entries regardless of whether
+deliberate: discarding expired entries regardless of whether
 a refetch was even possible.
 """
 

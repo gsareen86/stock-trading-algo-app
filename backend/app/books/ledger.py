@@ -1,13 +1,13 @@
 """One ledger, parameterised by book.
 
-The predecessor kept three duplicate position ledgers, one per book. They drifted, and
-reconciling them was impossible because none was authoritative. There is deliberately no
+Three duplicate position ledgers, one per book, drift — and reconciling them is impossible
+because none is authoritative. There is deliberately no
 `SwingLedger` here and no base class waiting to be subclassed — swing and long-term differ in
 holding period and in which strategies feed them, not in what a position is.
 
 **`fill()` is the only thing in the platform that creates a trade.** Principle 7 exists because
-the predecessor had broker classes that looked like they executed and silently did nothing —
-the worst kind of failure, because it is invisible. So there is no `Broker` protocol here, no
+a broker class that looks like it executes and silently does nothing is the worst kind of
+failure, because it is invisible. So there is no `Broker` protocol here, no
 `PaperBroker`, and no `execute()` that might be wired to something real later. When live routing
 is specified it will have to touch this function by name, which is exactly the review that
 decision deserves.

@@ -4,9 +4,9 @@ Revision ID: 0001_initial
 Revises:
 Create Date: 2026-08-15
 
-The predecessor's 30 tables stay exactly where they are. They were believed empty when this
-change was proposed; an exact row count showed ~47,500 rows, including 472 trades, 206
-positions and 325 signal outcomes that later increments will want for backtesting. So the
+The 30 pre-existing tables in ``public`` stay exactly where they are. They were believed
+empty when this change was proposed; an exact row count showed ~47,500 rows. Nothing in this
+platform reads them — they are left intact rather than reused. So the
 rebuild takes its own ``trading`` schema rather than clearing ``public``.
 
 Nothing in this migration is destructive. It creates a schema, two tables and their policies.

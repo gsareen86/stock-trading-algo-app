@@ -1,6 +1,6 @@
 """Per-provider circuit breaker.
 
-Carried over from the predecessor's ``llm/client.py``, which had this one genuinely good
+One genuinely good
 idea: after repeated rate-limit failures, continuing to call the provider wastes seconds of
 every cycle and burns whatever rate-limit budget remains. The breaker opens and calls
 short-circuit until a cooldown elapses.

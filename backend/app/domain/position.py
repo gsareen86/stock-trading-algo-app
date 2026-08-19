@@ -2,7 +2,7 @@
 
 A **position is derived, never edited.** `Trade` is the record; `Position` is a projection of a
 symbol's trade history within one book. Storing quantity and average cost as independently
-updatable fields is what made the predecessor's three ledgers unreconcilable: once a position
+updatable fields is what makes duplicate ledgers unreconcilable: once a position
 can be written directly, a bug or a manual fix leaves a position no sequence of trades explains,
 and nothing says which of the two is wrong.
 

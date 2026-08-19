@@ -4,15 +4,15 @@ Revision ID: 0003_trades
 Revises: 0002_llm_calls
 Create Date: 2026-08-17
 
-One table, not one per book: the book is a column. The predecessor kept three duplicate
-position ledgers that drifted and could not be reconciled, which is design principle 2.
+One table, not one per book: the book is a column. Duplicate position ledgers drift and
+cannot be reconciled, which is design principle 2.
 
 There is deliberately **no positions table**. A position is derived by folding a symbol's
 trades, so a stored position can never disagree with the trades that produced it.
 
 Same posture as 0001 and 0002: created in the ``trading`` schema, RLS enabled with a
 ``service_role`` policy in this same migration, nothing granted to ``anon`` or
-``authenticated``. The predecessor's tables in ``public`` are not touched.
+``authenticated``. The pre-existing tables in ``public`` are not touched.
 """
 
 from __future__ import annotations

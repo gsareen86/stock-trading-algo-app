@@ -9,7 +9,7 @@ Three legs, evaluated in the order the method reasons:
 * **MAHESH** — is the *stock* breaking out? Emergence from a horizontal base of at least
   1.5 years, confirmed by weekly volume well above its average.
 
-**The regime is a criterion, not a gate.** The predecessor had a flag to halt entirely on a
+**The regime is a criterion, not a gate.** A flag that halts entirely on a
 bearish reading. Here a hostile market carries dominant weight in conviction instead: a bear
 market does not make a stock unassessable, it makes it unattractive — and gating on it would
 force every BVM verdict in the market to AVOID at once, leaving conviction carrying no

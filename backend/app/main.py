@@ -5,7 +5,7 @@ dependencies read them rather than importing globals. Accepting an optional ``Se
 makes the whole app constructible against a throwaway database in tests.
 
 The factory deliberately does **not** create or migrate schema. Schema is owned by Alembic;
-an app that quietly migrated on boot is how the predecessor ended up with a schema nobody
+an app that quietly migrates on boot is how a project ends up with a schema nobody
 could reason about.
 """
 

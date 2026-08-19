@@ -3,7 +3,7 @@
 Each answers one question: **should the platform look at this name at all?** That is not the
 same question as "can this strategy assess it" (`app/strategies/gates.py`) and emphatically not
 "is the setup attractive" (a strategy's criteria). Keeping the three apart is most of the value
-here — the predecessor collapsed all of them into one number.
+here — collapsing them into one number is how a failed hard check gets averaged away.
 
 A filter never ranks. It admits or excludes, and when it excludes it says what it measured,
 what the threshold was, and where the number came from.

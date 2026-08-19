@@ -4,7 +4,7 @@
 speculating about a shape no caller had fixed. `fun_tech_momentum` now fixes it: it needs
 quarterly EPS and revenue, most recent first, and nothing else.
 
-So this is that, and not the predecessor's 361-line module — which also computed growth
+So this is that, and not a 361-line module that also computes growth
 buckets and quality scores. Those are *decisions*, they get rewritten from spec in
 `screening-universe-and-gates`, and importing them here would smuggle old scoring assumptions
 into a new strategy.

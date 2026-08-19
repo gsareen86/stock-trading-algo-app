@@ -2,7 +2,7 @@
 
 Strategies want pandas — VCP contractions, rolling relative strength and the Trend Template
 are all window functions, and re-expressing them over typed candle objects would be slower
-and far harder to read. But a bare DataFrame guarantees nothing, and the predecessor's
+and far harder to read. But a bare DataFrame guarantees nothing, and untyped
 callers each re-checked for emptiness, MultiIndex columns and missing columns, or forgot to.
 
 So: validate once here, keep pandas inside. Every strategy starts from the same guarantees.

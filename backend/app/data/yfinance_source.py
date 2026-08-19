@@ -1,6 +1,6 @@
 """Prices from yfinance.
 
-Ported from the predecessor's `data/fetcher.py`, keeping the knowledge and dropping the
+Keeps the hard-won provider knowledge and drops the
 entanglement: no module-level config, no intraday intervals, no cache logic interleaved with
 the download, and the frame validated before it leaves.
 

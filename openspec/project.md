@@ -76,8 +76,10 @@ backend/app/
 backend/tests/
 web/            Next.js frontend
 openspec/       this living spec
-<root pkgs>     LEGACY — read-only, deleted at a tracked milestone
 ```
+
+There is nothing else. The prototype this platform replaced was removed at the end of the
+roadmap; anything at the repository root now is current.
 
 ## The decision model
 
@@ -219,7 +221,7 @@ model while research runs on a frontier one.
 | llama.cpp, AMD Lemonade | `openai/<model>` + `api_base` (OpenAI-compatible) |
 
 A failed LLM call must never crash a cycle. The gateway carries a circuit breaker and a
-disk cache for stable prompts — the two ideas worth keeping from the legacy `llm/client.py`.
+disk cache for stable prompts.
 
 **Local and hosted providers have separate timeouts.** `LLM_TIMEOUT_SECONDS` (30) is a
 hosted-model number; a request still running after it is hung, not slow.

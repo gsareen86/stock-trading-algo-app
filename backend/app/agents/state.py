@@ -5,7 +5,7 @@ contributes to ``verdicts`` through an additive reducer, which means no strategy
 handed another's output — not because the code politely refrains, but because the graph does
 not give it one.
 
-That matters more than it looks. The predecessor's confluence scorecard did not start as a
+That matters more than it looks. A blended scorecard does not start as a
 decision to blend verdicts; it started as one function reading another's result for context.
 An append-only fan-in makes that impossible to write by accident.
 """

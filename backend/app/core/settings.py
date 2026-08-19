@@ -8,7 +8,7 @@
 4. Field defaults declared here
 
 This ordering is pydantic-settings' native one; it is stated explicitly because the
-predecessor's single worst tracking pain was a setting that could arrive from code, ``.env``
+single worst configuration failure is a setting that can arrive from code, ``.env``
 or a live database row with no documented winner.
 
 **Nothing here is read from the database.** If a value needs to change at runtime it becomes
