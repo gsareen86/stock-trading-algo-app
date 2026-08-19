@@ -1,46 +1,38 @@
 """Holding one authorised Zerodha session.
 
-Kite's MCP server authorises a **session**, not a credential: `login` returns a browser URL tied
-to the session id of the connection that asked, and only that connection becomes authorised.
-The SDK's transport takes a URL and nothing else — a session id can be read from a response but
-never supplied — so a new connection is a new, unauthorised session.
+Kite's MCP server authorises a **session**, not a credential: `login` returns a browser URL
+tied to a session id, and that session becomes authorised when the user completes the login.
 
-**The hosted server at mcp.kite.trade cannot currently authorise a web backend.** This was
-established empirically, and the sequence is worth recording so nobody repeats it:
+The session is resumed by **id, not by connection**. Each call is an ordinary JSON-RPC POST
+carrying `Mcp-Session-Id`; there is no socket to keep open and nothing held across requests.
 
-1. Holding the client across requests via an `AsyncExitStack` **hangs** — the MCP client runs
-   on anyio task groups, which are bound to the task that entered them.
-2. Holding it in one long-lived owner task fixes the hang, and then the connection **ends by
-   itself**: the server closes the stream after each call (`anyio.EndOfStream`), which is the
-   streamable-HTTP design — sessions are meant to resume via an `Mcp-Session-Id` header.
-3. Supplying that header on a fresh connection **does not resume**: the server issues a *new*
-   session id and answers "please log in first".
+That took three attempts, and the wrong turns are recorded because each looked correct:
 
-So each connection is a new, unauthorised session with no way to rejoin the authorised one. The
-hosted server is built for an interactive client that holds one connection for the length of a
-conversation — a chat app, not a service.
+* Holding an SDK client across requests **hangs** — its anyio task groups are bound to the task
+  that entered them.
+* Owning the client in a long-lived task fixes the hang, and then the connection ends by itself:
+  the server closes the stream after each call.
+* Reconnecting with the SDK **appears** not to resume — but `ClientSession.initialize()`
+  *creates* a session by protocol, so re-initialising per call mints a new, unauthorised one
+  every time. That is a client mistake, not a server limitation. Resumption works exactly as
+  the specification says once you stop re-initialising.
 
-This module is therefore complete and correct against a transport that keeps a session, and
-does **not** work against `mcp.kite.trade` today. The two paths that do:
+So: initialise once, keep the id, speak JSON-RPC directly. No SDK client, no long-lived task,
+no reconnection logic.
 
-* a **self-hosted** `kite-mcp-server` with a personal API key, which holds its own session, or
-* **Kite Connect REST**, which issues a real access token — ₹500/month, plus the daily login the
-  exchange requires.
-
-Neither changes anything above: both are read-only here, and the platform stays paper-only.
-
-**Read-only.** Nothing here can place, modify or cancel an order: mutating tools are refused at
-discovery (`app.agents.mcp_client.is_read_only`) and again on the way in here.
+**Read-only.** Nothing here can place, modify or cancel an order — mutating tools are refused at
+discovery (`app.agents.mcp_client.is_read_only`) and again on the way in here. The platform
+stays paper-only; holdings are observed, never traded.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.clock import now_utc
@@ -48,14 +40,22 @@ from app.core.clock import now_utc
 log = logging.getLogger(__name__)
 
 DEFAULT_KITE_MCP_URL = "https://mcp.kite.trade/mcp"
-
-#: Kite's login response is prose aimed at a chat client. The authorise URL is the only part a
-#: program needs, so it is extracted rather than passed through.
-_AUTH_URL = re.compile(r"https://\S*?/authorize\?session_id=\S+")
-
-#: A remote call that has not answered by now will not help this request.
+PROTOCOL_VERSION = "2025-06-18"
 CALL_TIMEOUT = 45.0
-CONNECT_TIMEOUT = 45.0
+
+#: Kite's login reply is prose aimed at a chat client; the authorise URL is the only part a
+#: program needs.
+#:
+#: The URL is given twice — once inside a markdown link and once bare — so the terminating
+#: characters must exclude `)`, or the extracted link carries the markdown's closing bracket
+#: and 404s. Found by opening one.
+_AUTH_URL = re.compile(r"https://[^\s\"\\)]*?/authorize\?session_id=[^\s\"\\)]+")
+
+_HEADERS = {
+    "Content-Type": "application/json",
+    # The server may answer either way; both are parsed.
+    "Accept": "application/json, text/event-stream",
+}
 
 
 class BrokerUnavailable(Exception):
@@ -63,122 +63,135 @@ class BrokerUnavailable(Exception):
 
 
 @dataclass
-class _Request:
-    tool: str
-    arguments: dict[str, Any]
-    future: asyncio.Future
-
-
-@dataclass
 class KiteSession:
-    """One live, authorised MCP connection — or the absence of one.
-
-    Deliberately a single instance per process: two would each need their own browser login,
-    which is a confusing thing to ask of someone twice.
-    """
+    """One Zerodha session, identified rather than held open."""
 
     url: str = DEFAULT_KITE_MCP_URL
+    session_id: str | None = None
     authorised: bool = False
     connected_at: datetime | None = None
     last_ok_at: datetime | None = None
     last_error: str | None = None
 
-    _task: asyncio.Task | None = field(default=None, repr=False)
-    _queue: asyncio.Queue | None = field(default=None, repr=False)
-    _ready: asyncio.Event | None = field(default=None, repr=False)
+    #: Holdings change slowly and each read costs a round trip. Refreshed on this cadence
+    #: rather than per request — a portfolio stale by minutes is not a wrong one.
+    refresh_minutes: int = 15
+    _cache: dict[str, tuple[datetime, str]] = field(default_factory=dict, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _next_id: int = field(default=0, repr=False)
 
     @property
     def connected(self) -> bool:
-        return self._task is not None and not self._task.done()
+        return self.session_id is not None
 
     def status(self) -> dict[str, Any]:
         return {
             "connected": self.connected,
             # Connected but unauthorised is the normal state between opening a session and the
-            # browser login completing — worth distinguishing from not connected at all.
+            # browser login completing.
             "authorised": self.authorised,
             "url": self.url,
+            "session_id": self.session_id,
             "connected_at": self.connected_at.isoformat() if self.connected_at else None,
             "last_ok_at": self.last_ok_at.isoformat() if self.last_ok_at else None,
+            "refresh_minutes": self.refresh_minutes,
+            "cached": sorted(self._cache),
             "last_error": self.last_error,
             "read_only": True,
         }
 
-    # ── the owner task ────────────────────────────────────────────────────────
-    async def _own_connection(self) -> None:
-        """Open the connection and service calls until cancelled.
+    # ── transport ─────────────────────────────────────────────────────────────
+    async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """One JSON-RPC call, carrying the session id when there is one."""
+        import httpx2
 
-        Everything touching the MCP client happens in this one task. That is the whole point:
-        anyio task groups cannot be used from a task other than the one that entered them.
-        """
-        queue = self._queue
-        ready = self._ready
-        assert queue is not None and ready is not None
+        self._next_id += 1
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": self._next_id, "method": method}
+        if params is not None:
+            payload["params"] = params
+
+        headers = dict(_HEADERS)
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
 
         try:
-            from mcp import Client
-
-            async with Client(self.url, read_timeout_seconds=CALL_TIMEOUT) as client:
-                self.connected_at = now_utc()
-                self.last_error = None
-                ready.set()
-
-                while True:
-                    request: _Request = await queue.get()
-                    try:
-                        result = await client.call_tool(request.tool, request.arguments)
-                        if not request.future.done():
-                            request.future.set_result(result)
-                    except Exception as exc:  # noqa: BLE001 - reported to the caller
-                        if not request.future.done():
-                            request.future.set_exception(exc)
-        except asyncio.CancelledError:
-            raise
+            async with httpx2.AsyncClient(timeout=CALL_TIMEOUT) as client:
+                response = await client.post(self.url, headers=headers, json=payload)
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
-            log.warning("Kite session ended: %s", exc)
-        finally:
+            raise BrokerUnavailable(f"could not reach Kite: {exc}") from exc
+
+        assigned = response.headers.get("mcp-session-id")
+        if assigned:
+            if self.session_id and assigned != self.session_id:
+                # A replaced session means the authorised one is gone.
+                log.info("Kite issued a new session; the previous one is no longer valid")
+                self.authorised = False
+            self.session_id = assigned
+
+        if response.status_code >= 400:
+            self.last_error = f"HTTP {response.status_code}"
+            raise BrokerUnavailable(f"Kite returned HTTP {response.status_code}")
+
+        return _decode(response.text)
+
+    async def _call_tool(self, tool: str, arguments: dict[str, Any]) -> str:
+        message = await self._rpc("tools/call", {"name": tool, "arguments": arguments})
+
+        if "error" in message:
+            detail = str(message["error"].get("message", message["error"]))
+            self.last_error = detail
+            raise BrokerUnavailable(f"Kite call {tool} failed: {detail}")
+
+        result = message.get("result") or {}
+        text = "\n".join(
+            block.get("text", "")
+            for block in (result.get("content") or [])
+            if isinstance(block, dict)
+        ).strip()
+
+        lowered = text.lower()
+        if result.get("isError") or "log in first" in lowered or "failed to execute" in lowered:
+            # Kite reports an unauthorised session as a tool-level error, not a transport one.
             self.authorised = False
-            if ready is not None and not ready.is_set():
-                # Unblock a waiting connect rather than leaving it on the timeout.
-                ready.set()
+            self.last_error = text or "not authorised"
+            raise BrokerUnavailable(
+                "Kite session is not authorised — open the login link, or start a new session "
+                "if it has expired (Zerodha expires sessions daily)"
+            )
 
-    async def _start(self) -> None:
-        await self._stop()
-        self._queue = asyncio.Queue()
-        self._ready = asyncio.Event()
-        self._task = asyncio.create_task(self._own_connection())
-        try:
-            await asyncio.wait_for(self._ready.wait(), timeout=CONNECT_TIMEOUT)
-        except TimeoutError as exc:
-            await self._stop()
-            raise BrokerUnavailable("timed out opening a Kite session") from exc
-        if not self.connected:
-            raise BrokerUnavailable(self.last_error or "could not open a Kite session")
-
-    async def _stop(self) -> None:
-        task, self._task = self._task, None
-        self._queue = None
-        self._ready = None
-        self.authorised = False
-        if task is not None and not task.done():
-            task.cancel()
-            # Closing, not diagnosing: whatever the owner task raises on the way out is not
-            # information a caller asking to disconnect can act on.
-            with contextlib.suppress(Exception):
-                await task
+        if tool != "login":
+            self.authorised = True
+            self.last_ok_at = now_utc()
+        return text
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
     async def begin_login(self) -> str:
-        """Open a session and return the URL the user must visit.
+        """Start a session and return the URL to open in a browser.
 
-        Replaces any existing session: asking to log in while holding an authorised one almost
-        always means the old one stopped working.
+        Initialising is what *creates* a session, so it happens exactly once per login. Calling
+        it again would silently abandon an authorised session for a fresh unauthorised one —
+        which is the bug that made this look impossible.
         """
         async with self._lock:
-            await self._start()
-            text = await self._send("login", {})
+            self.session_id = None
+            self.authorised = False
+            self._cache.clear()
+
+            await self._rpc(
+                "initialize",
+                {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "swing-longterm-platform", "version": "1"},
+                },
+            )
+            if not self.session_id:
+                raise BrokerUnavailable("Kite did not assign a session")
+
+            self.connected_at = now_utc()
+            await self._rpc("notifications/initialized")
+            text = await self._call_tool("login", {})
 
         found = _AUTH_URL.search(text)
         if not found:
@@ -187,11 +200,15 @@ class KiteSession:
 
     async def disconnect(self) -> None:
         async with self._lock:
-            await self._stop()
+            self.session_id = None
+            self.authorised = False
+            self._cache.clear()
 
     # ── calling ───────────────────────────────────────────────────────────────
-    async def call(self, tool: str, arguments: dict[str, Any] | None = None) -> str:
-        """Invoke a read-only Kite tool on the held session."""
+    async def call(
+        self, tool: str, arguments: dict[str, Any] | None = None, use_cache: bool = True
+    ) -> str:
+        """Invoke a read-only Kite tool, serving a recent answer when there is one."""
         from app.agents.mcp_client import is_read_only
 
         if not is_read_only(tool):
@@ -200,41 +217,54 @@ class KiteSession:
             raise BrokerUnavailable(f"{tool} changes state and this integration is read-only")
         if not self.connected:
             raise BrokerUnavailable("not connected to Kite — start a login first")
-        return await self._send(tool, arguments or {})
 
-    async def _send(self, tool: str, arguments: dict[str, Any]) -> str:
-        from app.agents.mcp_client import _attr
+        key = f"{tool}:{json.dumps(arguments or {}, sort_keys=True)}"
+        if use_cache:
+            cached = self._fresh(key)
+            if cached is not None:
+                return cached
 
-        queue = self._queue
-        if queue is None:
-            raise BrokerUnavailable("not connected to Kite — start a login first")
+        async with self._lock:
+            text = await self._call_tool(tool, arguments or {})
+            self._cache[key] = (now_utc(), text)
+            return text
 
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
-        await queue.put(_Request(tool=tool, arguments=arguments, future=future))
-
-        try:
-            result = await asyncio.wait_for(future, timeout=CALL_TIMEOUT)
-        except TimeoutError as exc:
-            self.last_error = f"{tool} timed out"
-            raise BrokerUnavailable(f"Kite call {tool} timed out") from exc
-        except Exception as exc:
-            self.last_error = f"{type(exc).__name__}: {exc}"
-            raise BrokerUnavailable(f"Kite call {tool} failed: {exc}") from exc
-
-        text = "\n".join(
-            getattr(block, "text", "") for block in (_attr(result, "content", default=[]) or [])
-        ).strip()
-
-        if _attr(result, "is_error", "isError", default=False) or "log in first" in text.lower():
-            # Kite reports an unauthorised session as a tool error, not a transport one.
-            self.authorised = False
-            self.last_error = text or "not authorised"
-            raise BrokerUnavailable(
-                "Kite session is not authorised — complete the login, or start a new one if it "
-                "has expired (Zerodha expires sessions daily)"
-            )
-
-        if tool != "login":
-            self.authorised = True
-            self.last_ok_at = now_utc()
+    def _fresh(self, key: str) -> str | None:
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        stamp, text = entry
+        if now_utc() - stamp > timedelta(minutes=self.refresh_minutes):
+            return None
         return text
+
+    def invalidate(self) -> None:
+        """Drop cached answers — used by an end-of-day refresh."""
+        self._cache.clear()
+
+
+def _decode(body: str) -> dict[str, Any]:
+    """Read a JSON-RPC reply from either a plain body or an SSE stream.
+
+    Streamable HTTP may answer either way for the same request, so both are handled rather than
+    depending on which one Kite happens to choose today.
+    """
+    text = (body or "").strip()
+    if not text:
+        return {}
+
+    if text.startswith("{"):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            candidate = line[5:].strip()
+            if candidate.startswith("{"):
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    continue
+    return {}

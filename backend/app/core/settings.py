@@ -155,6 +155,10 @@ class Settings(BaseSettings):
     #: finished is one that occasionally never finishes.
     research_max_tool_rounds: Annotated[int, Field(ge=0, le=10)] = 3
 
+    #: How long a broker read is served from cache before hitting Zerodha again. Holdings
+    #: change slowly, and a portfolio stale by minutes is not a wrong one.
+    broker_refresh_minutes: Annotated[int, Field(ge=1, le=240)] = 15
+
     # ── Authentication ────────────────────────────────────────────────────────
     #: JWT signing key. **There is deliberately no usable default.** A platform that boots with
     #: a well-known signing key is one where every token is forgeable by anyone who has read

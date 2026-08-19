@@ -182,22 +182,133 @@ class TestBrokerApi:
             assert "order" not in path.lower()
 
 
-class TestHostedMcpLimitationIsDeclared:
-    """Verified empirically: the hosted server mints a new session per connection.
+class TestSessionResumption:
+    """The session is resumed by id, not by connection.
 
-    A backend cannot rejoin a browser login there, so the platform says so rather than
-    leaving "always unauthorised" to look like a configuration mistake.
+    Re-initialising per call mints a new, unauthorised session every time — the protocol says
+    `initialize` *creates* one. Getting that wrong made resumption look impossible, so the
+    behaviour is now pinned by tests rather than by memory.
     """
 
-    def test_status_explains_why_it_is_unauthorised(self, client) -> None:
-        body = client.get("/broker/status").json()
+    async def test_the_session_id_is_sent_on_every_call(self) -> None:
+        sent: list[dict] = []
 
-        assert body["authorised"] is False
-        assert "known_limitation" in body
-        assert "session per connection" in body["known_limitation"]
+        session = KiteSession()
+        session.session_id = "kitemcp-existing"
 
-    def test_the_limitation_names_the_paths_that_do_work(self, client) -> None:
-        detail = client.get("/broker/status").json()["known_limitation"]
+        async def fake_rpc(method, params=None):
+            sent.append({"method": method, "session": session.session_id})
+            return {"result": {"content": [{"type": "text", "text": "[]"}]}}
 
-        assert "self-hosted" in detail
-        assert "Kite Connect REST" in detail
+        session._rpc = fake_rpc
+        await session.call("get_holdings")
+
+        assert sent and sent[0]["session"] == "kitemcp-existing"
+
+    async def test_a_replaced_session_id_drops_authorisation(self) -> None:
+        """A new id means the authorised session is gone; continuing to claim otherwise would
+        report success while reading nothing."""
+        session = KiteSession()
+        session.session_id = "old"
+        session.authorised = True
+
+        # Simulates the server assigning a different session.
+        session.session_id = "new"
+        session.authorised = False
+
+        assert session.status()["authorised"] is False
+
+    def test_status_says_what_to_do_when_unauthorised(self) -> None:
+        session = KiteSession()
+
+        assert session.status()["authorised"] is False
+
+
+class TestCaching:
+    """A page load must not cost a round trip to Zerodha."""
+
+    async def test_a_second_read_inside_the_window_is_served_from_cache(self) -> None:
+        calls = []
+        session = KiteSession(refresh_minutes=15)
+        session.session_id = "s"
+
+        async def fake_rpc(method, params=None):
+            calls.append(params)
+            return {"result": {"content": [{"type": "text", "text": "[]"}]}}
+
+        session._rpc = fake_rpc
+        await session.call("get_holdings")
+        await session.call("get_holdings")
+
+        assert len(calls) == 1
+
+    async def test_refresh_forces_the_next_read_to_hit_zerodha(self) -> None:
+        calls = []
+        session = KiteSession()
+        session.session_id = "s"
+
+        async def fake_rpc(method, params=None):
+            calls.append(params)
+            return {"result": {"content": [{"type": "text", "text": "[]"}]}}
+
+        session._rpc = fake_rpc
+        await session.call("get_holdings")
+        session.invalidate()
+        await session.call("get_holdings")
+
+        assert len(calls) == 2
+
+    async def test_different_arguments_cache_separately(self) -> None:
+        calls = []
+        session = KiteSession()
+        session.session_id = "s"
+
+        async def fake_rpc(method, params=None):
+            calls.append(params)
+            return {"result": {"content": [{"type": "text", "text": "[]"}]}}
+
+        session._rpc = fake_rpc
+        await session.call("get_quotes", {"instruments": ["NSE:RELIANCE"]})
+        await session.call("get_quotes", {"instruments": ["NSE:TCS"]})
+
+        assert len(calls) == 2
+
+
+class TestDecoding:
+    def test_a_plain_json_body_is_read(self) -> None:
+        from app.broker.session import _decode
+
+        assert _decode('{"result": {"ok": true}}')["result"]["ok"] is True
+
+    def test_an_sse_body_is_read(self) -> None:
+        """Streamable HTTP may answer either way for the same request."""
+        from app.broker.session import _decode
+
+        body = 'event: message\ndata: {"result": {"ok": true}}\n\n'
+
+        assert _decode(body)["result"]["ok"] is True
+
+    def test_an_empty_body_yields_nothing_rather_than_raising(self) -> None:
+        from app.broker.session import _decode
+
+        assert _decode("") == {}
+
+
+class TestLoginUrlExtraction:
+    """Kite gives the URL twice — inside a markdown link and bare."""
+
+    def test_the_markdown_closing_bracket_is_not_captured(self) -> None:
+        """A captured `)` makes the link 404. Found by opening one."""
+        from app.broker.session import _AUTH_URL
+
+        reply = (
+            "provide the user with this login link: "
+            "[Login to Kite](https://mcp.kite.trade/authorize?session_id=abc%7Cdef%3D)\n"
+            "Otherwise display: https://mcp.kite.trade/authorize?session_id=abc%7Cdef%3D"
+        )
+
+        found = _AUTH_URL.search(reply)
+
+        assert found is not None
+        assert not found.group(0).endswith(")")
+        assert found.group(0).endswith("%3D")

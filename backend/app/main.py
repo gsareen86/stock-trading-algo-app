@@ -70,7 +70,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # One session per process: each would need its own browser login, which is a confusing
     # thing to ask of someone twice.
     app.state.broker = KiteSession(
-        url=settings.mcp_server.get("kite", DEFAULT_KITE_MCP_URL)
+        url=settings.mcp_server.get("kite", DEFAULT_KITE_MCP_URL),
+        refresh_minutes=settings.broker_refresh_minutes,
     )
     app.state.tools = ToolRegistry.discover()
     app.state.strategies = StrategyRegistry.discover()

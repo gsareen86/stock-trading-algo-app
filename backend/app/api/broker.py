@@ -27,13 +27,12 @@ def get_session(request: Request) -> KiteSession:
     return request.app.state.broker
 
 
-#: Stated in the response rather than a doc, because "why is this always unauthorised" is the
-#: first question anyone will have and the answer is not their configuration.
-HOSTED_MCP_LIMITATION = (
-    "The hosted Kite MCP server issues a new session per connection and does not honour a "
-    "supplied session id, so a browser login cannot be rejoined by a backend. Verified "
-    "empirically. Use a self-hosted kite-mcp-server or Kite Connect REST for server-side "
-    "access; the hosted server works from an interactive client that holds one connection."
+#: What to do about an unauthorised session, said in the response rather than a document —
+#: "why is this not authorised" is the first question anyone will have.
+NEXT_STEP = (
+    "Call POST /broker/connect and open the returned link to sign in to Zerodha. Sessions "
+    "expire daily, as the exchange requires, so this is a morning step rather than one-time "
+    "setup."
 )
 
 
@@ -41,8 +40,19 @@ HOSTED_MCP_LIMITATION = (
 async def status(session: Annotated[KiteSession, Depends(get_session)]) -> dict[str, Any]:
     body = session.status()
     if not body["authorised"]:
-        body["known_limitation"] = HOSTED_MCP_LIMITATION
+        body["next_step"] = NEXT_STEP
     return body
+
+
+@router.post("/refresh")
+async def refresh(session: Annotated[KiteSession, Depends(get_session)]) -> dict[str, Any]:
+    """Drop cached answers so the next read hits Zerodha.
+
+    Holdings are otherwise served from a cache for `refresh_minutes`, which keeps a page load
+    from costing a round trip. This is the end-of-day (or on-demand) override.
+    """
+    session.invalidate()
+    return {"refreshed": True, "status": session.status()}
 
 
 @router.post("/connect")
