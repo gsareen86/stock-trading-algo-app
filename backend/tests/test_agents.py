@@ -471,3 +471,66 @@ class TestMutatingToolsAreRefused:
         )
 
         assert status.as_dict()["refused"] == ["place_order"]
+
+
+class TestSurfacesDoNotBlendVerdicts:
+    """The UI is the layer where a combined score would look most reasonable.
+
+    Fourteen increments kept blending out of the domain. A template computing "3 of 4 agree" or
+    an average conviction would reintroduce it where nobody would think to look for it, so the
+    surface components are checked directly.
+    """
+
+    @staticmethod
+    def _strip_comments(source: str) -> str:
+        """Remove comments and JSX comment blocks.
+
+        These modules explain at length *why* they do not blend verdicts, using the very words
+        a naive grep looks for. Checking code rather than prose is the difference between a
+        guard and a tripwire on its own documentation.
+        """
+        import re
+
+        source = re.sub(r"/\*.*?\*/", " ", source, flags=re.DOTALL)
+        return re.sub(r"^\s*//.*$", " ", source, flags=re.MULTILINE)
+
+    @classmethod
+    def _web_sources(cls) -> dict[str, str]:
+        from pathlib import Path
+
+        web = Path(__file__).resolve().parents[2] / "web"
+        if not web.exists():  # pragma: no cover - backend-only checkouts
+            return {}
+        return {
+            p.relative_to(web).as_posix(): cls._strip_comments(p.read_text("utf-8"))
+            for p in [*web.glob("app/**/*.tsx"), *web.glob("components/**/*.tsx")]
+        }
+
+    def test_no_surface_aggregates_over_verdicts(self) -> None:
+        import re
+
+        banned = re.compile(
+            r"verdicts\s*\.\s*(reduce|filter\s*\([^)]*BUY[^)]*\)\s*\.\s*length)"
+            r"|consensus|averageConviction|agreementScore",
+            re.I,
+        )
+        offenders = [name for name, src in self._web_sources().items() if banned.search(src)]
+
+        assert offenders == [], f"surfaces aggregate across verdicts: {offenders}"
+
+    def test_the_verdict_card_receives_one_verdict(self) -> None:
+        """A component handed the whole array is one refactor from a consensus badge."""
+        sources = self._web_sources()
+        card = sources.get("components/verdict.tsx")
+        if card is None:  # pragma: no cover - backend-only checkouts
+            pytest.skip("web sources not present")
+
+        # The card's own signature, not everything after it — `VerdictRow` legitimately
+        # takes the array in order to lay the cards out.
+        signature = card.split("export function VerdictCard")[1].split(")")[0]
+        assert "verdict: Verdict" in signature
+        assert "Verdict[]" not in signature
+
+    def test_no_surface_sorts_names_by_agreement(self) -> None:
+        for name, src in self._web_sources().items():
+            assert "sort" not in src or "localeCompare" in src or "cost_basis" in src, name

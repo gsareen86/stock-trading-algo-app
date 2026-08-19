@@ -27,7 +27,7 @@ behavior that hasn't shipped. If you need to change what the system does, that g
 | `authentication` | Password login, revocable JWT sessions, protected-by-default routing |
 | `backtesting` | Point-in-time replay: no lookahead, fills after the bar, biases declared |
 | `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/tools`, `/strategies`, `/verdicts`, `/cycles/run`, `/screen`, `/universe`, `/books/{book}/*`, `/insights`, `/auth/*`, `/backtest/run` |
-| `web-shell` | The six surfaces, design tokens, the backend seam, the Engine LLM panel |
+| `web-shell` | The six surfaces, evidence made visible, and no blending in the UI |
 
 These carry full Requirement+Scenario depth because they describe code that was just written;
 later capabilities may enter at `Status: baseline` depth and be promoted the first time a real
@@ -35,4 +35,4 @@ change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
 `market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`,
-`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`, `portfolio-health-and-actions`, `authentication`, `backtesting`.
+`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`, `portfolio-health-and-actions`, `authentication`, `backtesting`, `gui-surfaces`.

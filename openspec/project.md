@@ -230,6 +230,30 @@ where every narrative call timed out and the feature looked broken rather than s
 `run-local.ps1` is the supported way to start the stack locally — the routing and timeout
 settings are environment variables, so a server started any other way loses them silently.
 
+## Surfaces
+
+Six, named for the question each answers: **Today** (the insight feed), **Ideas** (four verdicts
+side by side), **Positions** (both books plus the health score), **Stock** (one name in full),
+**Performance** (analytics and attribution), **Engine** (LLM cost and failures).
+
+The UI is the layer where a blended score would look most reasonable — a "3 of 4 agree" badge
+is a natural thing to render, and nothing in the backend stops a template computing one. So
+strategies occupy separate cards, `VerdictCard` receives exactly one verdict, and a test greps
+the surface sources (comments stripped) for aggregation over verdict arrays.
+
+**Evidence is one interaction away, not one navigation.** A verdict's rows sit in a `<details>`
+under it with the observed value, the operator and threshold it was tested against, and the
+`source_ref` — because "click through to see why" is a step people skip, and the traceability
+argument depends on the why being cheap to reach.
+
+Unavailable, signed-out and empty are three different renderings. An empty book and a dead
+backend look identical on a naive screen, and confusing them is how someone concludes they hold
+nothing.
+
+Server components read the access cookie and call the backend directly; client calls go through
+the proxy. Middleware renews an expired access token, because a server component can read
+cookies but cannot set them.
+
 ## Backtesting
 
 Replaying the strategies is only possible because verdicts are deterministic and reproducible
@@ -372,7 +396,10 @@ Insights are delivered **in-app only** — no email, no push, no Telegram.
 12. `portfolio-health-and-actions`
 13. `authentication`
 14. `backtesting` (never from legacy data)
-15. `gui-shell-and-design-system` → `gui-surfaces` ← next
+15. `gui-shell-and-design-system` → `gui-surfaces`
+
+**The roadmap is complete.** Further work arrives as changes named for what they do, archived
+alongside the numbered sequence rather than extending it.
 
 Changes that arrive outside this sequence are archived alongside it rather than renumbered:
 

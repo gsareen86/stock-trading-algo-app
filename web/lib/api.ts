@@ -104,15 +104,36 @@ export type HealthResult =
  * An unreachable backend is a state the surfaces render, not an error that blanks the
  * page — a broken seam should be visible, not fatal.
  */
+
+/**
+ * Where a request goes, and what it carries.
+ *
+ * On the **server** it goes straight to the backend with the access token read from the
+ * cookie. Routing a server component through this app's own HTTP proxy would be a round trip
+ * to itself — and worse, `fetch` on the server does not forward the incoming request's
+ * cookies, so the proxy would see no session at all. That was a real bug: every surface
+ * rendered as signed-out while the same URL worked from a terminal.
+ *
+ * On the **client** it goes to the proxy with a relative URL, and the browser attaches the
+ * cookie. No token is ever visible to page script either way.
+ */
+async function resolve(path: string): Promise<{ url: string; headers: HeadersInit }> {
+  if (typeof window !== "undefined") {
+    return { url: `${API_BASE_URL}${path}`, headers: {} };
+  }
+  const { cookies } = await import("next/headers");
+  const token = (await cookies()).get("sw_access")?.value;
+  const backend = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
+  return {
+    url: `${backend}${path}`,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  };
+}
+
 async function getJson<T>(path: string): Promise<Fetched<T>> {
-  // Relative on the client; absolute on the server, where `fetch` has no origin to resolve
-  // against. Both land on the same proxy route.
-  const base = typeof window === "undefined"
-    ? `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}${API_BASE_URL}`
-    : API_BASE_URL;
-  const url = `${base}${path}`;
+  const { url, headers } = await resolve(path);
   try {
-    const response = await fetch(url, { cache: "no-store" });
+    const response = await fetch(url, { cache: "no-store", headers });
     if (!response.ok) {
       const label = response.status === 401 ? "not signed in" : `HTTP ${response.status}`;
       return { ok: false, error: label, attemptedUrl: url };
@@ -141,4 +162,151 @@ export function fetchCalls(limit = 20): Promise<Fetched<{ calls: CallRecord[] }>
 export async function fetchHealth(): Promise<HealthResult> {
   const result = await getJson<Health>("/health");
   return result.ok ? { ok: true, health: result.data } : result;
+}
+
+// ── verdicts, positions, insights, health ─────────────────────────────────────
+export type Evidence = {
+  id: string;
+  label: string;
+  value: number | string | null;
+  operator: string;
+  threshold: number | string | null;
+  passed: boolean | null;
+  unit: string | null;
+  source_ref: string;
+};
+
+export type Gate = {
+  id: string;
+  label: string;
+  passed: boolean;
+  reason: string;
+  evidence_ids: string[];
+};
+
+export type Verdict = {
+  strategy_id: string;
+  ticker: string;
+  as_of: string;
+  stance: "BUY" | "WATCH" | "AVOID";
+  /** Scoped to its own strategy. Never comparable to another strategy's. */
+  conviction: number;
+  gates_passed: boolean;
+  gates: Gate[];
+  evidence: Evidence[];
+  narrative: string | null;
+  trace_id: string | null;
+};
+
+export type Position = {
+  book: string;
+  ticker: string;
+  quantity: number;
+  average_cost: number;
+  cost_basis: number;
+  is_open: boolean;
+  last_price: number | null;
+  market_value: number | null;
+  realised_pnl_gross: number;
+  unrealised_pnl_gross: number | null;
+  unrealised_pct: number | null;
+  trade_count: number;
+};
+
+export type Insight = {
+  id: number;
+  kind: string;
+  severity: "high" | "medium" | "low";
+  ticker: string | null;
+  title: string;
+  body: string | null;
+  payload: Record<string, unknown>;
+  read: boolean;
+  created_at: string | null;
+  actions: string[];
+};
+
+export type HealthComponent = {
+  id: string;
+  label: string;
+  score: number;
+  weight: number;
+  measurement: number;
+  threshold: number;
+  unit: string;
+  detail: string;
+  healthy: boolean;
+};
+
+export type BookHealth = {
+  score: number;
+  band: string;
+  components: HealthComponent[];
+  guidance: { component: string; action: string; detail: string; ticker: string | null }[];
+  book: string;
+  capital_inr: number;
+  charges_included: boolean;
+};
+
+export type BookAnalytics = {
+  book: string;
+  open_positions: number;
+  cost_basis: number;
+  market_value: number | null;
+  realised_pnl_gross: number;
+  unrealised_pnl_gross: number | null;
+  concentration_pct: Record<string, number>;
+  trade_count: number;
+  charges_included: boolean;
+  closed_trades: {
+    closed: number;
+    wins: number;
+    losses: number;
+    win_rate_pct: number | null;
+  };
+  attribution: Record<string, { trades: number; bought: number; sold: number }>;
+};
+
+export function fetchInsights(limit = 30): Promise<Fetched<{ insights: Insight[]; unread: number }>> {
+  return getJson(`/insights?limit=${limit}`);
+}
+
+export function fetchPositions(book: string): Promise<Fetched<{ positions: Position[]; count: number }>> {
+  return getJson(`/books/${book}/positions`);
+}
+
+export function fetchBookHealth(book: string): Promise<Fetched<BookHealth>> {
+  return getJson(`/books/${book}/health`);
+}
+
+export function fetchAnalytics(book: string): Promise<Fetched<BookAnalytics>> {
+  return getJson(`/books/${book}/analytics`);
+}
+
+export function fetchStrategies(): Promise<Fetched<{ strategies: { id: string; name: string }[] }>> {
+  return getJson("/strategies");
+}
+
+/** Verdicts are evaluated on demand — this is a POST, so it does not use `getJson`. */
+export async function evaluate(
+  symbols: string[],
+  narrate = false,
+): Promise<Fetched<{ verdicts: Verdict[]; count: number }>> {
+  const { url, headers } = await resolve("/verdicts/evaluate");
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ symbols, narrate }),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const label = response.status === 401 ? "not signed in" : `HTTP ${response.status}`;
+      return { ok: false, error: label, attemptedUrl: url };
+    }
+    return { ok: true, data: await response.json() };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message, attemptedUrl: url };
+  }
 }

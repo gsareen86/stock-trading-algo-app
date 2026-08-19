@@ -1,12 +1,17 @@
-import { type Health, fetchHealth } from "@/lib/api";
+import { InsightActions } from "@/components/insight-actions";
+import { Empty, Unavailable } from "@/components/states";
+import { type Health, type Insight, fetchHealth, fetchInsights } from "@/lib/api";
 
 /**
- * Today — the insights feed.
+ * Today — what needs attention right now.
  *
- * In the bootstrap change it carries no insights yet; what it does carry is the live seam
- * report from the backend. That is deliberate: this page is the proof that the
- * browser → API → database → LLM-gateway chain actually works end to end. A broken seam
- * shows up here immediately rather than in a log nobody reads.
+ * The insight feed, with the seam report kept underneath it. The feed leads because that is
+ * what the surface is named for; the seam report stays because a broken seam should show up
+ * here immediately rather than in a log nobody reads, and an empty feed caused by a dead
+ * backend must not read as "nothing to do".
+ *
+ * Severity is a property of the insight *kind*, declared in the backend. Nothing here computes
+ * an importance score or re-orders by one.
  */
 
 // Rendered per request. Without this the page would be prerendered at build time, when the
@@ -157,6 +162,68 @@ function SeamReport({ health }: { health: Health }) {
   );
 }
 
+
+const SEVERITY_TONE: Record<string, string> = {
+  high: "border-stance-avoid text-stance-avoid",
+  medium: "border-stance-watch text-stance-watch",
+  low: "border-border-strong text-text-muted",
+};
+
+function InsightCard({ insight }: { insight: Insight }) {
+  return (
+    <article
+      className={`rounded-token-lg border bg-surface-raised p-4 ${
+        insight.read ? "border-border-subtle opacity-70" : "border-border-strong"
+      }`}
+    >
+      <header className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-medium text-text-primary">{insight.title}</h3>
+        <span
+          className={`rounded-token border px-2 py-0.5 text-[11px] uppercase tracking-wider ${
+            SEVERITY_TONE[insight.severity] ?? ""
+          }`}
+        >
+          {insight.severity}
+        </span>
+      </header>
+
+      {insight.body ? (
+        <p className="mt-2 text-sm text-text-secondary">{insight.body}</p>
+      ) : null}
+
+      <p className="mt-2 text-[11px] text-text-muted">
+        {insight.kind}
+        {insight.payload?.measured_by_platform === false ? (
+          // A headline a model found is a different thing from a measurement this platform
+          // made, and a reader deciding whether to sell needs to know which they are reading.
+          <span className="ml-2 text-stance-watch">reported by a tool, not measured here</span>
+        ) : null}
+      </p>
+
+      {!insight.read ? <InsightActions insight={insight} /> : null}
+    </article>
+  );
+}
+
+async function Feed() {
+  const result = await fetchInsights();
+
+  if (!result.ok) return <Unavailable result={result} />;
+  if (result.data.insights.length === 0) {
+    return <Empty>Nothing needs attention. Run a cycle to look for something.</Empty>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Order is the backend's — newest first, severity declared per kind. Nothing here
+          re-ranks by a computed importance. */}
+      {result.data.insights.map((insight) => (
+        <InsightCard key={insight.id} insight={insight} />
+      ))}
+    </div>
+  );
+}
+
 export default async function TodayPage() {
   const result = await fetchHealth();
 
@@ -178,7 +245,20 @@ export default async function TodayPage() {
         ) : null}
       </div>
 
-      <div className="mt-8">
+      <section className="mt-8">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+          Insights
+        </h2>
+        <div className="mt-3">
+          <Feed />
+        </div>
+      </section>
+
+      <details className="mt-10">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-text-muted">
+          Seam report
+        </summary>
+        <div className="mt-3">
         {result.ok ? (
           <SeamReport health={result.health} />
         ) : (
@@ -204,7 +284,8 @@ export default async function TodayPage() {
             </p>
           </div>
         )}
-      </div>
+        </div>
+      </details>
     </div>
   );
 }
