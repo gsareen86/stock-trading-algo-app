@@ -180,20 +180,43 @@ class TestLedger:
 
         assert ledger.position(Book.SWING, "RELIANCE").quantity == 1
 
-    def test_fill_is_the_only_trade_constructor(self) -> None:
-        """Principle 7: no broker class that looks like it executes and silently does not."""
+    def test_nothing_looks_like_it_executes_an_order(self) -> None:
+        """Principle 7: nothing that looks like it places an order and silently does not.
+
+        Checked against *capability*, not the word "broker". Read-only broker integration
+        legitimately has `BrokerHolding` and `KiteSession`, and the earlier name-based guard
+        flagged those while a class called `OrderRouter` would have walked straight past it.
+        What must not exist is a function that appears to send an order.
+        """
         import re
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[1] / "app"
-        pattern = re.compile(r"class\s+\w*(Broker|Executor)\w*\b")
+        executes = re.compile(
+            r"def\s+(place_order|submit_order|send_order|execute_order|route_order|"
+            r"square_off)\s*\(",
+            re.I,
+        )
         offenders = [
-            str(p.relative_to(root))
-            for p in root.rglob("*.py")
-            if pattern.search(p.read_text("utf-8"))
+            str(path.relative_to(root))
+            for path in root.rglob("*.py")
+            if executes.search(path.read_text("utf-8"))
         ]
 
-        assert offenders == []
+        assert offenders == [], f"something looks like it places orders: {offenders}"
+
+    def test_the_broker_integration_calls_no_mutating_tool(self) -> None:
+        """Real-money safety: reading a broker must not become a way to trade at one."""
+        from pathlib import Path
+
+        from app.agents.mcp_client import MUTATING_VERBS
+
+        broker = Path(__file__).resolve().parents[1] / "app" / "broker"
+        source = "\n".join(path.read_text("utf-8") for path in broker.rglob("*.py"))
+
+        for verb in MUTATING_VERBS:
+            assert f'call("{verb}' not in source
+            assert f'call_tool("{verb}' not in source
 
 
 class TestAnalytics:

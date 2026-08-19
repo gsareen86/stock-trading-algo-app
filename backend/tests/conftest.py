@@ -121,3 +121,31 @@ def authed_client(app):
     test_client = TestClient(app)
     authenticate(test_client)
     return test_client
+
+
+# ── source guards ─────────────────────────────────────────────────────────────
+def code_only(source: str) -> str:
+    """A module's code with comments and docstrings removed.
+
+    Several tests assert that a module does *not* contain something — no `Ledger` import in the
+    broker package, no ranking function in `health`, no verdict aggregation in the surfaces.
+    Those modules explain at length *why* they avoid the thing, using the exact words the guard
+    searches for, so a naive grep trips on its own documentation. This happened four separate
+    times before it became a shared helper.
+
+    Handles Python and TypeScript alike: both use hash or double-slash line comments, and
+    triple-quoted or slash-star blocks. Enough for guards that only need to know whether an
+    identifier is genuinely used.
+    """
+    import re
+
+    without_blocks = re.sub(r'"""(?:.|\n)*?"""|/\*(?:.|\n)*?\*/', " ", source)
+    return re.sub(r"(?m)^\s*(#|//).*$", " ", without_blocks)
+
+
+def source_of(package: str, suffix: str = "*.py") -> str:
+    """Concatenated code of a package under `app/`, comments stripped."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "app" / package
+    return "\n".join(code_only(p.read_text("utf-8")) for p in root.rglob(suffix))

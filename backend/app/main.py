@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.backtest import router as backtest_router
 from app.api.books import router as books_router
+from app.api.broker import router as broker_router
 from app.api.cycles import router as cycles_router
 from app.api.health import router as health_router
 from app.api.insights import router as insights_router
@@ -29,6 +30,7 @@ from app.api.tools import router as tools_router
 from app.api.verdicts import router as verdicts_router
 from app.auth.guard import AuthGuard
 from app.auth.service import AuthService
+from app.broker.session import DEFAULT_KITE_MCP_URL, KiteSession
 from app.core.logging import configure_logging
 from app.core.settings import Settings
 from app.llm.budget import DailyBudget
@@ -65,6 +67,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Discovered once at startup: importing every tool module per request would be wasteful,
     # and load failures should surface at boot rather than on first use.
     app.state.auth = AuthService(app.state.session_factory, settings)
+    # One session per process: each would need its own browser login, which is a confusing
+    # thing to ask of someone twice.
+    app.state.broker = KiteSession(
+        url=settings.mcp_server.get("kite", DEFAULT_KITE_MCP_URL)
+    )
     app.state.tools = ToolRegistry.discover()
     app.state.strategies = StrategyRegistry.discover()
 
@@ -93,6 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(books_router)
     app.include_router(insights_router)
     app.include_router(backtest_router)
+    app.include_router(broker_router)
 
     log.info("app ready (env=%s, version=%s)", settings.app_env, settings.app_version)
     return app
