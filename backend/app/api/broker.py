@@ -69,9 +69,14 @@ async def connect(
     return {
         "login_url": login_url,
         "instructions": (
-            "Open this link, sign in to Zerodha, then return here. The session lasts until "
-            "Zerodha expires it — which it does daily, as the exchange requires."
+            "Open this link now and sign in to Zerodha. It expires within minutes — a link "
+            "left sitting returns 'invalid authorize session', which reads as a broken "
+            "integration rather than a stale link. Once signed in, the session lasts until "
+            "Zerodha expires it, which it does daily as the exchange requires."
         ),
+        # Said in the response because the failure it prevents is indistinguishable from a
+        # bug when you meet it an hour later.
+        "expires": "within minutes — generate it when you are ready to use it",
         "read_only": True,
         "status": session.status(),
     }

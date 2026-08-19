@@ -310,3 +310,40 @@ export async function evaluate(
     return { ok: false, error: message, attemptedUrl: url };
   }
 }
+
+export type BrokerStatus = {
+  connected: boolean;
+  authorised: boolean;
+  url: string;
+  session_id: string | null;
+  connected_at: string | null;
+  last_ok_at: string | null;
+  refresh_minutes: number;
+  cached: string[];
+  last_error: string | null;
+  read_only: boolean;
+  next_step?: string;
+};
+
+export type BrokerHoldings = {
+  count: number;
+  invested: number;
+  market_value: number | null;
+  holdings: {
+    symbol: string;
+    quantity: number;
+    average_price: number;
+    last_price: number | null;
+    value: number | null;
+    pnl_reported_by_broker: number | null;
+  }[];
+  note: string;
+};
+
+export function fetchBrokerStatus(): Promise<Fetched<BrokerStatus>> {
+  return getJson<BrokerStatus>("/broker/status");
+}
+
+export function fetchBrokerHoldings(): Promise<Fetched<BrokerHoldings>> {
+  return getJson<BrokerHoldings>("/broker/holdings");
+}

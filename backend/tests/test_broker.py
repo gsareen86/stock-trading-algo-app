@@ -312,3 +312,23 @@ class TestLoginUrlExtraction:
         assert found is not None
         assert not found.group(0).endswith(")")
         assert found.group(0).endswith("%3D")
+
+
+class TestConnectWarnsAboutExpiry:
+    """A stale link returns "invalid authorize session", which reads as a broken integration.
+
+    Confirmed against the live server: a link 55 minutes old answers HTTP 400, a fresh one 200.
+    The response says so rather than leaving it to be met an hour later.
+    """
+
+    def test_connect_response_declares_the_link_is_short_lived(self, monkeypatch, client) -> None:
+        async def fake_login(self):
+            return "https://mcp.kite.trade/authorize?session_id=abc%3D"
+
+        monkeypatch.setattr(KiteSession, "begin_login", fake_login)
+
+        body = client.post("/broker/connect").json()
+
+        assert "expires" in body
+        assert "minutes" in body["expires"]
+        assert "now" in body["instructions"].lower()

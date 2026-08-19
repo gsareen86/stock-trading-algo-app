@@ -47,6 +47,12 @@ export const SURFACES: Surface[] = [
     filledBy: "books-ledger-and-analytics",
   },
   {
+    href: "/broker",
+    label: "Zerodha",
+    answers: "Read my real holdings — never trade them",
+    filledBy: "broker-sync",
+  },
+  {
     href: "/engine",
     label: "Engine",
     answers: "Under the hood — config, runs, agent traces, LLM cost",
