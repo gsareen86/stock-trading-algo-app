@@ -67,6 +67,9 @@ ITEM_SCHEMA = item_schema(
         "reasoning": {"type": "string", "minLength": 1},
         "proposed_by": {"type": "string"},
         "supplier_descriptions": {"type": "array", "items": {"type": "string"}},
+        # Named companies, which may well be listed abroad. Explanation only — resolution
+        # never turns one of these into something to buy.
+        "notable_examples": {"type": "array", "items": {"type": "string"}},
         # Never a platform measurement, and carried so nothing downstream has to infer it.
         "measured_by_platform": {"type": "boolean"},
     },
@@ -176,6 +179,15 @@ def handle(arguments: dict, context: ToolContext) -> dict:
                     for d in (tier.get("supplier_descriptions") or [])
                     if str(d).strip()
                 ][:8],
+                # Recognisable names for the tier, which are frequently listed abroad — the
+                # first tier of the case this exists for is a US designer, a Taiwanese fab and
+                # a Dutch toolmaker. They make the chain legible. They are never candidates,
+                # and `investable` says so at the point a reader sees them.
+                "notable_examples": [
+                    {"name": str(n).strip(), "investable": False}
+                    for n in (tier.get("notable_examples") or [])
+                    if str(n).strip()
+                ][:4],
                 "measured_by_platform": False,
             }
         )

@@ -16,8 +16,16 @@ from datetime import date
 
 import pytest
 
+from app.data.protocols import UniverseSnapshot
+from app.domain.instrument import Instrument
 from app.domain.themes import Exposure, Reference, SourceKind, Theme, ThemeEvidence
 from app.themes.detect import CONCEPTS, Thresholds, assemble, extract
+from app.themes.resolve import (
+    match_description,
+    resolve_chain,
+    resolve_tier,
+    terms,
+)
 from app.themes.store import ThemeStore
 from app.tools.registry import ToolRegistry
 from app.tools.theme_chain.tool import handle
@@ -276,11 +284,15 @@ class TestNothingHereRanksOrScores:
                 float(grade.value)
 
     def test_the_module_has_no_ranking_function(self) -> None:
+        import re
+
         from tests.conftest import source_of
 
         source = source_of("themes")
-        for forbidden in ("def rank", "def score", "conviction", "stance"):
-            assert forbidden not in source
+        # Word boundaries, not substrings: `isinstance` contains "stance", and a test that
+        # fails on it is a test nobody will trust the next time it goes red.
+        for forbidden in ("rank", "score", "conviction", "stance", "rating"):
+            assert not re.search(rf"{forbidden}", source), forbidden
 
     def test_ordering_never_decides_membership(self) -> None:
         """Order is presentation. Which themes surface must not depend on it at all.
@@ -683,3 +695,252 @@ class TestExpansionIsAProposalNotAMeasurement:
         strategies = source_of("strategies")
         assert "theme_chain" not in strategies
         assert "ChainLink" not in strategies
+
+
+def _universe(*rows: tuple[str, str, str]) -> UniverseSnapshot:
+    return UniverseSnapshot(
+        instruments=tuple(
+            Instrument(symbol=s, name=n, sector=sec) for s, n, sec in rows
+        ),
+        origin="live",
+        index_name="TEST",
+    )
+
+
+INDIA = _universe(
+    ("TARIL", "Transformers and Rectifiers India Ltd.", "Capital Goods"),
+    ("FINCABLES", "Finolex Cables Ltd.", "Capital Goods"),
+    ("ACMESOLAR", "ACME Solar Holdings Ltd.", "Power"),
+    ("ADANIPOWER", "Adani Power Ltd.", "Power"),
+    ("NTPC", "NTPC Ltd.", "Power"),
+    ("TATAPOWER", "Tata Power Company Ltd.", "Power"),
+    ("JSWENERGY", "JSW Energy Ltd.", "Power"),
+    ("NHPC", "NHPC Ltd.", "Power"),
+    ("SJVN", "SJVN Ltd.", "Power"),
+    ("TORNTPOWER", "Torrent Power Ltd.", "Power"),
+    ("CESC", "CESC Ltd.", "Power"),
+    ("INFY", "Infosys Ltd.", "Information Technology"),
+)
+
+
+class TestMatching:
+    def test_the_rarest_term_wins(self) -> None:
+        """"Transformer manufacturers" must not resolve on the word "power"."""
+        matches, _ = match_description("Transformer manufacturers", INDIA)
+
+        assert [symbol for symbol, _ in matches] == ["TARIL"]
+        assert matches[0][1] == "transformer"
+
+    def test_a_description_too_broad_to_narrow_says_so(self) -> None:
+        """An arbitrary eight of twenty is worse than an honest "this narrowed to nothing"."""
+        matches, reason = match_description("Power companies", INDIA)
+
+        assert matches == []
+        assert "too broad" in reason
+
+    def test_stopwords_alone_match_nothing(self) -> None:
+        matches, reason = match_description("Providers and suppliers", INDIA)
+
+        assert matches == []
+        assert reason == "no discriminating terms"
+
+    def test_an_unmatched_description_is_not_too_broad(self) -> None:
+        """Nothing matched and everything matched are different problems."""
+        matches, reason = match_description("Lithography toolmakers", INDIA)
+
+        assert matches == []
+        assert reason is None
+
+    def test_short_tokens_do_not_match_accidentally(self) -> None:
+        assert terms("EV and IT gas") == []
+
+    def test_industry_is_searched_as_well_as_name(self) -> None:
+        matches, _ = match_description("Information technology", INDIA)
+
+        assert [symbol for symbol, _ in matches] == ["INFY"]
+
+
+class TestResolvingATier:
+    def test_candidates_come_back_with_how_they_matched(self) -> None:
+        found, missing = resolve_tier(
+            "data_centre", 2, "Grid and power equipment",
+            ["Transformer manufacturers", "Power cable manufacturers"], INDIA,
+        )
+
+        assert missing is None
+        assert {c.symbol for c in found} == {"TARIL", "FINCABLES"}
+        assert all(c.exposure is Exposure.UNESTABLISHED for c in found)
+        assert all("nothing corroborates it" in c.exposure_basis for c in found)
+
+    def test_a_company_that_discussed_the_theme_is_graded_claimed(self) -> None:
+        """It said so itself. That is a stronger claim than an industry that looks right."""
+        reference = Reference(
+            symbol="TARIL", concept="data_centre", period="Jun 2026",
+            kind=SourceKind.COMMENTARY, source_ref="doc://taril",
+        )
+
+        found, _ = resolve_tier(
+            "data_centre", 1, "Data centre buildout", [], INDIA, references=[reference]
+        )
+
+        assert [c.symbol for c in found] == ["TARIL"]
+        assert found[0].exposure is Exposure.CLAIMED
+        assert "discussed the theme" in found[0].exposure_basis
+
+    def test_a_reference_outside_the_universe_is_not_a_candidate(self) -> None:
+        """The boundary. Research may be global; picks may not."""
+        reference = Reference(
+            symbol="NVDA", concept="data_centre", period="Jun 2026",
+            kind=SourceKind.COMMENTARY, source_ref="doc://nvda",
+        )
+
+        found, _ = resolve_tier(
+            "data_centre", 1, "Compute", [], INDIA, references=[reference]
+        )
+
+        assert found == []
+
+    def test_references_only_apply_to_the_theme_s_own_tier(self) -> None:
+        """A company talking about data centres is evidence about data centres, not cables."""
+        reference = Reference(
+            symbol="INFY", concept="data_centre", period="Jun 2026",
+            kind=SourceKind.COMMENTARY, source_ref="doc://infy",
+        )
+
+        found, _ = resolve_tier(
+            "data_centre", 3, "Raw materials", [], INDIA, references=[reference]
+        )
+
+        assert found == []
+
+    def test_a_claimed_grade_is_not_overwritten_by_an_industry_match(self) -> None:
+        reference = Reference(
+            symbol="TARIL", concept="data_centre", period="Jun 2026",
+            kind=SourceKind.COMMENTARY, source_ref="doc://taril",
+        )
+
+        found, _ = resolve_tier(
+            "data_centre", 1, "Buildout", ["Transformer manufacturers"], INDIA,
+            references=[reference],
+        )
+
+        assert next(c for c in found if c.symbol == "TARIL").exposure is Exposure.CLAIMED
+
+
+class TestTiersWithNoIndianExposure:
+    def test_a_tier_with_no_match_says_so(self) -> None:
+        found, missing = resolve_tier(
+            "data_centre", 1, "Semiconductor fabrication",
+            ["Advanced semiconductor foundries"], INDIA,
+        )
+
+        assert found == []
+        assert missing is not None
+        assert "no Indian listed company matched" in missing.reason
+
+    def test_foreign_names_explain_the_tier_without_being_offered(self) -> None:
+        """Knowing where the value goes is worth knowing, even when it cannot be bought here."""
+        _, missing = resolve_tier(
+            "data_centre", 1, "Semiconductor fabrication",
+            ["EUV lithography toolmakers"], INDIA,
+            notable_examples=[{"name": "ASML", "investable": False}],
+        )
+
+        assert "ASML" in missing.reason
+        assert "not listed in India" in missing.reason
+
+    def test_unresolved_descriptions_are_recorded(self) -> None:
+        _, missing = resolve_tier(
+            "data_centre", 1, "Fabrication", ["Advanced semiconductor foundries"], INDIA
+        )
+
+        assert "Advanced semiconductor foundries" in missing.unresolved_descriptions[0]
+
+    def test_a_too_broad_description_records_why(self) -> None:
+        _, missing = resolve_tier("t", 2, "Power", ["Power companies"], INDIA)
+
+        assert "too broad" in missing.unresolved_descriptions[0]
+
+    def test_no_substitute_is_ever_offered(self) -> None:
+        """A tenuous domestic smallcap in place of a foreign supplier is the failure to avoid."""
+        found, missing = resolve_tier(
+            "data_centre", 1, "Lithography", ["EUV lithography toolmakers"], INDIA
+        )
+
+        assert found == []
+        assert missing is not None
+
+
+class TestResolvingAChain:
+    def _tiers(self) -> list[dict]:
+        return [
+            {
+                "tier": 1,
+                "label": "Semiconductor fabrication",
+                "supplier_descriptions": ["Advanced semiconductor foundries"],
+                "notable_examples": [{"name": "TSMC", "investable": False}],
+            },
+            {
+                "tier": 2,
+                "label": "Grid and power equipment",
+                "supplier_descriptions": ["Transformer manufacturers"],
+            },
+        ]
+
+    def test_a_chain_yields_candidates_and_gaps_together(self) -> None:
+        candidates, unresolved = resolve_chain("data_centre", self._tiers(), INDIA)
+
+        assert [c.symbol for c in candidates] == ["TARIL"]
+        assert [u.tier for u in unresolved] == [1]
+
+    def test_a_rejected_link_contributes_nothing(self) -> None:
+        tiers = self._tiers()
+        tiers[1]["rejected"] = True
+
+        candidates, _ = resolve_chain("data_centre", tiers, INDIA)
+
+        assert candidates == []
+
+    def test_a_rejected_link_is_not_reported_as_a_gap_either(self) -> None:
+        """Rejected means "I have judged this", not "this failed to resolve"."""
+        tiers = self._tiers()
+        tiers[0]["rejected"] = True
+
+        _, unresolved = resolve_chain("data_centre", tiers, INDIA)
+
+        assert unresolved == []
+
+
+class TestOnlyIndianNamesAreEverOffered:
+    def test_every_candidate_is_in_the_universe(self) -> None:
+        references = [
+            Reference("NVDA", "data_centre", "Jun 2026", SourceKind.COMMENTARY, "d"),
+            Reference("TARIL", "data_centre", "Jun 2026", SourceKind.COMMENTARY, "d"),
+        ]
+
+        candidates, _ = resolve_chain(
+            "data_centre",
+            [{"tier": 1, "label": "x", "supplier_descriptions": []}],
+            INDIA,
+            references=references,
+        )
+
+        listed = {i.symbol for i in INDIA.instruments}
+        assert all(c.symbol in listed for c in candidates)
+
+    def test_notable_examples_never_become_candidates(self) -> None:
+        candidates, _ = resolve_chain(
+            "data_centre",
+            [
+                {
+                    "tier": 1,
+                    "label": "Compute",
+                    "supplier_descriptions": ["GPU designers"],
+                    "notable_examples": [{"name": "NVIDIA", "investable": False}],
+                }
+            ],
+            INDIA,
+        )
+
+        assert all("NVIDIA" not in c.symbol for c in candidates)
+        assert candidates == []

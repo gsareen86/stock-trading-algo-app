@@ -113,26 +113,52 @@ or a conviction, and MUST NOT reorder any ranking.
 - WHEN they are ordered
 - THEN the ordering rule is unchanged by the labels
 
-### Requirement: Chain tiers resolve only to Indian listed companies
-Every candidate a chain produces MUST be an instrument in the platform's universe, and a tier
-with no listed Indian expression MUST say so.
+### Requirement: Evidence and chains may be worldwide
+The system MUST allow a theme to be evidenced by, and its chain to describe, activity outside
+India, and MUST NOT require a reference or a tier to be domestic in order to be recorded.
 
-#### Scenario: A tier without listed exposure says so
+#### Scenario: A theme evidenced from abroad still surfaces
+- GIVEN references describing demand originating outside India
+- WHEN themes are assembled
+- THEN the theme surfaces on the same breadth and persistence rules
+
+#### Scenario: A tier describing foreign activity is still recorded
+- GIVEN a chain tier whose suppliers are predominantly foreign
+- WHEN the chain is read
+- THEN the tier is present with its reasoning rather than omitted
+
+### Requirement: Only candidates are constrained to Indian listings
+Every candidate the system offers MUST be an instrument in the platform's own universe, and a
+tier with no such instrument MUST say so rather than offer a substitute.
+
+#### Scenario: A tier without Indian exposure says so
 - GIVEN a tier whose suppliers are not listed in India
 - WHEN it is read
 - THEN it is reported as having no Indian listed exposure
 - AND no unrelated instrument is offered in its place
 
-#### Scenario: A foreign company may explain a tier but is never a candidate
+#### Scenario: Foreign suppliers explain a tier and are marked as not investable
+- GIVEN a tier served by companies listed outside India
+- WHEN it is read
+- THEN those companies may be named as explanation
+- AND each is marked as not offered as a candidate
+
+#### Scenario: A foreign company is never a candidate
 - GIVEN a tier whose reasoning names a foreign company
 - WHEN candidates are collected
 - THEN that company is absent from them
 
-#### Scenario: An unresolvable supplier is dropped rather than guessed
+#### Scenario: An unresolvable supplier is recorded rather than guessed
 - GIVEN a supplier description matching no instrument in the universe
 - WHEN the tier is resolved
 - THEN no candidate is produced for it
 - AND the unresolved description is recorded
+
+#### Scenario: Every candidate carries how it was matched
+- GIVEN a resolved candidate
+- WHEN it is read
+- THEN the basis on which it matched is present and distinguishes a company that discussed the
+  theme from one matched only by its industry
 
 ### Requirement: Exposure to a theme is graded, never asserted
 Each candidate MUST carry how well its exposure to the theme is established, distinguishing

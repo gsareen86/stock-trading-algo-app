@@ -2,8 +2,9 @@
 
 ## Intent
 
-Surface what is changing in the Indian market before it is a headline, and name every listed
-company that stands to be paid by it — including the ones three steps down the chain.
+Surface what is changing — wherever it is changing — before it is a headline, and name every
+**Indian-listed** company positioned to be paid by it, including the ones three steps down the
+chain.
 
 ## Why
 
@@ -27,9 +28,18 @@ Two separate problems fall out, and conflating them is why this is hard:
 | **Detection** | What is emerging? | Telling a real theme from a loud month |
 | **Propagation** | Who benefits, at what tier? | The part that was actually missed |
 
-**India only.** Every theme, every chain and every candidate is resolved against NSE-listed
-companies. A theme with no credible Indian listed expression must say so rather than reach for
-a tenuous smallcap.
+**Research is global; the picks are Indian.** The boundary sits at *resolution*, not at
+detection, and putting it anywhere earlier would defeat the change. The operator's own theme
+originated in American hyperscaler capex — an India-only detector would very likely never have
+surfaced it, and the point of the engine is to see it. So evidence, chains and explanations may
+be worldwide, and **only candidates are constrained**: every name the platform offers is an
+NSE-listed instrument in its own universe.
+
+A tier served entirely by companies listed elsewhere is a real and useful answer — it says
+where the value in that link is going, and that it cannot be bought here. Naming those foreign
+suppliers as *explanation* is better than silence, because a chain with a hole in it reads as a
+chain that was not understood. What must never happen is a foreign company appearing as
+something to buy, or a tenuous domestic smallcap offered as a substitute for one.
 
 ## In scope
 
@@ -87,8 +97,8 @@ the strategies still decide.
   and answers a propagation question that currently cannot be asked. It does not forecast.
 - **Any theme-derived score, rank or stance.** A theme is a lens, not a verdict. Ranking
   candidates by theme strength would be a cross-strategy score wearing a new hat.
-- **Non-Indian listings.** The chain may name a foreign company as an *explanation* of a tier;
-  it is never a candidate.
+- **Non-Indian candidates.** A foreign company may be named to explain a tier and may never be
+  offered as a pick. Nothing here suggests buying anything listed outside India.
 - **Trading a theme.** No sizing, no basket, no allocation. `Ledger.fill()` remains the one
   execution boundary.
 - **Sentiment scoring.** The same rule `news_research` and `commentary` already follow.
