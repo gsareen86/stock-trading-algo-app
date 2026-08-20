@@ -310,30 +310,96 @@ def make_insights_node(feed, ledger, book, limits):
 
     async def insights(state: CycleState) -> dict[str, Any]:
         from app.insights import rules
+        from app.insights.kinds import Kind
 
         verdicts = state.get("narrated") or state.get("verdicts") or []
         positions = ledger.positions(book, open_only=False)
         bought_by = rules.strategies_by_ticker(ledger.trades(book))
         decisions = state.get("risk") or []
+        research = state.get("research") or {}
+        regime = state.get("regime")
 
         blocked_by_count = sum(1 for d in decisions if d.get("gate") == "position_count")
 
         candidates = [
             *rules.thesis_broken(positions, list(verdicts), bought_by),
             *rules.concentration(positions, limits.max_position_pct),
-            *rules.position_research(positions, state.get("research") or {}),
+            *rules.position_research(positions, research),
             *rules.opportunities(decisions),
             *rules.book_full(positions, limits.max_positions, blocked_by_count),
-            *rules.regime_change(
-                state["regime"].as_dict() if state.get("regime") else None, None
-            ),
+            *rules.regime_change(regime.as_dict() if regime else None, None),
         ]
 
-        report = feed.record(candidates)
+        # What this cycle is entitled to withdraw. Each entry says "I looked at these subjects
+        # and these are all the ones that still qualify" — so a rule that did not run, or ran
+        # over a subset, cannot retire an observation nobody re-checked. Getting this wrong
+        # deletes valid alerts, which is why it is spelled out rather than inferred.
+        held = {p.ticker for p in positions if p.is_open}
+        assessed = [
+            # Book-wide: reads every position regardless of which symbols were evaluated.
+            rules.Assessed(
+                kind=Kind.CONCENTRATION,
+                tickers=None,
+                reason=lambda ticker: (
+                    "position is closed"
+                    if ticker not in held
+                    else "no longer above the concentration cap"
+                ),
+            ),
+            rules.Assessed(
+                kind=Kind.BOOK_FULL,
+                tickers=None,
+                reason="the book is no longer at its position limit",
+            ),
+            # Verdict-scoped: only names this cycle actually formed a verdict on.
+            rules.Assessed(
+                kind=Kind.THESIS_BROKEN,
+                tickers=frozenset(v.ticker for v in verdicts),
+                reason="the strategy that bought it no longer says AVOID",
+            ),
+            rules.Assessed(
+                kind=Kind.OPPORTUNITY,
+                tickers=frozenset(d.get("ticker", "") for d in decisions),
+                reason="risk no longer assesses this as actionable",
+            ),
+        ]
+        # Research-scoped, and absent entirely when research did not run — a cycle with
+        # research off must not retire the news and events research raised.
+        if research:
+            researched = frozenset(research)
+            assessed.extend(
+                [
+                    rules.Assessed(
+                        kind=Kind.POSITION_NEWS,
+                        tickers=researched,
+                        reason="no longer reported by the tool that raised it",
+                    ),
+                    rules.Assessed(
+                        kind=Kind.EVENT_DUE,
+                        tickers=researched,
+                        reason="the event is no longer upcoming",
+                    ),
+                ]
+            )
+        # A regime that could not be read is not a regime that changed.
+        if regime is not None and regime.label != "unknown":
+            assessed.append(
+                rules.Assessed(
+                    kind=Kind.REGIME_CHANGE,
+                    tickers=None,
+                    reason="the market regime has moved off this reading",
+                )
+            )
+
+        # Reconcile first: a standing observation is refreshed or retired before anything new
+        # is written, so suppression compares against a feed that is already current.
+        report = feed.reconcile(candidates, assessed).merged_with(feed.record(candidates))
         return {
             "insights": report.as_dict(),
             "notes": [
                 f"insights: {report.written} written, {report.suppressed} suppressed"
+                + (f", {report.refreshed} refreshed" if report.refreshed else "")
+                + (f", {report.withdrawn} withdrawn" if report.withdrawn else "")
                 + (f", {report.truncated} truncated" if report.truncated else "")
             ],
         }

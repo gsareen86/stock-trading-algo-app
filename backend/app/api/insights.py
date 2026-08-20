@@ -32,9 +32,24 @@ async def list_insights(
     kind: Kind | None = None,
     ticker: str | None = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 50,
+    include_withdrawn: Annotated[
+        bool,
+        Query(
+            description=(
+                "Include observations that have since stopped being true. Off by default: "
+                "they are history, not attention."
+            )
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     feed = InsightFeed(session_factory)
-    items = feed.recent(limit=limit, unread_only=unread_only, kind=kind, ticker=ticker)
+    items = feed.recent(
+        limit=limit,
+        unread_only=unread_only,
+        kind=kind,
+        ticker=ticker,
+        include_withdrawn=include_withdrawn,
+    )
     for item in items:
         # Declared by kind, so the reader never has to work out what an insight allows.
         item["actions"] = list(actions_for(item["kind"]))
@@ -103,9 +118,20 @@ async def act(
 ) -> dict[str, Any]:
     """Act on an insight, through the same `Ledger.fill()` every other fill uses."""
     feed = InsightFeed(session_factory)
-    insight = next((i for i in feed.recent(limit=MAX_PAGE) if i["id"] == insight_id), None)
+    # Withdrawn insights are searched too, so acting on one is refused as stale rather than
+    # reported as "no such insight" — the difference matters to someone holding a stale tab.
+    insight = next(
+        (i for i in feed.recent(limit=MAX_PAGE, include_withdrawn=True) if i["id"] == insight_id),
+        None,
+    )
     if insight is None:
         raise HTTPException(status_code=404, detail=f"no insight with id {insight_id}")
+
+    if insight.get("withdrawn_at"):
+        # 409, the same status a stale insight already answers with. The observation this
+        # would have acted on has ended; acting on it would fill against a fact that expired.
+        why = insight.get("withdrawal_reason") or "it is no longer true"
+        raise HTTPException(status_code=409, detail=f"this insight was withdrawn: {why}")
 
     if payload.action.value not in actions_for(insight["kind"]):
         raise HTTPException(

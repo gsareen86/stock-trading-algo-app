@@ -223,6 +223,12 @@ export type Insight = {
   payload: Record<string, unknown>;
   read: boolean;
   created_at: string | null;
+  /** When the figures above were last established — distinct from when this was first
+   *  raised. A number in the feed means nothing without knowing when it was checked. */
+  measured_at: string | null;
+  /** Set once the observation stopped being true. Absent from the default feed. */
+  withdrawn_at: string | null;
+  withdrawal_reason: string | null;
   actions: string[];
 };
 

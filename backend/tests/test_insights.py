@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.core.clock import now_utc
 from app.domain.position import Book, Position, Side, Trade
 from app.domain.verdict import Evidence, GateResult, Stance, Verdict
 from app.insights import rules
@@ -360,31 +361,170 @@ class TestSuppressionWindows:
         # Not worth restating until the regime changes back, which changes the key.
         assert spec(Kind.REGIME_CHANGE).suppress_days == 30
 
-    def test_an_old_insight_outside_the_window_is_not_suppressed(
-        self, session_factory
-    ) -> None:
+    def _stored(self, session_factory, **overrides) -> None:
         from app.persistence.models import Insight as InsightRow
 
+        fields = {
+            "kind": Kind.POSITION_NEWS.value,
+            "ticker": "RELIANCE",
+            "title": "old",
+            "body": "b",
+            "payload": {},
+            "dedupe_key": "position_news:RELIANCE:news_research",
+            "severity": "medium",
+            "created_at": T0 - timedelta(days=365),
+        }
+        fields.update(overrides)
         with session_factory() as session:
-            session.add(
-                InsightRow(
-                    kind=Kind.POSITION_NEWS.value,
-                    ticker="RELIANCE",
-                    title="old",
-                    body="b",
-                    payload={},
-                    dedupe_key="position_news:RELIANCE:news_research",
-                    severity="medium",
-                    created_at=T0 - timedelta(days=365),
-                )
-            )
+            session.add(InsightRow(**fields))
             session.commit()
 
-        report = InsightFeed(session_factory).record(
+    def _recurrence(self) -> Candidate:
+        return Candidate(
+            Kind.POSITION_NEWS,
+            "new",
+            "b",
+            "position_news:RELIANCE:news_research",
+            ticker="RELIANCE",
+        )
+
+    def test_a_standing_insight_is_never_duplicated_by_age(self, session_factory) -> None:
+        """Age stopped being a reason to restate once a standing row could be refreshed.
+
+        Before `feed-freshness-and-run-control` an insight older than its window was written
+        again, leaving two live rows saying the same thing. Refreshing keeps the one that is
+        already there current, so a second is only ever noise.
+        """
+        self._stored(session_factory)
+
+        report = InsightFeed(session_factory).record([self._recurrence()])
+
+        assert report.written == 0
+        assert report.suppressed == 1
+
+    def test_a_recurrence_after_withdrawal_outside_the_window_is_raised(
+        self, session_factory
+    ) -> None:
+        """A withdrawn observation ended. Coming back is a new thing that happened."""
+        self._stored(session_factory, withdrawn_at=T0 - timedelta(days=300))
+
+        report = InsightFeed(session_factory).record([self._recurrence()])
+
+        assert report.written == 1
+
+    def test_a_recurrence_inside_the_window_is_suppressed(self, session_factory) -> None:
+        self._stored(
+            session_factory,
+            created_at=T0 - timedelta(days=5),
+            withdrawn_at=now_utc() - timedelta(hours=6),
+        )
+
+        report = InsightFeed(session_factory).record([self._recurrence()])
+
+        assert report.written == 0
+        assert report.suppressed == 1
+
+
+class TestReconciliation:
+    """Withdrawal, refresh, and the scoping that keeps them from deleting live alerts.
+
+    Carries `feed-freshness-and-run-control`. The bug it fixes was visible in the running app:
+    a concentration insight reported RELIANCE at 35.1% of the book for two days after the
+    position had been closed to zero, because the dedupe key that stopped it repeating also
+    stopped it ever being revisited.
+    """
+
+    @pytest.fixture
+    def feed(self, session_factory) -> InsightFeed:
+        return InsightFeed(session_factory)
+
+    def _conc(self, ticker: str = "RELIANCE", pct: float = 35.1) -> Candidate:
+        return Candidate(
+            kind=Kind.CONCENTRATION,
+            title=f"{ticker} is {pct}% of the book",
+            body=f"{pct}% of committed capital sits in {ticker}.",
+            dedupe_key=f"concentration:{ticker}",
+            ticker=ticker,
+            payload={"weight_pct": pct},
+        )
+
+    def _book_wide(
+        self, kind: Kind = Kind.CONCENTRATION, reason: str = "gone"
+    ) -> rules.Assessed:
+        return rules.Assessed(kind=kind, tickers=None, reason=reason)
+
+    # -- withdrawal ------------------------------------------------------------
+    def test_an_observation_that_ended_is_withdrawn(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+
+        report = feed.reconcile([], [self._book_wide(reason="position is closed")])
+
+        assert report.withdrawn == 1
+        assert feed.recent() == []
+
+    def test_withdrawal_records_its_reason_and_keeps_the_row(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+        feed.reconcile([], [self._book_wide(reason="position is closed")])
+
+        [row] = feed.recent(include_withdrawn=True)
+        assert row["withdrawal_reason"] == "position is closed"
+        assert row["withdrawn_at"] is not None
+        assert row["created_at"] is not None
+
+    def test_a_still_true_observation_is_not_withdrawn(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+
+        report = feed.reconcile([self._conc()], [self._book_wide()])
+
+        assert report.withdrawn == 0
+        assert len(feed.recent()) == 1
+
+    def test_age_alone_never_withdraws(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+
+        for _ in range(5):
+            feed.reconcile([self._conc()], [self._book_wide()])
+
+        assert len(feed.recent()) == 1
+
+    # -- scoping: the dangerous case -------------------------------------------
+    def test_a_cycle_withdraws_only_what_it_re_evaluated(self, feed: InsightFeed) -> None:
+        """A five-symbol cycle must not retire an alert about the twentieth holding."""
+        feed.record(
+            [
+                Candidate(
+                    Kind.THESIS_BROKEN,
+                    "RELIANCE broken",
+                    "b",
+                    "thesis_broken:RELIANCE:minervini",
+                    ticker="RELIANCE",
+                ),
+                Candidate(
+                    Kind.THESIS_BROKEN,
+                    "TCS broken",
+                    "b",
+                    "thesis_broken:TCS:minervini",
+                    ticker="TCS",
+                ),
+            ]
+        )
+
+        # This cycle only formed a verdict on RELIANCE, and that thesis recovered.
+        report = feed.reconcile(
+            [],
+            [rules.Assessed(Kind.THESIS_BROKEN, frozenset({"RELIANCE"}), "recovered")],
+        )
+
+        assert report.withdrawn == 1
+        assert [i["ticker"] for i in feed.recent()] == ["TCS"]
+
+    def test_a_rule_that_did_not_run_withdraws_nothing(self, feed: InsightFeed) -> None:
+        """Research off must not retire the news that research raised."""
+        feed.record(
             [
                 Candidate(
                     Kind.POSITION_NEWS,
-                    "new",
+                    "news",
                     "b",
                     "position_news:RELIANCE:news_research",
                     ticker="RELIANCE",
@@ -392,4 +532,120 @@ class TestSuppressionWindows:
             ]
         )
 
+        # Concentration ran; research did not, so no POSITION_NEWS coverage is offered.
+        report = feed.reconcile([], [self._book_wide()])
+
+        assert report.withdrawn == 0
+        assert len(feed.recent()) == 1
+
+    def test_an_empty_assessment_withdraws_nothing(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+
+        report = feed.reconcile([], [])
+
+        assert report.withdrawn == 0
+        assert len(feed.recent()) == 1
+
+    # -- refresh ---------------------------------------------------------------
+    def test_a_moved_figure_is_refreshed_in_place(self, feed: InsightFeed) -> None:
+        feed.record([self._conc(pct=35.1)])
+        original_id = feed.recent()[0]["id"]
+
+        report = feed.reconcile([self._conc(pct=29.4)], [self._book_wide()])
+
+        [row] = feed.recent()
+        assert report.refreshed == 1
+        assert row["id"] == original_id
+        assert row["payload"]["weight_pct"] == 29.4
+        assert "29.4" in row["body"]
+
+    def test_refresh_keeps_the_original_age(self, feed: InsightFeed) -> None:
+        """Concentrated-since-the-17th is the fact; the percentage is today's reading."""
+        feed.record([self._conc(pct=35.1)])
+        created = feed.recent()[0]["created_at"]
+
+        feed.reconcile([self._conc(pct=29.4)], [self._book_wide()])
+
+        assert feed.recent()[0]["created_at"] == created
+
+    def test_refresh_does_not_make_a_read_insight_unread(self, feed: InsightFeed) -> None:
+        feed.record([self._conc(pct=35.1)])
+        feed.mark_read(feed.recent()[0]["id"])
+
+        feed.reconcile([self._conc(pct=29.4)], [self._book_wide()])
+
+        assert feed.recent()[0]["read"] is True
+        assert feed.unread_count() == 0
+
+    def test_an_unchanged_figure_still_advances_measured_at(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+        first = feed.recent()[0]["measured_at"]
+
+        report = feed.reconcile([self._conc()], [self._book_wide()])
+
+        assert report.refreshed == 0
+        assert feed.recent()[0]["measured_at"] >= first
+
+    def test_a_new_insight_is_measured_when_raised(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+
+        assert feed.recent()[0]["measured_at"] is not None
+
+    # -- regime: the label is identity, the level is a measurement --------------
+    def test_a_regime_still_constructive_reports_the_newer_level(
+        self, feed: InsightFeed
+    ) -> None:
+        def regime(level: float) -> Candidate:
+            return Candidate(
+                Kind.REGIME_CHANGE,
+                "Market regime is constructive",
+                f"benchmark weekly close {level:.2f} above its 30-week average",
+                "regime_change:constructive",
+                payload={"label": "constructive"},
+            )
+
+        feed.record([regime(24366.00)])
+        feed.reconcile([regime(24078.30)], [self._book_wide(Kind.REGIME_CHANGE)])
+
+        [row] = feed.recent()
+        assert "24078.30" in row["body"]
+        assert "24366.00" not in row["body"]
+
+    def test_a_regime_that_flips_mints_a_new_insight(self, feed: InsightFeed) -> None:
+        constructive = Candidate(
+            Kind.REGIME_CHANGE, "constructive", "b", "regime_change:constructive"
+        )
+        hostile = Candidate(Kind.REGIME_CHANGE, "hostile", "b", "regime_change:hostile")
+        feed.record([constructive])
+
+        feed.reconcile([hostile], [self._book_wide(Kind.REGIME_CHANGE)])
+        report = feed.record([hostile])
+
         assert report.written == 1
+        assert {i["title"] for i in feed.recent()} == {"hostile"}
+
+    # -- withdrawal is not a fill ----------------------------------------------
+    def test_withdrawal_records_no_trade(self, feed: InsightFeed, session_factory) -> None:
+        from app.persistence.models import Trade as TradeRow
+
+        feed.record([self._conc()])
+        feed.reconcile([], [self._book_wide()])
+
+        with session_factory() as session:
+            assert session.query(TradeRow).count() == 0
+
+    # -- reading ---------------------------------------------------------------
+    def test_withdrawn_insights_are_absent_by_default(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+        feed.reconcile([], [self._book_wide()])
+
+        assert feed.recent() == []
+        assert len(feed.recent(include_withdrawn=True)) == 1
+
+    def test_unread_count_ignores_withdrawn(self, feed: InsightFeed) -> None:
+        feed.record([self._conc()])
+        assert feed.unread_count() == 1
+
+        feed.reconcile([], [self._book_wide()])
+
+        assert feed.unread_count() == 0

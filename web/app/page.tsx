@@ -1,6 +1,13 @@
 import { InsightActions } from "@/components/insight-actions";
+import { RunCycle } from "@/components/run-cycle";
 import { Empty, Unavailable } from "@/components/states";
-import { type Health, type Insight, fetchHealth, fetchInsights } from "@/lib/api";
+import {
+  type Fetched,
+  type Health,
+  type Insight,
+  fetchHealth,
+  fetchInsights,
+} from "@/lib/api";
 
 /**
  * Today — what needs attention right now.
@@ -18,13 +25,22 @@ import { type Health, type Insight, fetchHealth, fetchInsights } from "@/lib/api
 // backend is not running, and the build would bake in a connection failure.
 export const dynamic = "force-dynamic";
 
-function StatusDot({ state }: { state: "ok" | "degraded" | "down" }) {
+type SeamState = "ok" | "degraded" | "down" | "off";
+
+/**
+ * Four states, not three. "Off" is a seam nobody switched on — it is neither working nor
+ * broken, and rendering it amber next to a genuinely failing one is how a reader learns to
+ * stop reading the colours.
+ */
+function StatusDot({ state }: { state: SeamState }) {
   const color =
     state === "ok"
       ? "bg-status-ok"
       : state === "degraded"
         ? "bg-status-degraded"
-        : "bg-status-down";
+        : state === "off"
+          ? "bg-border-strong"
+          : "bg-status-down";
   return <span className={`inline-block h-2 w-2 rounded-full ${color}`} aria-hidden />;
 }
 
@@ -36,7 +52,7 @@ function Row({
 }: {
   label: string;
   value: string;
-  state: "ok" | "degraded" | "down";
+  state: SeamState;
   detail?: string | null;
 }) {
   return (
@@ -69,7 +85,9 @@ function defaultProvider(health: Health): string {
   return health.llm.default_model.split("/")[0];
 }
 
-function SeamReport({ health }: { health: Health }) {
+type FeedResult = Fetched<{ insights: Insight[]; unread: number }>;
+
+function SeamReport({ health, feed }: { health: Health; feed: FeedResult }) {
   const db = health.database;
   const dbState = !db.connected ? "down" : db.migrations_current ? "ok" : "degraded";
   const dbValue = !db.connected
@@ -100,14 +118,18 @@ function SeamReport({ health }: { health: Health }) {
       </Card>
 
       <Card title="Observability">
+        {/* A credential nobody supplied for a service nobody chose to use is not a fault.
+            Rendering it amber beside a genuinely failing seam teaches the reader to ignore
+            the colour, which costs more than the missing traces do. Cost and failures are
+            visible on Engine either way, from the platform's own call ledger. */}
         <Row
           label={health.observability.provider}
-          value={health.observability.configured ? "tracing" : "not configured"}
-          state={health.observability.configured ? "ok" : "degraded"}
+          value={health.observability.configured ? "tracing" : "off"}
+          state={health.observability.configured ? "ok" : "off"}
           detail={
             health.observability.configured
               ? null
-              : "Traces, token counts and cost are not being recorded"
+              : "Off by configuration — set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY to record traces"
           }
         />
         {/* The default model's own provider decides this light — not whether *some*
@@ -149,19 +171,36 @@ function SeamReport({ health }: { health: Health }) {
         ))}
       </Card>
 
+      {/* A seam, not a summary: this reports whether the feed above could be read at all,
+          and how much of it is unread. It said "No insights yet — arrives with insights-feed"
+          long after that change shipped, which made a working feed look unbuilt. */}
       <Card title="Feed">
-        <p className="text-sm text-text-secondary">
-          No insights yet. The agent cycle that produces them arrives with{" "}
-          <code className="rounded-token bg-surface-sunken px-1.5 py-0.5 font-mono text-xs text-accent">
-            insights-feed
-          </code>
-          .
-        </p>
+        <Row
+          label="Insights"
+          value={feed.ok ? `${feed.data.insights.length} shown` : "unreadable"}
+          state={feed.ok ? "ok" : "down"}
+          detail={
+            feed.ok
+              ? `${feed.data.unread} unread`
+              : `${feed.error} — tried ${feed.attemptedUrl}`
+          }
+        />
       </Card>
     </div>
   );
 }
 
+
+/** How long ago a measurement was taken, in the coarsest unit that is still honest. */
+function measuredAgo(iso: string): string {
+  const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 2) return "just now";
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
 
 const SEVERITY_TONE: Record<string, string> = {
   high: "border-stance-avoid text-stance-avoid",
@@ -193,6 +232,12 @@ function InsightCard({ insight }: { insight: Insight }) {
 
       <p className="mt-2 text-[11px] text-text-muted">
         {insight.kind}
+        {/* The figures above are only as good as when they were last checked, and this feed
+            spent two days asserting a percentage of a position that had been closed. Saying
+            when is cheaper than any amount of explaining why not. */}
+        {insight.measured_at ? (
+          <span className="ml-2">measured {measuredAgo(insight.measured_at)}</span>
+        ) : null}
         {insight.payload?.measured_by_platform === false ? (
           // A headline a model found is a different thing from a measurement this platform
           // made, and a reader deciding whether to sell needs to know which they are reading.
@@ -205,9 +250,7 @@ function InsightCard({ insight }: { insight: Insight }) {
   );
 }
 
-async function Feed() {
-  const result = await fetchInsights();
-
+function Feed({ result }: { result: FeedResult }) {
   if (!result.ok) return <Unavailable result={result} />;
   if (result.data.insights.length === 0) {
     return <Empty>Nothing needs attention. Run a cycle to look for something.</Empty>;
@@ -225,7 +268,9 @@ async function Feed() {
 }
 
 export default async function TodayPage() {
-  const result = await fetchHealth();
+  // Both in one round of requests: the seam report needs the feed's state as much as the
+  // feed itself does, and fetching it twice would let the two disagree.
+  const [result, feed] = await Promise.all([fetchHealth(), fetchInsights()]);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -246,11 +291,14 @@ export default async function TodayPage() {
       </div>
 
       <section className="mt-8">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-          Insights
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+            Insights
+          </h2>
+          <RunCycle />
+        </div>
         <div className="mt-3">
-          <Feed />
+          <Feed result={feed} />
         </div>
       </section>
 
@@ -260,7 +308,7 @@ export default async function TodayPage() {
         </summary>
         <div className="mt-3">
         {result.ok ? (
-          <SeamReport health={result.health} />
+          <SeamReport health={result.health} feed={feed} />
         ) : (
           <div className="rounded-token-lg border border-status-down bg-surface-raised p-5">
             <div className="flex items-center gap-2">

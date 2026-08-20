@@ -201,3 +201,142 @@ class TestDialectPortability:
 
         assert Verdict.__table__.schema == SCHEMA
         assert Insight.__table__.schema == SCHEMA
+
+
+class TestInsightLifecycleMigration:
+    """`0006` changes a key *format*, so it has to change the keys.
+
+    Found on real data rather than in a unit test: with the banded rows left alone, a live TCS
+    concentration insight was withdrawn with the reason "no longer above the cap" while it was
+    still 100% of the book, and immediately re-raised as a new row that had lost its age and
+    its read state. A format change without a data migration is a silent one-time corruption.
+    """
+
+    def _seed_at_0005(self, url: str, rows: list[dict]) -> None:
+        with _database_url(url):
+            command.upgrade(alembic_config(url), "0005_auth")
+        engine = create_engine(url)
+        with engine.begin() as conn:
+            for row in rows:
+                conn.execute(
+                    text(
+                        "INSERT INTO insights "
+                        "(kind, ticker, title, body, payload, dedupe_key, severity, created_at) "
+                        "VALUES (:kind, :ticker, :title, '', '{}', :dedupe_key, 'high', "
+                        "'2026-08-17 16:35:07')"
+                    ),
+                    row,
+                )
+
+    def _keys(self, url: str) -> set[str]:
+        with create_engine(url).begin() as conn:
+            return {r[0] for r in conn.execute(text("SELECT dedupe_key FROM insights"))}
+
+    def test_banded_concentration_keys_are_rewritten(self, sqlite_url: str) -> None:
+        self._seed_at_0005(
+            sqlite_url,
+            [
+                {
+                    "kind": "concentration",
+                    "ticker": "TCS",
+                    "title": "TCS is 64.9% of the book",
+                    "dedupe_key": "concentration:TCS:60",
+                },
+                {
+                    "kind": "concentration",
+                    "ticker": "RELIANCE",
+                    "title": "RELIANCE is 35.1% of the book",
+                    "dedupe_key": "concentration:RELIANCE:35",
+                },
+            ],
+        )
+
+        _upgrade(sqlite_url)
+
+        assert self._keys(sqlite_url) == {"concentration:TCS", "concentration:RELIANCE"}
+
+    def test_banded_book_full_keys_are_rewritten(self, sqlite_url: str) -> None:
+        self._seed_at_0005(
+            sqlite_url,
+            [
+                {
+                    "kind": "book_full",
+                    "ticker": None,
+                    "title": "Book is full at 8 positions",
+                    "dedupe_key": "book_full:8",
+                }
+            ],
+        )
+
+        _upgrade(sqlite_url)
+
+        assert self._keys(sqlite_url) == {"book_full"}
+
+    def test_keys_that_were_never_banded_are_left_alone(self, sqlite_url: str) -> None:
+        """`thesis_broken:TICKER:strategy` has a third segment that is not a measurement."""
+        self._seed_at_0005(
+            sqlite_url,
+            [
+                {
+                    "kind": "thesis_broken",
+                    "ticker": "RELIANCE",
+                    "title": "RELIANCE: minervini now says AVOID",
+                    "dedupe_key": "thesis_broken:RELIANCE:minervini",
+                },
+                {
+                    "kind": "regime_change",
+                    "ticker": None,
+                    "title": "Market regime is constructive",
+                    "dedupe_key": "regime_change:constructive",
+                },
+            ],
+        )
+
+        _upgrade(sqlite_url)
+
+        assert self._keys(sqlite_url) == {
+            "thesis_broken:RELIANCE:minervini",
+            "regime_change:constructive",
+        }
+
+    def test_measured_at_is_backfilled_from_creation(self, sqlite_url: str) -> None:
+        """A pre-existing figure is old, not unverifiable — null would say the wrong thing."""
+        self._seed_at_0005(
+            sqlite_url,
+            [
+                {
+                    "kind": "concentration",
+                    "ticker": "TCS",
+                    "title": "TCS is 64.9% of the book",
+                    "dedupe_key": "concentration:TCS:60",
+                }
+            ],
+        )
+
+        _upgrade(sqlite_url)
+
+        with create_engine(sqlite_url).begin() as conn:
+            created, measured = conn.execute(
+                text("SELECT created_at, measured_at FROM insights")
+            ).one()
+        assert measured is not None
+        assert str(measured) == str(created)
+
+    def test_existing_rows_start_standing(self, sqlite_url: str) -> None:
+        self._seed_at_0005(
+            sqlite_url,
+            [
+                {
+                    "kind": "concentration",
+                    "ticker": "TCS",
+                    "title": "TCS is 64.9% of the book",
+                    "dedupe_key": "concentration:TCS:60",
+                }
+            ],
+        )
+
+        _upgrade(sqlite_url)
+
+        with create_engine(sqlite_url).begin() as conn:
+            [(withdrawn,)] = conn.execute(text("SELECT withdrawn_at FROM insights")).all()
+        assert withdrawn is None

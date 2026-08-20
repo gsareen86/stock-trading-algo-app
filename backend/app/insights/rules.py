@@ -15,6 +15,7 @@ and leaves the acting to `Ledger.fill()`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +38,38 @@ class Candidate:
     @property
     def severity(self) -> Severity:
         return spec(self.kind).severity
+
+
+@dataclass(frozen=True, slots=True)
+class Assessed:
+    """What this cycle actually re-checked — the licence to withdraw.
+
+    Absence of a candidate has three possible meanings: the observation ended, the rule never
+    ran, or the rule ran and its source was unavailable. Only the first is a withdrawal, and
+    a feed that confuses them silently deletes valid alerts — worse than the staleness this
+    exists to fix, because a stale insight is visibly stale and a withdrawn one is gone.
+
+    So withdrawal is driven by what was *positively assessed*, never by what is missing. A
+    cycle evaluating five symbols may not withdraw an insight about the twentieth holding, and
+    a cycle run with research off may not withdraw the insights research raised.
+    """
+
+    kind: Kind
+    #: Subjects re-checked. ``None`` means the rule is book-wide — it read the whole book and
+    #: every subject of this kind was therefore assessed.
+    tickers: frozenset[str] | None
+    #: Why a subject of this kind stopped qualifying. A callable when the answer depends on
+    #: the subject — the caller holds the book, and the feed must not learn about positions
+    #: to phrase a sentence.
+    reason: str | Callable[[str | None], str]
+
+    def reason_for(self, ticker: str | None) -> str:
+        return self.reason(ticker) if callable(self.reason) else self.reason
+
+    def covers(self, ticker: str | None) -> bool:
+        if self.tickers is None:
+            return True
+        return (ticker or "") in self.tickers
 
 
 def _pct(value: float) -> str:
@@ -130,8 +163,13 @@ def concentration(positions: list[Position], cap_pct: float) -> list[Candidate]:
                     f"₹{position.cost_basis:,.0f} of ₹{total:,.0f} committed sits in "
                     f"{position.ticker}, above the {_pct(cap_pct)} cap."
                 ),
-                # Banded so a position drifting from 31% to 32% does not re-raise daily.
-                dedupe_key=f"{Kind.CONCENTRATION}:{position.ticker}:{int(weight // 5) * 5}",
+                # Unbanded, deliberately. The band existed so a position drifting from 31%
+                # to 32% did not re-raise daily — a workaround for having no way to update a
+                # standing insight. Reconciliation refreshes the figure in place, so the
+                # workaround is not only unnecessary but wrong: banding made a drift across a
+                # boundary look like a new observation, and a return to the old band look like
+                # a third one.
+                dedupe_key=f"{Kind.CONCENTRATION}:{position.ticker}",
                 payload={
                     "weight_pct": round(weight, 2),
                     "cap_pct": cap_pct,
@@ -226,7 +264,9 @@ def book_full(
                 f"{blocked} actionable verdict(s) could not be sized because the book holds "
                 f"{open_count} of {max_positions} allowed."
             ),
-            dedupe_key=f"{Kind.BOOK_FULL}:{open_count}",
+            # Also unbanded: the book is full or it is not, and the count is a figure that
+            # moves within that fact rather than a different fact each time.
+            dedupe_key=f"{Kind.BOOK_FULL}",
             payload={"open_positions": open_count, "max_positions": max_positions},
         )
     ]

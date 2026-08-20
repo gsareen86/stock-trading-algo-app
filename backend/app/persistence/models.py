@@ -159,6 +159,8 @@ class Insight(Base):
         # Suppression asks "was this key raised since T" — this index is that question.
         Index("ix_insights_dedupe_created", "dedupe_key", "created_at"),
         Index("ix_insights_severity", "severity"),
+        # The default feed is "not withdrawn, newest first".
+        Index("ix_insights_withdrawn_created", "withdrawn_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -183,6 +185,20 @@ class Insight(Base):
 
     #: Null until the reader marks it seen in the app.
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: When the figures this insight carries were last established — distinct from when it was
+    #: first raised. A standing observation whose number moved is refreshed here, so "true
+    #: since the 17th, measured today" is expressible. Without it, every figure in the feed is
+    #: as of a creation date that says nothing about whether it was ever re-checked.
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: Set when the rule that raised this, re-evaluated, would no longer raise it. Not a
+    #: delete: the row and its original `created_at` stay, because "this was true for eleven
+    #: days and then stopped" is the history the feed exists to carry.
+    withdrawn_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    withdrawal_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -290,3 +306,4 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
