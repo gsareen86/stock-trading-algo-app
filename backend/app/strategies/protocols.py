@@ -20,6 +20,16 @@ from app.domain.verdict import Verdict
 #: 50 ticker — a caret-prefixed index code, not an NSE equity symbol, so it is never suffixed.
 DEFAULT_BENCHMARK = Instrument("^NSEI")
 
+#: The broad market, 500 names rather than 50. Added by `research-data-sources` because the
+#: platform had no way to read it before: NSE publishes it as `NIFTY 500` and yfinance as
+#: `^CRSLDX`, and nothing here knew either name.
+#:
+#: It is the fairer benchmark for sector relative strength — a sector measured against fifty
+#: large caps is partly being measured against a size effect. It is *not* the default, because
+#: changing what every existing relative-strength criterion compares against is a change to
+#: what those strategies mean, and that belongs in a change about strategies.
+BROAD_BENCHMARK = Instrument("^CRSLDX")
+
 
 @dataclass(frozen=True, slots=True)
 class StrategyContext:

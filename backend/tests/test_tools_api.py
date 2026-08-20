@@ -12,8 +12,14 @@ class TestSkillsEndpoint:
         body = client.get("/tools").json()
 
         names = {s["name"] for s in body["tools"]}
-        assert names == {"news_research", "event_calendar", "filings_scan", "peer_compare"}
-        assert body["count"] == 4
+        assert names == {
+            "news_research",
+            "event_calendar",
+            "filings_scan",
+            "peer_compare",
+            "commentary",
+        }
+        assert body["count"] == len(names)
         for tool in body["tools"]:
             assert tool["summary"]
             assert tool["input_schema"]["type"] == "object"
@@ -46,5 +52,10 @@ class TestSkillsEndpoint:
 
         body = authed_client(app).get("/tools").json()
 
-        assert body["count"] == 3
+        # The claim under test is that a broken tool is *reported and excluded*, not how many
+        # tools exist. Counting against the registry would re-run discovery under the same
+        # monkeypatch and compare a number to itself.
+        names = {t["name"] for t in body["tools"]}
+        assert "filings_scan" not in names
+        assert body["count"] == len(names)
         assert any("filings_scan" in f["module"] for f in body["load_failures"])

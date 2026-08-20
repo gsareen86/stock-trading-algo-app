@@ -38,6 +38,13 @@ agents = [
     "langgraph>=1.0",
     "mcp>=2.0",
 ]
+# Reading company documents: the aggregator page is HTML and the documents are PDFs.
+# Imported lazily by app/tools/commentary/, so the API, the strategies and every other tool
+# run without them — a checkout that skips this extra loses one tool, not the platform.
+data = [
+    "beautifulsoup4>=4.12",
+    "pdfplumber>=0.11",
+]
 postgres = [
     "psycopg[binary]>=3.2",
 ]

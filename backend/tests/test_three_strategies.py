@@ -117,8 +117,17 @@ class TestFundamentalsSeam:
 
 class TestSectorResolution:
     def test_known_industry_maps_to_its_index(self) -> None:
-        assert resolve("Financial Services").key == "Bank"
+        # "Financial Services" resolved to the banking index until `research-data-sources`,
+        # because NIFTY BANK was the closest thing the table held. NSE publishes an actual
+        # financial-services index; approximating it away was a lossy answer to a question
+        # that now has a precise one.
+        assert resolve("Financial Services").key == "FinancialServices"
         assert resolve("Information Technology").key == "IT"
+
+    def test_bank_sub_sectors_resolve_separately(self) -> None:
+        """Private and PSU banks trade differently enough that one index for both hides it."""
+        assert resolve("Private Sector Bank").key == "PrivateBank"
+        assert resolve("Public Sector Bank").key == "PSUBank"
 
     def test_longer_term_wins(self) -> None:
         """'financial services' must beat 'financial'; 'information technology' beat 'it'."""
@@ -132,8 +141,26 @@ class TestSectorResolution:
         assert resolve(None) is None
         assert resolve("") is None
 
-    def test_eight_sector_indices_available(self) -> None:
-        assert len(all_sector_indices()) == 8
+    def test_every_sector_index_is_completely_declared(self) -> None:
+        """A count alone guards nothing useful — what matters is that each entry is usable.
+
+        Every index in the table carries both a history ticker and NSE's own name for it, and
+        each was verified against the live index list and 400 days of history before being
+        added. `market-data` requires an index without usable history to be absent rather than
+        present and broken, so an entry missing either half is the failure worth catching.
+        """
+        import json
+        from pathlib import Path
+
+        from app.data import sectors
+
+        payload = json.loads(sectors.SECTORS_FILE.read_text("utf-8"))
+        assert payload["indices"].keys() == payload["nse_names"].keys()
+        assert len(all_sector_indices()) == len(payload["indices"])
+
+        # Every industry term points at an index that exists.
+        assert set(payload["industry_terms"].values()) <= set(payload["indices"])
+        assert Path(sectors.SECTORS_FILE).exists()
 
 
 class TestNewIndicators:

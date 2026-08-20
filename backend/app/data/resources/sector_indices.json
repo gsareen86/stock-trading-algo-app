@@ -1,15 +1,41 @@
 {
-  "_comment": "NSE sector indices, and the industry strings that map onto them. Two vocabularies feed this: the NSE constituent CSV's 'Industry' column, and yfinance's 'sector' string. Both are matched case-insensitively by substring, longest key first, so 'financial services' beats 'financial'. Adding a term is a data change, not a code change.",
+  "_comment": "NSE sector indices, and the industry strings that map onto them. Three vocabularies feed this: the NSE constituent CSV's 'Industry' column, yfinance's 'sector' string, and NSE's own index name. Industry terms are matched case-insensitively by substring, longest key first, so 'financial services' beats 'financial'. Adding a term is a data change, not a code change.",
+  "_verification": "Every index here was checked against NSE's live /api/allIndices list AND against 400 days of provider history before being added; `market-data` requires that an index without usable history is absent rather than present and unusable. NSE publishes 21 sectoral indices; these 14 are the ones with a working history ticker. NIFTY HEALTHCARE INDEX, NIFTY OIL & GAS, NIFTY CONSUMER DURABLES, NIFTY CHEMICALS and NIFTY CEMENT are published as live levels but have no provider ticker returning more than one bar, so they are readable in the index panel and cannot carry a relative-strength measurement. Re-run the verification before adding one.",
+
   "indices": {
     "IT": "^CNXIT",
     "Bank": "^NSEBANK",
+    "PrivateBank": "NIFTY_PVT_BANK.NS",
+    "PSUBank": "^CNXPSUBANK",
+    "FinancialServices": "NIFTY_FIN_SERVICE.NS",
     "FMCG": "^CNXFMCG",
     "Pharma": "^CNXPHARMA",
     "Auto": "^CNXAUTO",
     "Metal": "^CNXMETAL",
     "Energy": "^CNXENERGY",
-    "Realty": "^CNXREALTY"
+    "Realty": "^CNXREALTY",
+    "Media": "^CNXMEDIA",
+    "Infrastructure": "^CNXINFRA",
+    "Consumption": "^CNXCONSUM"
   },
+
+  "nse_names": {
+    "IT": "NIFTY IT",
+    "Bank": "NIFTY BANK",
+    "PrivateBank": "NIFTY PRIVATE BANK",
+    "PSUBank": "NIFTY PSU BANK",
+    "FinancialServices": "NIFTY FINANCIAL SERVICES 25/50",
+    "FMCG": "NIFTY FMCG",
+    "Pharma": "NIFTY PHARMA",
+    "Auto": "NIFTY AUTO",
+    "Metal": "NIFTY METAL",
+    "Energy": "NIFTY ENERGY",
+    "Realty": "NIFTY REALTY",
+    "Media": "NIFTY MEDIA",
+    "Infrastructure": "NIFTY INFRASTRUCTURE",
+    "Consumption": "NIFTY INDIA CONSUMPTION"
+  },
+
   "industry_terms": {
     "information technology": "IT",
     "consumer technology": "IT",
@@ -17,13 +43,14 @@
     "technology": "IT",
     "it": "IT",
 
-    "financial services": "Bank",
-    "private sector bank": "Bank",
-    "public sector bank": "Bank",
+    "private sector bank": "PrivateBank",
+    "public sector bank": "PSUBank",
+    "financial services": "FinancialServices",
+    "finance": "FinancialServices",
+    "financial": "FinancialServices",
+    "insurance": "FinancialServices",
     "banks": "Bank",
     "bank": "Bank",
-    "finance": "Bank",
-    "financial": "Bank",
 
     "fast moving consumer goods": "FMCG",
     "consumer defensive": "FMCG",
@@ -50,6 +77,19 @@
     "energy": "Energy",
 
     "real estate": "Realty",
-    "realty": "Realty"
+    "realty": "Realty",
+
+    "media entertainment & publication": "Media",
+    "communication services": "Media",
+    "media": "Media",
+
+    "capital goods": "Infrastructure",
+    "construction": "Infrastructure",
+    "industrials": "Infrastructure",
+    "infrastructure": "Infrastructure",
+
+    "consumer services": "Consumption",
+    "consumer durables": "Consumption",
+    "textiles": "Consumption"
   }
 }

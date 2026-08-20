@@ -307,3 +307,30 @@ class RefreshToken(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
+
+class ProviderRequest(Base):
+    """One request spent against a metered external data provider.
+
+    A row per request, rather than a counter that is incremented. A count is derivable from
+    rows and rows are not derivable from a count: when a month's allowance runs out
+    unexpectedly, "which calls did that" is the only question worth asking, and a single
+    integer cannot answer it.
+
+    Written *before* the call rather than after it — a request that was made and then failed
+    still consumed the allowance.
+    """
+
+    __tablename__ = "provider_requests"
+    __table_args__ = (
+        # The only question asked of this table: how many for this provider since a moment.
+        Index("ix_provider_requests_provider_at", "provider", "requested_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: What the request was for, so an exhausted allowance can be explained rather than
+    #: merely reported. Never a credential.
+    detail: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

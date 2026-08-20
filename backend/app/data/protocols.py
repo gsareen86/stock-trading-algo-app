@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Protocol, runtime_checkable
 
+from app.domain.financials import CompanyFinancials
 from app.domain.instrument import Instrument
 from app.domain.prices import Interval, PriceSeries
+from app.domain.quotes import Quote
 
 
 @runtime_checkable
@@ -31,6 +33,41 @@ class PriceSource(Protocol):
         interval: Interval = "1d",
         lookback_days: int = 400,
     ) -> PriceSeries: ...
+
+
+@runtime_checkable
+class QuoteSource(Protocol):
+    """What something is trading at now.
+
+    Separate from `PriceSource` on purpose, and the separation is load-bearing rather than
+    tidy: a quote must never reach a strategy. Verdicts are required to be reproducible with
+    the model switched off (`project.md`, principle 5), and a reading that changes between two
+    evaluations of the same settled bars would break that silently — the stance would move and
+    no evidence row would say why.
+
+    Returns ``None`` rather than raising, and ``None`` for an instrument it cannot quote. Not
+    every provider can quote everything: NSE serves index levels to a plain client and refuses
+    per-stock ones, so "I cannot answer that" is an ordinary result here, not a failure.
+    """
+
+    def quote(self, instrument: Instrument) -> Quote | None: ...
+
+
+@runtime_checkable
+class CompanyFinancialsSource(Protocol):
+    """What kind of business a company is — statements, ratios and ownership.
+
+    **A second, wider seam, deliberately not a widening of the first.** `FundamentalsSource`
+    stays four fields wide because `fun_tech_momentum` needs quarterly EPS and revenue and
+    nothing else; putting a hundred mostly-null fields in front of that strategy would be the
+    speculative shape `market-data-foundation` avoided by deferring fundamentals at all.
+
+    Returns an empty result naming a reason rather than raising — an absent API key, an
+    exhausted monthly allowance and a throttled provider are all ordinary states here, and a
+    scan must survive every one of them.
+    """
+
+    def financials(self, instrument: Instrument) -> CompanyFinancials: ...
 
 
 @dataclass(frozen=True, slots=True)

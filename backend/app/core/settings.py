@@ -177,6 +177,31 @@ class Settings(BaseSettings):
     #: Set only when serving the web app over HTTPS. The refresh cookie is httpOnly either way.
     auth_cookie_secure: bool = False
 
+    # ── External data providers ───────────────────────────────────────────────
+    #: Indian API (``stock.indianapi.in``) — company financials, ratios and shareholding.
+    #: Absent disables exactly that capability: prices, screening, strategies and verdicts
+    #: are unaffected, and the seam returns an empty result naming this setting.
+    indian_api_key: str | None = None
+
+    #: Requests allowed per calendar month, IST. **The free tier is 500.** A count rather
+    #: than a cost: going over does not spend more money, it stops the platform working for
+    #: the rest of the month, which is why this refuses rather than warns. ``None`` is
+    #: unlimited and is only right for a paid tier.
+    indian_api_monthly_request_limit: Annotated[int | None, Field(gt=0)] = 500
+
+    #: How long a company's financials are served from cache. **Days, not hours.** These
+    #: figures move when a company reports, four times a year; a short lifetime would spend a
+    #: scarce allowance re-reading numbers that had not changed.
+    financials_cache_days: Annotated[int, Field(ge=1, le=365)] = 30
+
+    #: Floor between requests to NSE's own API. The documented hazard of reading it directly
+    #: is being blocked for asking too often.
+    nse_min_request_interval_seconds: Annotated[float, Field(ge=0.0, le=60.0)] = 1.0
+
+    #: How long index levels are served from cache. Seconds — they move continuously while
+    #: the market is open, and one payload answers every index.
+    nse_quote_cache_seconds: Annotated[float, Field(ge=0.0, le=3600.0)] = 60.0
+
     # ── Observability ─────────────────────────────────────────────────────────
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
@@ -270,6 +295,11 @@ class Settings(BaseSettings):
     def base_url_for(self, provider: str) -> str | None:
         """Configured base URL for an OpenAI-compatible provider, if any."""
         return self.llm_provider_base_url.get(provider.lower())
+
+    @property
+    def financials_configured(self) -> bool:
+        """Whether the wide financials seam can answer at all."""
+        return bool(self.indian_api_key)
 
     @property
     def observability_configured(self) -> bool:

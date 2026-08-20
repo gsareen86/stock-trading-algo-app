@@ -79,8 +79,14 @@ class TestManifest:
 
 
 class TestDiscovery:
-    def test_seed_tools_all_load(self, registry: ToolRegistry) -> None:
+    def test_declared_tools_all_load(self, registry: ToolRegistry) -> None:
+        """Named explicitly so a tool that vanishes to a typo fails here rather than quietly.
+
+        `commentary` joined the seed four with `research-data-sources`, which is also why this
+        is a list and not a count: a count tells you something changed, a list tells you what.
+        """
         assert registry.names() == [
+            "commentary",
             "event_calendar",
             "filings_scan",
             "news_research",

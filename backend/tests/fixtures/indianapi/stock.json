@@ -1,0 +1,3253 @@
+{
+  "companyName": "Tata Consultancy Services",
+  "industry": "Software & Programming",
+  "companyProfile": {
+    "mgIndustry": "Software & Programming",
+    "isInId": "INE467B01029",
+    "officers": {
+      "officer": [
+        {
+          "rank": 1,
+          "since": "03/12/2015",
+          "firstName": "Aarthi",
+          "mI": null,
+          "lastName": "Subramanian",
+          "age": "58",
+          "title": {
+            "startYear": "2025",
+            "startMonth": "5",
+            "startDay": "1",
+            "iD1": "PRE",
+            "abbr1": "Pres.",
+            "iD2": "COO",
+            "abbr2": "COO",
+            "Value": "President, Chief Operating Officer, Executive Director"
+          }
+        },
+        {
+          "rank": 2,
+          "since": "03/16/2023",
+          "firstName": "K.",
+          "mI": null,
+          "lastName": "Krithivasan",
+          "age": "62",
+          "title": {
+            "startYear": "2023",
+            "startMonth": "6",
+            "startDay": "1",
+            "iD1": "CEO",
+            "abbr1": "CEO",
+            "iD2": "MDR",
+            "abbr2": "Mgng.Dir.",
+            "Value": "Chief Executive Officer, Managing Director, Executive Director"
+          }
+        },
+        {
+          "rank": 3,
+          "since": "05/01/2021",
+          "firstName": "Samir",
+          "mI": null,
+          "lastName": "Seksaria",
+          "age": null,
+          "title": {
+            "startYear": "2021",
+            "startMonth": "5",
+            "startDay": "1",
+            "iD1": "CFO",
+            "abbr1": "CFO",
+            "iD2": "",
+            "abbr2": "",
+            "Value": "Chief Financial Officer"
+          }
+        },
+        {
+          "rank": 4,
+          "since": "11/01/2024",
+          "firstName": "Yashaswin",
+          "mI": null,
+          "lastName": "Sheth",
+          "age": null,
+          "title": {
+            "startYear": "2024",
+            "startMonth": "11",
+            "startDay": "1",
+            "iD1": "CCO",
+            "abbr1": "Chief Comp.",
+            "iD2": "SEC",
+            "abbr2": "Secy.",
+            "Value": "Compliance Officer, Company Secretary"
+          }
+        }
+      ]
+    },
+    "exchangeCodeBse": "532540",
+    "exchangeCodeNse": "TCS",
+    "peerCompanyList": [
+      {
+        "tickerId": "S0003032",
+        "companyName": "Infosys",
+        "priceToBookValueRatio": 4.78,
+        "priceToEarningsValueRatio": 14.79,
+        "marketCap": 453305.21,
+        "price": 1117.05,
+        "percentChange": 0.18,
+        "netChange": 2.05,
+        "returnOnAverageEquity5YearAverage": 30.67,
+        "returnOnAverageEquityTrailing12Month": 31.21,
+        "ltDebtPerEquityMostRecentFiscalYear": 6.48,
+        "netProfitMargin5YearAverage": 16.86,
+        "netProfitMarginPercentTrailing12Month": 16.5,
+        "dividendYieldIndicatedAnnualDividend": 4.38,
+        "totalSharesOutstanding": 405.81,
+        "languageSupport": "\u0907\u0928\u094d\u092b\u094b\u0938\u093f\u0938",
+        "imageUrl": "https://www.livemint.com/lm-img/markets/logo/tr/S0003032.png",
+        "overallRating": "Bearish",
+        "yhigh": 1727.85,
+        "ylow": 984
+      },
+      {
+        "tickerId": "S0003045",
+        "companyName": "HCL Technologies",
+        "priceToBookValueRatio": 4.35,
+        "priceToEarningsValueRatio": 18.81,
+        "marketCap": 358882.21,
+        "price": 1322.5,
+        "percentChange": 1.73,
+        "netChange": 22.5,
+        "returnOnAverageEquity5YearAverage": 23.46,
+        "returnOnAverageEquityTrailing12Month": null,
+        "ltDebtPerEquityMostRecentFiscalYear": 4.28,
+        "netProfitMargin5YearAverage": 14.36,
+        "netProfitMarginPercentTrailing12Month": 12.97,
+        "dividendYieldIndicatedAnnualDividend": 4.98,
+        "totalSharesOutstanding": 271.37,
+        "languageSupport": "\u090f\u091a\u0938\u0940\u090f\u0932 \u091f\u0947\u0915\u094d\u0928\u094b\u0932\u0949\u091c\u0940\u091c",
+        "imageUrl": "https://www.livemint.com/lm-img/markets/logo/tr/S0003045.png",
+        "overallRating": "Neutral",
+        "yhigh": 1770,
+        "ylow": 1030
+      },
+      {
+        "tickerId": "S0003115",
+        "companyName": "Tech Mahindra",
+        "priceToBookValueRatio": 5.2,
+        "priceToEarningsValueRatio": 27.9,
+        "marketCap": 155069.02,
+        "price": 1582.2,
+        "percentChange": -0.65,
+        "netChange": -10.3,
+        "returnOnAverageEquity5YearAverage": 16.03,
+        "returnOnAverageEquityTrailing12Month": null,
+        "ltDebtPerEquityMostRecentFiscalYear": 5.36,
+        "netProfitMargin5YearAverage": 8.45,
+        "netProfitMarginPercentTrailing12Month": 8.72,
+        "dividendYieldIndicatedAnnualDividend": 3.24,
+        "totalSharesOutstanding": 98.01,
+        "languageSupport": "\u091f\u0947\u0915 \u092e\u0939\u093f\u0902\u0926\u094d\u0930\u093e",
+        "imageUrl": "https://www.livemint.com/lm-img/markets/logo/tr/S0003115.png",
+        "overallRating": "Neutral",
+        "yhigh": 1850,
+        "ylow": 1304.25
+      },
+      {
+        "tickerId": "S0006596",
+        "companyName": "Billionbrains Garage Ventures",
+        "priceToBookValueRatio": 13.32,
+        "priceToEarningsValueRatio": 61.26,
+        "marketCap": 122178.3,
+        "price": 194.75,
+        "percentChange": 0.54,
+        "netChange": 1.05,
+        "returnOnAverageEquity5YearAverage": null,
+        "returnOnAverageEquityTrailing12Month": null,
+        "ltDebtPerEquityMostRecentFiscalYear": 0.58,
+        "netProfitMargin5YearAverage": null,
+        "netProfitMarginPercentTrailing12Month": 46.54,
+        "dividendYieldIndicatedAnnualDividend": null,
+        "totalSharesOutstanding": 627.36,
+        "languageSupport": "Billionbrains Garage Ventures",
+        "imageUrl": "https://www.livemint.com/lm-img/markets/logo/tr/S0006596.png",
+        "overallRating": "Bullish",
+        "yhigh": 227,
+        "ylow": 112.02
+      },
+      {
+        "tickerId": "S0003160",
+        "companyName": "LTM Ltd",
+        "priceToBookValueRatio": 5.03,
+        "priceToEarningsValueRatio": 22.3,
+        "marketCap": 134517.77,
+        "price": 4535,
+        "percentChange": -0.68,
+        "netChange": -30.85,
+        "returnOnAverageEquity5YearAverage": 25.27,
+        "returnOnAverageEquityTrailing12Month": 22.15,
+        "ltDebtPerEquityMostRecentFiscalYear": 7.89,
+        "netProfitMargin5YearAverage": 12.86,
+        "netProfitMarginPercentTrailing12Month": 11.79,
+        "dividendYieldIndicatedAnnualDividend": 1.84,
+        "totalSharesOutstanding": 29.66,
+        "languageSupport": "Ltimindtree",
+        "imageUrl": "https://www.livemint.com/lm-img/markets/logo/tr/S0003160.png",
+        "overallRating": "Neutral",
+        "yhigh": 6430,
+        "ylow": 3529.6
+      }
+    ],
+    "dataStatus": null,
+    "lastSuccessfulRefresh": null,
+    "lastRefreshAttempt": null,
+    "refreshPending": null,
+    "refreshError": null,
+    "fallbackSections": null
+  },
+  "currentPrice": {
+    "BSE": "2287.00",
+    "NSE": "2289"
+  },
+  "stockTechnicalData": [
+    {
+      "days": 5,
+      "bsePrice": "2367.36",
+      "nsePrice": "2368.92"
+    }
+  ],
+  "percentChange": "0.26",
+  "yearHigh": "3336.70",
+  "yearLow": "1976.00",
+  "financials": [
+    {
+      "stockFinancialMap": {
+        "CAS": [
+          {
+            "displayName": "Issuance( Retirement)of Debt Net ",
+            "key": "Issuance(Retirement)ofDebtNet",
+            "value": "-1861",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Changein Cash ",
+            "key": "NetChangeinCash",
+            "value": "-1925",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cash Taxes Paid ",
+            "key": "CashTaxesPaid",
+            "value": "14384.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income/ Starting Line ",
+            "key": "NetIncome/StartingLine",
+            "value": "49454.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Cash Dividends Paid ",
+            "key": "TotalCashDividendsPaid",
+            "value": "-39437",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Changesin Working Capital ",
+            "key": "ChangesinWorkingCapital",
+            "value": "-16594",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cashfrom Operating Activities ",
+            "key": "CashfromOperatingActivities",
+            "value": "52094.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cash Interest Paid ",
+            "key": "CashInterestPaid",
+            "value": "901.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cashfrom Financing Activities ",
+            "key": "CashfromFinancingActivities",
+            "value": "-42133",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Issuance( Retirement)of Stock Net ",
+            "key": "Issuance(Retirement)ofStockNet",
+            "value": "126.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Depreciation/ Depletion ",
+            "key": "Depreciation/Depletion",
+            "value": "5560.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Investing Cash Flow Items Total ",
+            "key": "OtherInvestingCashFlowItemsTotal",
+            "value": "-8145",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Capital Expenditures ",
+            "key": "CapitalExpenditures",
+            "value": "-4700",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Type ",
+            "key": "periodType",
+            "value": "Months",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Foreign Exchange Effects ",
+            "key": "ForeignExchangeEffects",
+            "value": "959.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Non- Cash Items ",
+            "key": "Non-CashItems",
+            "value": "13674.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Financing Cash Flow Items ",
+            "key": "FinancingCashFlowItems",
+            "value": "-961",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Length ",
+            "key": "periodLength",
+            "value": "12",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cashfrom Investing Activities ",
+            "key": "CashfromInvestingActivities",
+            "value": "-12845",
+            "qoQComp": null,
+            "yqoQComp": null
+          }
+        ],
+        "BAL": [
+          {
+            "displayName": "Total Liabilities Shareholders' Equity ",
+            "key": "TotalLiabilitiesShareholders'Equity",
+            "value": "182372.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Accumulated Depreciation Total ",
+            "key": "AccumulatedDepreciationTotal",
+            "value": "-28176",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cash Equivalents ",
+            "key": "CashEquivalents",
+            "value": "3217.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Liabilities Total ",
+            "key": "OtherLiabilitiesTotal",
+            "value": "2196.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Accrued Expenses ",
+            "key": "AccruedExpenses",
+            "value": "18647.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Long Term Debt ",
+            "key": "LongTermDebt",
+            "value": "126.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Common Stock Total ",
+            "key": "CommonStockTotal",
+            "value": "362.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Equity Total ",
+            "key": "OtherEquityTotal",
+            "value": "6290.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Current Assets Total ",
+            "key": "OtherCurrentAssetsTotal",
+            "value": "6506.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Prepaid Expenses ",
+            "key": "PrepaidExpenses",
+            "value": "2432.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Assets ",
+            "key": "TotalAssets",
+            "value": "182372.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Current Portof LT Debt/ Capital Leases ",
+            "key": "CurrentPortofLTDebt/CapitalLeases",
+            "value": "1830.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cash ",
+            "key": "Cash",
+            "value": "3188.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Equity ",
+            "key": "TotalEquity",
+            "value": "107240.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Long Term Investments ",
+            "key": "LongTermInvestments",
+            "value": "1552.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Retained Earnings( Accumulated Deficit) ",
+            "key": "RetainedEarnings(AccumulatedDeficit)",
+            "value": "100663.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Common Shares Outstanding ",
+            "key": "TotalCommonSharesOutstanding",
+            "value": "361.81",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Property/ Plant/ Equipment Total- Gross ",
+            "key": "Property/Plant/EquipmentTotal-Gross",
+            "value": "52900.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Tangible Book Valueper Share Common Eq ",
+            "key": "TangibleBookValueperShareCommonEq",
+            "value": "270.74",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Goodwill Net ",
+            "key": "GoodwillNet",
+            "value": "9108.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Liabilities ",
+            "key": "TotalLiabilities",
+            "value": "75132.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Debt ",
+            "key": "TotalDebt",
+            "value": "11409.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Short Term Investments ",
+            "key": "ShortTermInvestments",
+            "value": "37668.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cashand Short Term Investments ",
+            "key": "CashandShortTermInvestments",
+            "value": "44073.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Receivables Net ",
+            "key": "TotalReceivablesNet",
+            "value": "82439.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Notes Payable/ Short Term Debt ",
+            "key": "NotesPayable/ShortTermDebt",
+            "value": "0.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Deferred Income Tax ",
+            "key": "DeferredIncomeTax",
+            "value": "1205.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Accounts Receivable- Trade Net ",
+            "key": "AccountsReceivable-TradeNet",
+            "value": "75860.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Property/ Plant/ Equipment Total- Net ",
+            "key": "Property/Plant/EquipmentTotal-Net",
+            "value": "24724.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Minority Interest ",
+            "key": "MinorityInterest",
+            "value": "1238.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Current Liabilities ",
+            "key": "TotalCurrentLiabilities",
+            "value": "60914.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Inventory ",
+            "key": "TotalInventory",
+            "value": "255.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Accounts Payable ",
+            "key": "AccountsPayable",
+            "value": "14808.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Currentliabilities Total ",
+            "key": "OtherCurrentliabilitiesTotal",
+            "value": "25629.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Long Term Debt ",
+            "key": "TotalLongTermDebt",
+            "value": "9579.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Intangibles Net ",
+            "key": "IntangiblesNet",
+            "value": "176.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Long Term Assets Total ",
+            "key": "OtherLongTermAssetsTotal",
+            "value": "7581.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Note Receivable- Long Term ",
+            "key": "NoteReceivable-LongTerm",
+            "value": "3526.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Unrealized Gain( Loss) ",
+            "key": "UnrealizedGain(Loss)",
+            "value": "-75",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Length ",
+            "key": "periodLength",
+            "value": "0.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Current Assets ",
+            "key": "TotalCurrentAssets",
+            "value": "135705.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Capital Lease Obligations ",
+            "key": "CapitalLeaseObligations",
+            "value": "9453.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          }
+        ],
+        "INC": [
+          {
+            "displayName": "Total Operating Expense ",
+            "key": "TotalOperatingExpense",
+            "value": "204389.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Net ",
+            "key": "OtherNet",
+            "value": "-380",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Diluted Weighted Average Shares ",
+            "key": "DilutedWeightedAverageShares",
+            "value": "361.81",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Gain( Loss)on Saleof Assets ",
+            "key": "Gain(Loss)onSaleofAssets",
+            "value": "17.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Depreciation/ Amortization ",
+            "key": "Depreciation/Amortization",
+            "value": "5560.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Operating Income ",
+            "key": "OperatingIncome",
+            "value": "62632.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income ",
+            "key": "NetIncome",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Income Availableto Com Excl Extra Ord ",
+            "key": "IncomeAvailabletoComExclExtraOrd",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Operating Expenses Total ",
+            "key": "OtherOperatingExpensesTotal",
+            "value": "5791.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income Before Taxes ",
+            "key": "NetIncomeBeforeTaxes",
+            "value": "65487.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Minority Interest ",
+            "key": "MinorityInterest",
+            "value": "-244",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income After Taxes ",
+            "key": "NetIncomeAfterTaxes",
+            "value": "49454.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Income Availableto Com Incl Extra Ord ",
+            "key": "IncomeAvailabletoComInclExtraOrd",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Costof Revenue Total ",
+            "key": "CostofRevenueTotal",
+            "value": "4399.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Gross Profit ",
+            "key": "GrossProfit",
+            "value": "262622.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Interest Inc( Exp) Net- Non- Op Total ",
+            "key": "InterestInc(Exp)Net-Non-OpTotal",
+            "value": "3218.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Unusual Expense( Income) ",
+            "key": "UnusualExpense(Income)",
+            "value": "4225.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Diluted Net Income ",
+            "key": "DilutedNetIncome",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "DPS- Common Stock Primary Issue ",
+            "key": "DPS-CommonStockPrimaryIssue",
+            "value": "64.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Provisionfor Income Taxes ",
+            "key": "ProvisionforIncomeTaxes",
+            "value": "16033.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Type ",
+            "key": "periodType",
+            "value": "Months",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income Before Extra Items ",
+            "key": "NetIncomeBeforeExtraItems",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Revenue ",
+            "key": "TotalRevenue",
+            "value": "267021.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Length ",
+            "key": "periodLength",
+            "value": "12",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Revenue ",
+            "key": "Revenue",
+            "value": "267021.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Selling/ General/ Admin Expenses Total ",
+            "key": "Selling/General/AdminExpensesTotal",
+            "value": "184414.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Diluted Normalized EPS ",
+            "key": "DilutedNormalizedEPS",
+            "value": "144.79",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Diluted EPS Excluding Extra Ord Items ",
+            "key": "DilutedEPSExcludingExtraOrdItems",
+            "value": "136.01",
+            "qoQComp": null,
+            "yqoQComp": null
+          }
+        ]
+      },
+      "FiscalYear": "2026",
+      "EndDate": "2026-03-31",
+      "Type": "Annual",
+      "StatementDate": "2021-03-31",
+      "fiscalPeriodNumber": 0
+    }
+  ],
+  "keyMetrics": {
+    "mgmtEffectiveness": [
+      {
+        "displayName": "Return on average equity - 5 year average",
+        "key": "returnOnAverageEquity5YearAverage",
+        "value": "48.55"
+      },
+      {
+        "displayName": "Net Income/employee - trailing 12 month",
+        "key": "netIncomePerEmployeeTrailing12Month",
+        "value": "856345.10"
+      },
+      {
+        "displayName": "Revenue/employee - most recent fiscal year",
+        "key": "revenuePerEmployeeMostRecentFiscalYear",
+        "value": "4478347.00"
+      },
+      {
+        "displayName": "Return on investment - most recent fiscal year",
+        "key": "returnOnInvestmentMostRecentFiscalYear",
+        "value": "43.80"
+      },
+      {
+        "displayName": "Return on average assets - most recent fiscal year",
+        "key": "returnOnAverageAssetsMostRecenFiscalYear",
+        "value": "28.92"
+      },
+      {
+        "displayName": "Receivables turnover - most recent fiscal year",
+        "key": "receivablesTurnoverMostRecentFiscalYear",
+        "value": "3.76"
+      },
+      {
+        "displayName": "Return on investment - trailing 12 month",
+        "key": "returnOnInvestmentTrailing12Month",
+        "value": "43.33"
+      },
+      {
+        "displayName": "Return on average assets - trailing 12 month",
+        "key": "returnOnAverageAssetsTrailing12Month",
+        "value": "28.55"
+      },
+      {
+        "displayName": "Inventory turnover - most recent fiscal year",
+        "key": "inventoryTurnoverMostRecentFiscalYear",
+        "value": "17.53"
+      },
+      {
+        "displayName": "Inventory turnover - trailing 12 month",
+        "key": "inventoryTurnoverTrailing12Month)",
+        "value": "17.45"
+      },
+      {
+        "displayName": "Revenue/employee - trailing 12 month",
+        "key": "revenuePerEmployeeTrailing12Month",
+        "value": "4719419.00"
+      },
+      {
+        "displayName": "Return on average assets - 5 year average",
+        "key": "returnOnAverageAssets5YearAverage",
+        "value": "30.10"
+      },
+      {
+        "displayName": "Net Income/employee - most recent fiscal year",
+        "key": "netIncomePerEmployeeMostRecentFiscalYear",
+        "value": "829418.60"
+      },
+      {
+        "displayName": "Return on average equity - trailing 12 month",
+        "key": "returnOnAverageEquityTrailing12Month",
+        "value": "47.99"
+      },
+      {
+        "displayName": "Receivables turnover - trailing 12 month",
+        "key": "receivablesTurnoverTrailing12Month",
+        "value": "3.77"
+      },
+      {
+        "displayName": "Asset turnover - most recent fiscal year",
+        "key": "assetTurnoverMostRecentFiscalYear",
+        "value": "1.56"
+      },
+      {
+        "displayName": "Asset turnover - trailing 12 month",
+        "key": "assetTurnoverTrailing12Month",
+        "value": "1.57"
+      },
+      {
+        "displayName": "Return on average equity - most recent fiscal year",
+        "key": "returnOnAverageEquityMostRecentFiscalYear)",
+        "value": "48.72"
+      },
+      {
+        "displayName": "Return on investment - 5 year average",
+        "key": "returnOnInvestment5YearAverage",
+        "value": "44.05"
+      }
+    ],
+    "margins": [
+      {
+        "displayName": "Operating margin - trailing 12 month",
+        "key": "operatingMarginTrailing12Month",
+        "value": "23.11"
+      },
+      {
+        "displayName": "Gross Margin - 5 year average",
+        "key": "grossMargin5YearAverage",
+        "value": "98.07"
+      },
+      {
+        "displayName": "Operating margin - 1st historical fiscal year",
+        "key": "operatingMargin1stHistoricalFiscalYear)",
+        "value": "23.46"
+      },
+      {
+        "displayName": "Operating Margin - 5 year average",
+        "key": "operatingMargin5YearAverage",
+        "value": "24.22"
+      },
+      {
+        "displayName": "Net Profit Margin % - 1st historical fiscal year",
+        "key": "netProfitMarginPercent1stHistoricalFiscalYear",
+        "value": "18.52"
+      },
+      {
+        "displayName": "Gross Margin - 1st historical fiscal year",
+        "key": "grossMargin1stHistoricalFiscalYear",
+        "value": "98.35"
+      },
+      {
+        "displayName": "Net Profit Margin % - trailing 12 month",
+        "key": "netProfitMarginPercentTrailing12Month",
+        "value": "18.15"
+      },
+      {
+        "displayName": "Net Profit Margin - 5 year average",
+        "key": "netProfitMargin5YearAverage",
+        "value": "19.07"
+      },
+      {
+        "displayName": "Pretax Margin - 5 year average",
+        "key": "pretaxMargin5YearAverage",
+        "value": "25.53"
+      },
+      {
+        "displayName": "Free Operating Cash Flow/Revenue, TTM",
+        "key": "freeOperatingCashFlowPerRevenueTTM",
+        "value": "3.08"
+      },
+      {
+        "displayName": "Pretax margin - 1st historical fiscal year",
+        "key": "pretaxMargin1stHistoricalFiscalYear",
+        "value": "24.53"
+      },
+      {
+        "displayName": "Pretax margin - trailing 12 month",
+        "key": "pretaxMarginTrailing12Month",
+        "value": "24.09"
+      },
+      {
+        "displayName": "Free Operating Cash Flow/Revenue, 5 Year Average",
+        "key": "freeOperatingCashFlowPerRevenue5YearAverage",
+        "value": "3.79"
+      },
+      {
+        "displayName": "Gross Margin - trailing 12 month",
+        "key": "grossMarginTrailing12Month",
+        "value": "98.18"
+      }
+    ],
+    "financialstrength": [
+      {
+        "displayName": "Net Interest coverage - most recent fiscal year",
+        "key": "netInterestCoverageMostRecentFiscalYear",
+        "value": null
+      },
+      {
+        "displayName": "Current EV/Free Cash Flow, LTM",
+        "key": "currentEVPerFreeCashFlowLTM",
+        "value": "68.07"
+      },
+      {
+        "displayName": "Free Cash Flow - trailing 12 month",
+        "key": "freeCashFlowtrailing12Month",
+        "value": "84840.00"
+      },
+      {
+        "displayName": "Total debt/total equity - most recent quarter",
+        "key": "totalDebtPerTotalEquityMostRecentQuarter",
+        "value": "0.10"
+      },
+      {
+        "displayName": "Free Cash Flow - most recent fiscal year",
+        "key": "freeCashFlowMostRecentFiscalYear",
+        "value": "79570.00"
+      },
+      {
+        "displayName": "LT debt/equity - most recent fiscal year",
+        "key": "ltDebtPerEquityMostRecentFiscalYear)",
+        "value": "0.09"
+      },
+      {
+        "displayName": "Quick ratio - most recent fiscal year",
+        "key": "quickRatioMostRecentFiscalYear",
+        "value": "2.22"
+      },
+      {
+        "displayName": "Quick ratio - most recent quarter",
+        "key": "quickRatioMostRecentQuarter",
+        "value": "2.27"
+      },
+      {
+        "displayName": "Payout ratio - trailing 12 month",
+        "key": "payoutRatioTrailing12Month",
+        "value": "71.93"
+      },
+      {
+        "displayName": "Current ratio - most recent fiscal year",
+        "key": "currentRatioMostRecentFiscalYear",
+        "value": "2.23"
+      },
+      {
+        "displayName": "Current EV/Free Cash Flow, LFY",
+        "key": "currentEVPerFreeCashFlowLFY",
+        "value": "72.95"
+      },
+      {
+        "displayName": "LT debt/equity - most recent quarter",
+        "key": "lTDebtPerEquityMostRecentQuarter",
+        "value": "0.09"
+      },
+      {
+        "displayName": "Total debt/total equity - most recent fiscal year",
+        "key": "totalDebtPerTotalEquityMostRecentFiscalYear",
+        "value": "0.11"
+      },
+      {
+        "displayName": "Net Interest coverage - trailing 12 month",
+        "key": "netInterestCoverageTrailing12Month",
+        "value": null
+      },
+      {
+        "displayName": "Current ratio - most recent quarter",
+        "key": "currentRatioMostRecentQuarter",
+        "value": "2.28"
+      },
+      {
+        "displayName": "Payout ratio - most recent fiscal year",
+        "key": "payoutRatioMostRecentFiscalYear",
+        "value": "80.88"
+      }
+    ],
+    "valuation": [
+      {
+        "displayName": "P/E excluding extraordinary items, most recent fiscal year",
+        "key": "pPerEExcludingExtraordinaryItemsMostRecentFiscalYear",
+        "value": "16.76"
+      },
+      {
+        "displayName": "Current Dividend Yield - Common Stock Primary Issue, LTM",
+        "key": "currentDividendYieldCommonStockPrimaryIssueLTM",
+        "value": "2.85"
+      },
+      {
+        "displayName": "Price to Book - most recent fiscal year",
+        "key": "priceToBookMostRecentFiscalYear",
+        "value": "7.69"
+      },
+      {
+        "displayName": "Price to Free Cash Flow per Share - trailing 12 months",
+        "key": "priceToFreeCashFlowPerShareTrailing12Months",
+        "value": "97.23"
+      },
+      {
+        "displayName": "P/E Basic excluding extraordinary items - TTM",
+        "key": "pPerEBasicExcludingExtraordinaryItemsTTM",
+        "value": "14.76"
+      },
+      {
+        "displayName": "P/E including extraordinary items - TTM",
+        "key": "pPerEIncludingExtraordinaryItemsTTM",
+        "value": "16.57"
+      },
+      {
+        "displayName": "P/E excluding extraordinary items low, trailing 12 months",
+        "key": "pPerEExcludingExtraordinaryItemsLowTrailing12Months",
+        "value": "14.76"
+      },
+      {
+        "displayName": "Price to Tangible Book - most fiscal year",
+        "key": "priceToTangibleBookMostFiscalYear",
+        "value": "8.42"
+      },
+      {
+        "displayName": "Dividend Yield - 5 Year Average",
+        "key": "dividendYield5YearAverage",
+        "value": "1.66"
+      },
+      {
+        "displayName": "Price to sales - most recent fiscal year",
+        "key": "priceToSalesMostRecentFiscalYear",
+        "value": "3.09"
+      },
+      {
+        "displayName": "Net Debt, LFI",
+        "key": "netDebtLFI",
+        "value": "-342020"
+      },
+      {
+        "displayName": "Price to Tangible Book - most recent quarter",
+        "key": "priceToTangibleBookMostRecentQuarter",
+        "value": "8.21"
+      },
+      {
+        "displayName": "Price to Book - most recent quarter",
+        "key": "priceToBookMostRecentQuarter",
+        "value": "7.52"
+      },
+      {
+        "displayName": "Dividend Yield - indicated annual dividend divided by closing price",
+        "key": "dividendYieldIndicatedAnnualDividendDividedByClosingprice",
+        "value": "2.85"
+      },
+      {
+        "displayName": "Price to Cash Flow per share - trailing 12 month",
+        "key": "priceToCashFlowPerShareTrailing12Month",
+        "value": "14.87"
+      },
+      {
+        "displayName": "Peg Ratio",
+        "key": "pegRatio",
+        "value": "2.91"
+      },
+      {
+        "displayName": "is ForCasted",
+        "key": "isForCasted",
+        "value": "true"
+      },
+      {
+        "displayName": "Price to Free Cash Flow per Share - most recent fiscal year",
+        "key": "priceToFreeCashFlowPerShareMostRecentFiscalYear",
+        "value": "103.67"
+      },
+      {
+        "displayName": "P/E Normalized, most recent fiscal year",
+        "key": "pPerENormalizedMostRecentFiscalYear",
+        "value": "15.75"
+      },
+      {
+        "displayName": "P/E excluding extraordinary items high, trailing 12 months",
+        "key": "pPerExcludingExtraordinaryItemsHighTrailing12Months",
+        "value": "36.27"
+      },
+      {
+        "displayName": "P/E excluding extraordinary items, most recent fiscal year quarter",
+        "key": "pPerEExcludingExtraordinaryItemsMostRecentFiscalYearQuarter",
+        "value": "16.57"
+      },
+      {
+        "displayName": "Price to sales - trailing 12 month",
+        "key": "priceToSalesTrailing12Month",
+        "value": "2.99"
+      },
+      {
+        "displayName": "Net Debt, LFY",
+        "key": "netDebtLFY",
+        "value": "-326640"
+      }
+    ],
+    "incomeStatement": [
+      {
+        "displayName": "Earnings before taxes - most recent fiscal year",
+        "key": "earningsBeforTaxesMostRecentFiscalYear",
+        "value": "654870.00"
+      },
+      {
+        "displayName": "Revenue - trailing 12 month",
+        "key": "revenueTrailing12Month)",
+        "value": "2758590.00"
+      },
+      {
+        "displayName": "Net Income available to common - most recent fiscal year",
+        "key": "netIncomeAvailableToCommonMostRecentFiscalYear",
+        "value": "492100.00"
+      },
+      {
+        "displayName": "EBITD - trailing 12 month",
+        "key": "eBITDTrailing12Month",
+        "value": "740990.00"
+      },
+      {
+        "displayName": "Net Income available to common - trailing 12 months",
+        "key": "netIncomeAvailableToCommonTrailing12Months",
+        "value": "497990.00"
+      },
+      {
+        "displayName": "Earnings per Share, Normalized, Excluding Extraordinary Items, Avg. Diluted Shares Outstanding, TTM",
+        "key": "earningsPerShareNormalizedExcludingExtraordinaryItemsAvgDilutedSharesOutstandingTTM",
+        "value": "147.87"
+      },
+      {
+        "displayName": "Revenue - most recent fiscal year",
+        "key": "revenueMostRecentFiscalYear",
+        "value": "2670210.00"
+      },
+      {
+        "displayName": "Net Income Available to Common, Normalized - most recent fiscal year",
+        "key": "netIncomeAvailabletoCommonNormalizedMostRecentFiscalYear",
+        "value": "523877.70"
+      },
+      {
+        "displayName": "Earnings before taxes - trailing 12 month",
+        "key": "earningsBeforeTaxesTrailing12Month",
+        "value": "664520.00"
+      },
+      {
+        "displayName": "Earnings before taxes Normalized - most recent fiscal year",
+        "key": "earningsBeforeTaxesNormalizedMostRecentFiscalYear",
+        "value": "696950.00"
+      },
+      {
+        "displayName": "EBITD - most recent fiscal year",
+        "key": "eBITDMostRecentFiscalYear",
+        "value": "724170.00"
+      }
+    ],
+    "growth": [
+      {
+        "displayName": "EPS Change %, TTM over TTM",
+        "key": "ePSChangePercentTTMOverTTM",
+        "value": "1.07"
+      },
+      {
+        "displayName": "Revenue growth rate, 5 year",
+        "key": "revenueGrowthRate5Year",
+        "value": "10.22"
+      },
+      {
+        "displayName": "EPS growth rate, 5 year",
+        "key": "ePSGrowthRate5Year",
+        "value": "9.42"
+      },
+      {
+        "displayName": "Revenue Change % - most recent quarter 1 year ago",
+        "key": "revenueChangePercentMostRecentQuarter1YearAgo",
+        "value": "13.93"
+      },
+      {
+        "displayName": "Growth rate% - dividend, 3 year",
+        "key": "growthRatePercentDividend3Year",
+        "value": "10.06"
+      },
+      {
+        "displayName": "Growth rate% - EPS, 3 year",
+        "key": "growthRatePercentEPS3year",
+        "value": "5.70"
+      },
+      {
+        "displayName": "Revenue/share (5 yr growth)",
+        "key": "revenuePerShare(5yrGrowth)",
+        "value": "10.95"
+      },
+      {
+        "displayName": "Free Operating Cash Flow, 5 Year CAGR",
+        "key": "freeOperatingCashFlow5YearCAGR",
+        "value": "-20.32"
+      },
+      {
+        "displayName": "Tangible Book Value, Total Equity, 5 Year CAGR",
+        "key": "tangibleBookValueTotalEquity5YearCAGR",
+        "value": "3.08"
+      },
+      {
+        "displayName": "Earnings Before Interest, Taxes, Depreciation & Amortization, 5 Year Interim CAGR",
+        "key": "earningsBeforeInterestTaxesDepreciationAmortization5YearInterimCAGR",
+        "value": "8.54"
+      },
+      {
+        "displayName": "Capital Spending growth rate, 5 year",
+        "key": "capitalSpendingGrowthRate5Year",
+        "value": "8.15"
+      },
+      {
+        "displayName": "Revenue Change %, TTM over TTM",
+        "key": "revenueChangePercentTTMPOverTTM",
+        "value": "7.70"
+      },
+      {
+        "displayName": "Growth rate% -  Revenue, 3 year",
+        "key": "growthRatePercentRevenue3Year",
+        "value": "5.80"
+      },
+      {
+        "displayName": "Book value per share growth rate, 5 year",
+        "key": "bookValuePerShareGrowthRate5Year",
+        "value": "4.87"
+      },
+      {
+        "displayName": "EPS Change % - most recent quarter 1 year ago",
+        "key": "ePSChangePercentMostRecentQuarter1YearAgo)",
+        "value": "4.62"
+      },
+      {
+        "displayName": "Net Profit Margin growth rate, 5 year",
+        "key": "netProfitMarginGrowthRate5Year",
+        "value": "-1.36"
+      },
+      {
+        "displayName": "Earnings Before Interest, Taxes, Depreciation & Amortization, 5 Year CAGR",
+        "key": "earningsBeforeInterestTaxesDepreciationAmortization5YearCAGR",
+        "value": "9.24"
+      },
+      {
+        "displayName": "Total Debt, 5 Year CAGR",
+        "key": "totalDebt5YearCAGR",
+        "value": "7.92"
+      }
+    ],
+    "persharedata": [
+      {
+        "displayName": "Dividend Per Share - 5 year average",
+        "key": "dividendperShare5YearAverage",
+        "value": "54.00"
+      },
+      {
+        "displayName": "Cash Flow per share  - trailing 12 month",
+        "key": "cashFlowPerShareTrailing12Month",
+        "value": "153.38"
+      },
+      {
+        "displayName": "Free Cash Flow per share - trailing 12 month",
+        "key": "freeCashFlowpersharetrailing12month",
+        "value": "23.45"
+      },
+      {
+        "displayName": "Cash Flow per share - most recent fiscal year",
+        "key": "cashflowPerShareMostRecentFiscalYear",
+        "value": "152.05"
+      },
+      {
+        "displayName": "Book value (tangible) per share - most recent quarter",
+        "key": "bookValueTangibleperSharemostRecentQuarter",
+        "value": "277.62"
+      },
+      {
+        "displayName": "Cash per share - most recent quarter",
+        "key": "cashPerShareMostRecentQuarter",
+        "value": "126.14"
+      },
+      {
+        "displayName": "EPS including extraordinary items - trailing 12 month",
+        "key": "ePSIncludingExtraOrdinaryItemsTrailing12Month",
+        "value": "137.64"
+      },
+      {
+        "displayName": "EPS including extraordinary items - most recent fiscal year",
+        "key": "ePSIncludingExtraordinaryItemsMostRecentFiscalYear",
+        "value": "136.01"
+      },
+      {
+        "displayName": "EBITD per share - trailing 12 month",
+        "key": "eBITDPerShareTrailing12Month",
+        "value": "204.80"
+      },
+      {
+        "displayName": "Revenue/share - trailing 12 month",
+        "key": "rRevenuePerShareTrailing12onth",
+        "value": "762.44"
+      },
+      {
+        "displayName": "EPS excluding extraordinary items - trailing 12 month",
+        "key": "eEPSExcludingExtraordinaryIitemsTrailing12onth",
+        "value": "137.64"
+      },
+      {
+        "displayName": "EPS Basic excluding extraordinary items - most recent fiscal year",
+        "key": "ePSBasicExcludingExtraordinaryItemsMostRecentFiscalYear",
+        "value": "136.01"
+      },
+      {
+        "displayName": "EPS Basic excluding extraordinary items - trailing 12 month",
+        "key": "ePSBasicExcludingExtraordinaryItemsItrailing12Month",
+        "value": "137.64"
+      },
+      {
+        "displayName": "Book value per share - most recent fiscal year",
+        "key": "bookValuePerShare MostRecentFiscalYear",
+        "value": "296.40"
+      },
+      {
+        "displayName": "Book value per share - most recent quarter",
+        "key": "bookValuePerShareMostRecentQuarter",
+        "value": "303.01"
+      },
+      {
+        "displayName": "Dividend per share - most recent fiscal year",
+        "key": "dividendPerShare MostRecentFiscalYear",
+        "value": "64.00"
+      },
+      {
+        "displayName": "Revenue/share - most recent fiscal year",
+        "key": "revenuePerShareMostRecentFiscalYear",
+        "value": "738.02"
+      },
+      {
+        "displayName": "EPS Normalized - most recent fiscal year",
+        "key": "ePSNormalizedMostRecentFiscalYear",
+        "value": "144.79"
+      },
+      {
+        "displayName": "Book value (tangible) per share - most recent fiscal year",
+        "key": "bookValuePerShareMostRecentFiscalYear",
+        "value": "270.74"
+      },
+      {
+        "displayName": "Dividends per share - trailing 12 month",
+        "key": "dividendsPerShareTrailing12Month",
+        "value": "65.00"
+      },
+      {
+        "displayName": "EPS excluding extraordinary items - most recent fiscal year",
+        "key": "eEPSExcludingExtraordinaryItemsMmostRecentFiscal yea",
+        "value": "136.01"
+      },
+      {
+        "displayName": "Cash per share - most recent fiscal year",
+        "key": "cashPerShareMostRecentFiscalYear",
+        "value": "121.81"
+      }
+    ],
+    "priceandVolume": [
+      {
+        "displayName": "Market Cap",
+        "key": "marketCap",
+        "value": "827456.61"
+      },
+      {
+        "displayName": "52 week Low Date",
+        "key": "52WeekLowDate",
+        "value": "2026-07-01T00:00:00"
+      },
+      {
+        "displayName": "Price - 1 Day % Change",
+        "key": "price1DayPercentChange",
+        "value": "-1.44"
+      },
+      {
+        "displayName": "Relative (S&P500) price percent change - 13 week",
+        "key": "relativePricePercentChange13Week",
+        "value": "-4.60"
+      },
+      {
+        "displayName": "Avg trading volume last 10 days",
+        "key": "avgTradingVolumeLast10Days",
+        "value": "2.95"
+      },
+      {
+        "displayName": "Price - 13 week price percent change",
+        "key": "price13WeekPricePercentChange",
+        "value": "-2.02"
+      },
+      {
+        "displayName": "Price - 52 week price percent change",
+        "key": "price52WeekPricePercentChange",
+        "value": "-23.18"
+      },
+      {
+        "displayName": "Avg Trading Volume Last 3 months",
+        "key": "avgTradingVolumeLast3months",
+        "value": "101.59"
+      },
+      {
+        "displayName": "Price - 5 Day % Change",
+        "key": "price5DayPercentChange",
+        "value": "-6.78"
+      },
+      {
+        "displayName": "Price % Change Month To Date",
+        "key": "pricePercentChangeMonthToDate",
+        "value": "-3.62"
+      },
+      {
+        "displayName": "Relative (S&P500) price percent change - 04 week",
+        "key": "relativePricePercentChange-04week",
+        "value": "2.96"
+      },
+      {
+        "displayName": "52 week High Date",
+        "key": "52WeekHighDate",
+        "value": "2026-02-03T00:00:00"
+      },
+      {
+        "displayName": "Price - 26 week price percent change",
+        "key": "price26WeekPricePercentChange",
+        "value": "-16.10"
+      },
+      {
+        "displayName": "PDATE",
+        "key": "PDATE",
+        "value": "2026-08-18T00:00:00"
+      },
+      {
+        "displayName": "Price - YTD price percent change",
+        "key": "priceYTDPricePercentChange",
+        "value": "-27.85"
+      },
+      {
+        "displayName": "Relative (S&P500) price percent change - 52 week",
+        "key": "relativePricePercentChange52Week",
+        "value": "-19.16"
+      },
+      {
+        "displayName": "NPRICE",
+        "key": "NPRICE",
+        "value": "2280.00"
+      },
+      {
+        "displayName": "Relative (S&P500) price percent change - 26 week",
+        "key": "relativePricePercentChange26Week",
+        "value": "-9.34"
+      },
+      {
+        "displayName": "52 week Low",
+        "key": "52WeekLow",
+        "value": "1976.80"
+      },
+      {
+        "displayName": "52 week High",
+        "key": "52WeekHigh",
+        "value": "3350.00"
+      },
+      {
+        "displayName": "Beta",
+        "key": "beta",
+        "value": "0.98"
+      },
+      {
+        "displayName": "Relative (S&P500) price percent change - Year to Date",
+        "key": "relativePricePercentChangeYearToDate",
+        "value": "-20.39"
+      }
+    ]
+  },
+  "futureExpiryDates": null,
+  "futureOverviewData": null,
+  "initialStockFinancialData": null,
+  "analystView": [
+    {
+      "colorCode": "#02552E",
+      "ratingName": "Strong Buy",
+      "ratingValue": 1,
+      "numberOfAnalystsLatest": "9",
+      "numberOfAnalysts1WeekAgo": "9",
+      "numberOfAnalysts1MonthAgo": "9",
+      "numberOfAnalysts2MonthAgo": "9",
+      "numberOfAnalysts3MonthAgo": "9"
+    }
+  ],
+  "recosBar": {
+    "stockAnalyst": [
+      {
+        "colorCode": "#B40000",
+        "ratingName": "Strong Sell",
+        "ratingValue": 5,
+        "minValue": 4.2,
+        "maxValue": 5,
+        "numberOfAnalysts": 2
+      },
+      {
+        "colorCode": "#FF0000",
+        "ratingName": "Sell",
+        "ratingValue": 4,
+        "minValue": 3.4,
+        "maxValue": 4.2,
+        "numberOfAnalysts": 3
+      },
+      {
+        "colorCode": "#898989",
+        "ratingName": "Hold",
+        "ratingValue": 3,
+        "minValue": 2.6,
+        "maxValue": 3.4,
+        "numberOfAnalysts": 11
+      },
+      {
+        "colorCode": "#06AA5A",
+        "ratingName": "Buy",
+        "ratingValue": 2,
+        "minValue": 1.8,
+        "maxValue": 2.6,
+        "numberOfAnalysts": 16
+      },
+      {
+        "colorCode": "#02552E",
+        "ratingName": "Strong Buy",
+        "ratingValue": 1,
+        "minValue": 1,
+        "maxValue": 1.8,
+        "numberOfAnalysts": 9
+      }
+    ],
+    "tickerRatingValue": 2,
+    "isDataPresent": true,
+    "noOfRecommendations": 41,
+    "meanValue": 2.34146341,
+    "tickerPercentage": 67.68
+  },
+  "riskMeter": {
+    "categoryName": "Balanced risk",
+    "stdDev": 32.46
+  },
+  "shareholding": [
+    {
+      "categoryName": "Shareholding of Promoter and Promoter Group",
+      "displayName": "Promoter",
+      "categories": [
+        {
+          "holdingDate": "2025-09-30",
+          "percentage": "71.77"
+        },
+        {
+          "holdingDate": "2025-12-31",
+          "percentage": "71.77"
+        },
+        {
+          "holdingDate": "2026-03-31",
+          "percentage": "71.77"
+        },
+        {
+          "holdingDate": "2026-06-30",
+          "percentage": "71.77"
+        }
+      ]
+    },
+    {
+      "categoryName": "FII",
+      "displayName": "FII",
+      "categories": [
+        {
+          "holdingDate": "2025-09-30",
+          "percentage": "10.33"
+        },
+        {
+          "holdingDate": "2025-12-31",
+          "percentage": "10.37"
+        },
+        {
+          "holdingDate": "2026-03-31",
+          "percentage": "9.66"
+        },
+        {
+          "holdingDate": "2026-06-30",
+          "percentage": "9.07"
+        }
+      ]
+    },
+    {
+      "categoryName": "Mutual Fund/Insurance",
+      "displayName": "MF",
+      "categories": [
+        {
+          "holdingDate": "2025-09-30",
+          "percentage": "5.59"
+        },
+        {
+          "holdingDate": "2025-12-31",
+          "percentage": "5.52"
+        },
+        {
+          "holdingDate": "2026-03-31",
+          "percentage": "5.77"
+        },
+        {
+          "holdingDate": "2026-06-30",
+          "percentage": "5.68"
+        }
+      ]
+    },
+    {
+      "categoryName": "Other",
+      "displayName": "Other",
+      "categories": [
+        {
+          "holdingDate": "2025-09-30",
+          "percentage": "12.31"
+        },
+        {
+          "holdingDate": "2025-12-31",
+          "percentage": "12.34"
+        },
+        {
+          "holdingDate": "2026-03-31",
+          "percentage": "12.80"
+        },
+        {
+          "holdingDate": "2026-06-30",
+          "percentage": "13.48"
+        }
+      ]
+    }
+  ],
+  "stockCorporateActionData": {
+    "bonus": [],
+    "dividend": [
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.12.0000 per share(1200%)Interim Dividend",
+        "recordDate": "2026-07-15",
+        "xdDate": "2026-07-15",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 12,
+        "percentage": 1200,
+        "dateOfAnnouncement": "2026-06-22",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2026-07-15"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.31.0000 per share(3100%)Final Dividend",
+        "recordDate": "2026-05-25",
+        "xdDate": "2026-05-25",
+        "interimOrFinal": "Final",
+        "instrumentType": 5,
+        "value": 31,
+        "percentage": 3100,
+        "dateOfAnnouncement": "2026-04-09",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2026-05-25"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.11.0000 per share(1100%)Third Interim Dividend",
+        "recordDate": "2026-01-17",
+        "xdDate": "2026-01-16",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 11,
+        "percentage": 1100,
+        "dateOfAnnouncement": "2025-12-23",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2026-01-16"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.46.0000 per share(4600%)Special Dividend",
+        "recordDate": "2026-01-17",
+        "xdDate": "2026-01-16",
+        "interimOrFinal": "Special",
+        "instrumentType": 5,
+        "value": 46,
+        "percentage": 4600,
+        "dateOfAnnouncement": "2025-12-24",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2026-01-16"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.11.0000 per share(1100%)Second Interim Dividend",
+        "recordDate": "2025-10-15",
+        "xdDate": "2025-10-15",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 11,
+        "percentage": 1100,
+        "dateOfAnnouncement": "2025-09-22",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2025-10-15"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.11.0000 per share(1100%)Third Interim Dividend",
+        "recordDate": "2025-07-16",
+        "xdDate": "2025-07-16",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 11,
+        "percentage": 1100,
+        "dateOfAnnouncement": "2025-06-27",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2025-07-16"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.30.0000 per share(3000%)Final Dividend",
+        "recordDate": "2025-06-04",
+        "xdDate": "2025-06-04",
+        "interimOrFinal": "Final",
+        "instrumentType": 5,
+        "value": 30,
+        "percentage": 3000,
+        "dateOfAnnouncement": "2025-04-11",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2025-06-04"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.10.0000 per share(1000%)Third Interim Dividend",
+        "recordDate": "2025-01-17",
+        "xdDate": "2025-01-17",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 10,
+        "percentage": 1000,
+        "dateOfAnnouncement": "2024-12-31",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2025-01-17"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.66.0000 per share(6600%)Special Dividend",
+        "recordDate": "2025-01-17",
+        "xdDate": "2025-01-17",
+        "interimOrFinal": "Special",
+        "instrumentType": 5,
+        "value": 66,
+        "percentage": 6600,
+        "dateOfAnnouncement": "2025-01-09",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2025-01-17"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.10.0000 per share(1000%)Second Interim Dividend",
+        "recordDate": "2024-10-18",
+        "xdDate": "2024-10-18",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 10,
+        "percentage": 1000,
+        "dateOfAnnouncement": "2024-09-30",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2024-10-18"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.10.0000 per share(1000%)Interim Dividend",
+        "recordDate": "2024-07-20",
+        "xdDate": "2024-07-19",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 10,
+        "percentage": 1000,
+        "dateOfAnnouncement": "2024-06-28",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2024-07-19"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.28.0000 per share(2800%)Final Dividend",
+        "recordDate": "2024-05-16",
+        "xdDate": "2024-05-16",
+        "interimOrFinal": "Final",
+        "instrumentType": 5,
+        "value": 28,
+        "percentage": 2800,
+        "dateOfAnnouncement": "2024-04-12",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2024-05-16"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.9.0000 per share(900%)Third Interim Dividend",
+        "recordDate": "2024-01-19",
+        "xdDate": "2024-01-19",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 9,
+        "percentage": 900,
+        "dateOfAnnouncement": "2023-12-29",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2024-01-19"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.18.0000 per share(1800%)Special Dividend",
+        "recordDate": "2024-01-19",
+        "xdDate": "2024-01-19",
+        "interimOrFinal": "Special",
+        "instrumentType": 5,
+        "value": 18,
+        "percentage": 1800,
+        "dateOfAnnouncement": "2024-01-11",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2024-01-19"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.9.0000 per share(900%)Second Interim Dividend",
+        "recordDate": "2023-10-19",
+        "xdDate": "2023-10-19",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 9,
+        "percentage": 900,
+        "dateOfAnnouncement": "2023-09-29",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2023-10-19"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.9.0000 per share(900%)Interim Dividend",
+        "recordDate": "2023-07-20",
+        "xdDate": "2023-07-20",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 9,
+        "percentage": 900,
+        "dateOfAnnouncement": "2023-06-30",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2023-07-20"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.24.0000 per share(2400%)Final Dividend",
+        "recordDate": "2023-06-15",
+        "xdDate": "2023-06-15",
+        "interimOrFinal": "Final",
+        "instrumentType": 5,
+        "value": 24,
+        "percentage": 2400,
+        "dateOfAnnouncement": "2023-04-12",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2023-06-15"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.8.0000 per share(800%)Third Interim Dividend",
+        "recordDate": "2023-01-17",
+        "xdDate": "2023-01-16",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 8,
+        "percentage": 800,
+        "dateOfAnnouncement": "2022-12-30",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2023-01-16"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.67.0000 per share(6700%)Special Dividend",
+        "recordDate": "2023-01-17",
+        "xdDate": "2023-01-16",
+        "interimOrFinal": "Special",
+        "instrumentType": 5,
+        "value": 67,
+        "percentage": 6700,
+        "dateOfAnnouncement": "2023-01-09",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2023-01-16"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.8.0000 per share (800%) Second Interim Dividend",
+        "recordDate": "2022-10-18",
+        "xdDate": "2022-10-17",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 8,
+        "percentage": 800,
+        "dateOfAnnouncement": "2022-10-10",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2022-10-17"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.8.0000 per share(800%)Interim Dividend",
+        "recordDate": "2022-07-16",
+        "xdDate": "2022-07-14",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 8,
+        "percentage": 800,
+        "dateOfAnnouncement": "2022-06-30",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2022-07-14"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.22.0000 per share(2200%)Final Dividend",
+        "recordDate": "2022-05-26",
+        "xdDate": "2022-05-25",
+        "interimOrFinal": "Final",
+        "instrumentType": 5,
+        "value": 22,
+        "percentage": 2200,
+        "dateOfAnnouncement": "2022-04-11",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2022-05-25"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.7.0000 per share (700%) Third Interim Dividend",
+        "recordDate": "2022-01-20",
+        "xdDate": "2022-01-19",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 7,
+        "percentage": 700,
+        "dateOfAnnouncement": "2021-12-31",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2022-01-19"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.7.0000 per share(700%)Second Interim Dividend",
+        "recordDate": "2021-10-19",
+        "xdDate": "2021-10-14",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 7,
+        "percentage": 700,
+        "dateOfAnnouncement": "2021-09-30",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2021-10-14"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.7.0000 per share(700%)Interim Dividend",
+        "recordDate": "2021-07-16",
+        "xdDate": "2021-07-15",
+        "interimOrFinal": "Interim",
+        "instrumentType": 5,
+        "value": 7,
+        "percentage": 700,
+        "dateOfAnnouncement": "2021-06-30",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2021-07-15"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Rs.15.0000 per share(1500%)Final Dividend",
+        "recordDate": "2021-05-27",
+        "xdDate": "2021-05-25",
+        "interimOrFinal": "Final",
+        "instrumentType": 5,
+        "value": 15,
+        "percentage": 1500,
+        "dateOfAnnouncement": "2021-04-12",
+        "bookClosureStartDate": "",
+        "bookClosureEndDate": "",
+        "sortDate": "2021-05-25"
+      }
+    ],
+    "rights": [],
+    "splits": [],
+    "annualGeneralMeeting": [
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2026-05-05",
+        "recordDate": "",
+        "agmDate": "2026-06-09",
+        "purpose": "AGM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2025-05-02",
+        "recordDate": "",
+        "agmDate": "2025-06-19",
+        "purpose": "AGM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2025-03-26",
+        "recordDate": "",
+        "agmDate": "2025-04-26",
+        "purpose": "POM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2024-05-13",
+        "recordDate": "",
+        "agmDate": "2024-05-31",
+        "purpose": "AGM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Buy Back of Shares",
+        "dateOfAnnouncement": "2023-11-16",
+        "recordDate": "",
+        "agmDate": "2023-11-25",
+        "purpose": "Others"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2023-10-17",
+        "recordDate": "",
+        "agmDate": "2023-11-17",
+        "purpose": "POM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2023-04-12",
+        "recordDate": "",
+        "agmDate": "2023-06-29",
+        "purpose": "AGM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2023-01-13",
+        "recordDate": "",
+        "agmDate": "2023-02-14",
+        "purpose": "POM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2022-05-19",
+        "recordDate": "",
+        "agmDate": "2022-06-09",
+        "purpose": "AGM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2022-03-21",
+        "recordDate": "",
+        "agmDate": "2022-04-19",
+        "purpose": "POM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2022-01-14",
+        "recordDate": "",
+        "agmDate": "2022-02-15",
+        "purpose": "POM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "dateOfAnnouncement": "2021-05-19",
+        "recordDate": "",
+        "agmDate": "2021-06-10",
+        "purpose": "AGM"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "Buy Back of Shares",
+        "dateOfAnnouncement": "2022-02-14",
+        "recordDate": "2022-02-23",
+        "agmDate": "",
+        "purpose": "Others"
+      }
+    ],
+    "boardMeetings": [
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2026-07-09",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2026-04-09",
+        "purpose": "Audited Results & Final Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2026-01-12",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2025-10-09",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2025-04-10",
+        "purpose": "Audited Results & Final Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2025-01-09",
+        "purpose": "Quarterly Results & 3rd Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2024-10-10",
+        "purpose": "Quarterly Results & 2nd Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2024-07-11",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2024-04-12",
+        "purpose": "Audited Results & Final Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2024-01-11",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2023-10-11",
+        "purpose": "Qtr Results, Interim Dividend & Buy Back"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2023-07-12",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2023-04-12",
+        "purpose": "Audited Results & Final Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2023-01-09",
+        "purpose": "Quarterly Results & 3rd Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2022-10-10",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2022-07-08",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2022-04-11",
+        "purpose": "Audited Results & Final Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2022-01-12",
+        "purpose": "Qtr Results, Interim Dividend & Buy Back"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2021-10-08",
+        "purpose": "Quarterly Results & 2nd Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2021-07-08",
+        "purpose": "Quarterly Results & Interim Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2021-04-12",
+        "purpose": "Audited Results & Final Dividend"
+      },
+      {
+        "tickerId": "S0003051",
+        "companyName": "Tata Consultancy Services",
+        "remarks": "",
+        "boardMeetDate": "2021-01-08",
+        "purpose": "Quarterly Results & 3rd Interim Dividend"
+      }
+    ]
+  },
+  "stockDetailsReusableData": {
+    "close": "2281.00",
+    "date": "19 Aug 2026",
+    "time": "10:29:26",
+    "price": "2287.00",
+    "percentChange": "0.26",
+    "marketCap": "827456.61",
+    "yhigh": "3336.70",
+    "ylow": "1976.00",
+    "high": "2302.85",
+    "low": "2258.30",
+    "pPerEBasicExcludingExtraordinaryItemsTTM": "14.76",
+    "currentDividendYieldCommonStockPrimaryIssueLTM": "2.85",
+    "totalDebtPerTotalEquityMostRecentQuarter": "0.10",
+    "priceYTDPricePercentChange": "-27.85",
+    "price5DayPercentChange": "-6.78",
+    "NetIncome": "49210.00",
+    "FiscalYear": "2026",
+    "interimNetIncome": "13349.00",
+    "stockAnalyst": [
+      {
+        "colorCode": "#02552E",
+        "ratingName": "Strong Buy",
+        "ratingValue": 1,
+        "numberOfAnalystsLatest": "9",
+        "numberOfAnalysts1WeekAgo": "9",
+        "numberOfAnalysts1MonthAgo": "9",
+        "numberOfAnalysts2MonthAgo": "9",
+        "numberOfAnalysts3MonthAgo": "9"
+      },
+      {
+        "colorCode": "#06AA5A",
+        "ratingName": "Buy",
+        "ratingValue": 2,
+        "numberOfAnalystsLatest": "16",
+        "numberOfAnalysts1WeekAgo": "16",
+        "numberOfAnalysts1MonthAgo": "16",
+        "numberOfAnalysts2MonthAgo": "17",
+        "numberOfAnalysts3MonthAgo": "17"
+      },
+      {
+        "colorCode": "#898989",
+        "ratingName": "Hold",
+        "ratingValue": 3,
+        "numberOfAnalystsLatest": "11",
+        "numberOfAnalysts1WeekAgo": "11",
+        "numberOfAnalysts1MonthAgo": "11",
+        "numberOfAnalysts2MonthAgo": "10",
+        "numberOfAnalysts3MonthAgo": "10"
+      },
+      {
+        "colorCode": "#FF0000",
+        "ratingName": "Sell",
+        "ratingValue": 4,
+        "numberOfAnalystsLatest": "3",
+        "numberOfAnalysts1WeekAgo": "3",
+        "numberOfAnalysts1MonthAgo": "3",
+        "numberOfAnalysts2MonthAgo": "2",
+        "numberOfAnalysts3MonthAgo": "3"
+      },
+      {
+        "colorCode": "#B40000",
+        "ratingName": "Strong Sell",
+        "ratingValue": 5,
+        "numberOfAnalystsLatest": "2",
+        "numberOfAnalysts1WeekAgo": "2",
+        "numberOfAnalysts1MonthAgo": "2",
+        "numberOfAnalysts2MonthAgo": "2",
+        "numberOfAnalysts3MonthAgo": "2"
+      },
+      {
+        "colorCode": "",
+        "ratingName": "Total",
+        "ratingValue": 6,
+        "numberOfAnalystsLatest": "41",
+        "numberOfAnalysts1WeekAgo": "41",
+        "numberOfAnalysts1MonthAgo": "41",
+        "numberOfAnalysts2MonthAgo": "40",
+        "numberOfAnalysts3MonthAgo": "41"
+      }
+    ],
+    "peerCompanyList": [
+      {
+        "tickerId": "S0003032",
+        "companyName": "Infosys",
+        "priceToBookValueRatio": 4.78,
+        "priceToEarningsValueRatio": 14.79,
+        "marketCap": 453305.21,
+        "price": 1117.05,
+        "percentChange": 0.18,
+        "netChange": 2.05,
+        "returnOnAverageEquity5YearAverage": 30.67,
+        "returnOnAverageEquityTrailing12Month": 31.21,
+        "ltDebtPerEquityMostRecentFiscalYear": 6.48,
+        "netProfitMargin5YearAverage": 16.86,
+        "netProfitMarginPercentTrailing12Month": 16.5,
+        "dividendYieldIndicatedAnnualDividend": 4.38,
+        "totalSharesOutstanding": 405.81,
+        "languageSupport": "\u0907\u0928\u094d\u092b\u094b\u0938\u093f\u0938",
+        "imageUrl": "https://www.livemint.com/lm-img/markets/logo/tr/S0003032.png",
+        "overallRating": "Bearish",
+        "yhigh": 1727.85,
+        "ylow": 984
+      },
+      {
+        "tickerId": "S0003045",
+        "companyName": "HCL Technologies",
+        "priceToBookValueRatio": 4.35,
+        "priceToEarningsValueRatio": 18.81,
+        "marketCap": 358882.21,
+        "price": 1322.5,
+        "percentChange": 1.73,
+        "netChange": 22.5,
+        "returnOnAverageEquity5YearAverage": 23.46,
+        "returnOnAverageEquityTrailing12Month": null,
+        "ltDebtPerEquityMostRecentFiscalYear": 4.28,
+        "netProfitMargin5YearAverage": 14.36,
+        "netProfitMarginPercentTrailing12Month": 12.97,
+        "dividendYieldIndicatedAnnualDividend": 4.98,
+        "totalSharesOutstanding": 271.37,
+        "languageSupport": "\u090f\u091a\u0938\u0940\u090f\u0932 \u091f\u0947\u0915\u094d\u0928\u094b\u0932\u0949\u091c\u0940\u091c",
+        "imageUrl": "https://www.livemint.com/lm-img/markets/logo/tr/S0003045.png",
+        "overallRating": "Neutral",
+        "yhigh": 1770,
+        "ylow": 1030
+      },
+      {
+        "tickerId": "S0003115",
+        "companyName": "Tech Mahindra",
+        "priceToBookValueRatio": 5.2,
+        "priceToEarningsValueRatio": 27.9,
+        "marketCap": 155069.02,
+        "price": 1582.2,
+        "percentChange": -0.65,
+        "netChange": -10.3,
+        "returnOnAverageEquity5YearAverage": 16.03,
+        "returnOnAverageEquityTrailing12Month": null,
+        "ltDebtPerEquityMostRecentFiscalYear": 5.36,
+        "netProfitMargin5YearAverage": 8.45,
+        "netProfitMarginPercentTrailing12Month": 8.72,
+        "dividendYieldIndicatedAnnualDividend": 3.24,
+        "totalSharesOutstanding": 98.01,
+        "languageSupport": "\u091f\u0947\u0915 \u092e\u0939\u093f\u0902\u0926\u094d\u0930\u093e",
+        "imageUrl": "https://www.livemint.com/lm-img/markets/logo/tr/S0003115.png",
+        "overallRating": "Neutral",
+        "yhigh": 1850,
+        "ylow": 1304.25
+      }
+    ],
+    "sectorPriceToEarningsValueRatio": "27.16",
+    "averageRating": "Buy",
+    "promoterShareHolding": null,
+    "mutualFundShareHolding": {
+      "holdingDate": "2026-06-30",
+      "percentage": "5.68"
+    }
+  },
+  "stockFinancialData": [
+    {
+      "stockFinancialMap": {
+        "CAS": [
+          {
+            "displayName": "Issuance( Retirement)of Debt Net ",
+            "key": "Issuance(Retirement)ofDebtNet",
+            "value": "-1861",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Changein Cash ",
+            "key": "NetChangeinCash",
+            "value": "-1925",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cash Taxes Paid ",
+            "key": "CashTaxesPaid",
+            "value": "14384.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income/ Starting Line ",
+            "key": "NetIncome/StartingLine",
+            "value": "49454.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Cash Dividends Paid ",
+            "key": "TotalCashDividendsPaid",
+            "value": "-39437",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Changesin Working Capital ",
+            "key": "ChangesinWorkingCapital",
+            "value": "-16594",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cashfrom Operating Activities ",
+            "key": "CashfromOperatingActivities",
+            "value": "52094.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cash Interest Paid ",
+            "key": "CashInterestPaid",
+            "value": "901.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cashfrom Financing Activities ",
+            "key": "CashfromFinancingActivities",
+            "value": "-42133",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Issuance( Retirement)of Stock Net ",
+            "key": "Issuance(Retirement)ofStockNet",
+            "value": "126.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Depreciation/ Depletion ",
+            "key": "Depreciation/Depletion",
+            "value": "5560.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Investing Cash Flow Items Total ",
+            "key": "OtherInvestingCashFlowItemsTotal",
+            "value": "-8145",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Capital Expenditures ",
+            "key": "CapitalExpenditures",
+            "value": "-4700",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Type ",
+            "key": "periodType",
+            "value": "Months",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Foreign Exchange Effects ",
+            "key": "ForeignExchangeEffects",
+            "value": "959.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Non- Cash Items ",
+            "key": "Non-CashItems",
+            "value": "13674.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Financing Cash Flow Items ",
+            "key": "FinancingCashFlowItems",
+            "value": "-961",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Length ",
+            "key": "periodLength",
+            "value": "12",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cashfrom Investing Activities ",
+            "key": "CashfromInvestingActivities",
+            "value": "-12845",
+            "qoQComp": null,
+            "yqoQComp": null
+          }
+        ],
+        "BAL": [
+          {
+            "displayName": "Total Liabilities Shareholders' Equity ",
+            "key": "TotalLiabilitiesShareholders'Equity",
+            "value": "182372.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Accumulated Depreciation Total ",
+            "key": "AccumulatedDepreciationTotal",
+            "value": "-28176",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cash Equivalents ",
+            "key": "CashEquivalents",
+            "value": "3217.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Liabilities Total ",
+            "key": "OtherLiabilitiesTotal",
+            "value": "2196.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Accrued Expenses ",
+            "key": "AccruedExpenses",
+            "value": "18647.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Long Term Debt ",
+            "key": "LongTermDebt",
+            "value": "126.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Common Stock Total ",
+            "key": "CommonStockTotal",
+            "value": "362.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Equity Total ",
+            "key": "OtherEquityTotal",
+            "value": "6290.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Current Assets Total ",
+            "key": "OtherCurrentAssetsTotal",
+            "value": "6506.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Prepaid Expenses ",
+            "key": "PrepaidExpenses",
+            "value": "2432.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Assets ",
+            "key": "TotalAssets",
+            "value": "182372.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Current Portof LT Debt/ Capital Leases ",
+            "key": "CurrentPortofLTDebt/CapitalLeases",
+            "value": "1830.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cash ",
+            "key": "Cash",
+            "value": "3188.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Equity ",
+            "key": "TotalEquity",
+            "value": "107240.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Long Term Investments ",
+            "key": "LongTermInvestments",
+            "value": "1552.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Retained Earnings( Accumulated Deficit) ",
+            "key": "RetainedEarnings(AccumulatedDeficit)",
+            "value": "100663.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Common Shares Outstanding ",
+            "key": "TotalCommonSharesOutstanding",
+            "value": "361.81",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Property/ Plant/ Equipment Total- Gross ",
+            "key": "Property/Plant/EquipmentTotal-Gross",
+            "value": "52900.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Tangible Book Valueper Share Common Eq ",
+            "key": "TangibleBookValueperShareCommonEq",
+            "value": "270.74",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Goodwill Net ",
+            "key": "GoodwillNet",
+            "value": "9108.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Liabilities ",
+            "key": "TotalLiabilities",
+            "value": "75132.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Debt ",
+            "key": "TotalDebt",
+            "value": "11409.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Short Term Investments ",
+            "key": "ShortTermInvestments",
+            "value": "37668.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Cashand Short Term Investments ",
+            "key": "CashandShortTermInvestments",
+            "value": "44073.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Receivables Net ",
+            "key": "TotalReceivablesNet",
+            "value": "82439.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Notes Payable/ Short Term Debt ",
+            "key": "NotesPayable/ShortTermDebt",
+            "value": "0.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Deferred Income Tax ",
+            "key": "DeferredIncomeTax",
+            "value": "1205.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Accounts Receivable- Trade Net ",
+            "key": "AccountsReceivable-TradeNet",
+            "value": "75860.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Property/ Plant/ Equipment Total- Net ",
+            "key": "Property/Plant/EquipmentTotal-Net",
+            "value": "24724.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Minority Interest ",
+            "key": "MinorityInterest",
+            "value": "1238.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Current Liabilities ",
+            "key": "TotalCurrentLiabilities",
+            "value": "60914.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Inventory ",
+            "key": "TotalInventory",
+            "value": "255.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Accounts Payable ",
+            "key": "AccountsPayable",
+            "value": "14808.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Currentliabilities Total ",
+            "key": "OtherCurrentliabilitiesTotal",
+            "value": "25629.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Long Term Debt ",
+            "key": "TotalLongTermDebt",
+            "value": "9579.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Intangibles Net ",
+            "key": "IntangiblesNet",
+            "value": "176.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Long Term Assets Total ",
+            "key": "OtherLongTermAssetsTotal",
+            "value": "7581.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Note Receivable- Long Term ",
+            "key": "NoteReceivable-LongTerm",
+            "value": "3526.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Unrealized Gain( Loss) ",
+            "key": "UnrealizedGain(Loss)",
+            "value": "-75",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Length ",
+            "key": "periodLength",
+            "value": "0.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Current Assets ",
+            "key": "TotalCurrentAssets",
+            "value": "135705.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Capital Lease Obligations ",
+            "key": "CapitalLeaseObligations",
+            "value": "9453.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          }
+        ],
+        "INC": [
+          {
+            "displayName": "Total Operating Expense ",
+            "key": "TotalOperatingExpense",
+            "value": "204389.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Net ",
+            "key": "OtherNet",
+            "value": "-380",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Diluted Weighted Average Shares ",
+            "key": "DilutedWeightedAverageShares",
+            "value": "361.81",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Gain( Loss)on Saleof Assets ",
+            "key": "Gain(Loss)onSaleofAssets",
+            "value": "17.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Depreciation/ Amortization ",
+            "key": "Depreciation/Amortization",
+            "value": "5560.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Operating Income ",
+            "key": "OperatingIncome",
+            "value": "62632.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income ",
+            "key": "NetIncome",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Income Availableto Com Excl Extra Ord ",
+            "key": "IncomeAvailabletoComExclExtraOrd",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Other Operating Expenses Total ",
+            "key": "OtherOperatingExpensesTotal",
+            "value": "5791.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income Before Taxes ",
+            "key": "NetIncomeBeforeTaxes",
+            "value": "65487.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Minority Interest ",
+            "key": "MinorityInterest",
+            "value": "-244",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income After Taxes ",
+            "key": "NetIncomeAfterTaxes",
+            "value": "49454.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Income Availableto Com Incl Extra Ord ",
+            "key": "IncomeAvailabletoComInclExtraOrd",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Costof Revenue Total ",
+            "key": "CostofRevenueTotal",
+            "value": "4399.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Gross Profit ",
+            "key": "GrossProfit",
+            "value": "262622.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Interest Inc( Exp) Net- Non- Op Total ",
+            "key": "InterestInc(Exp)Net-Non-OpTotal",
+            "value": "3218.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Unusual Expense( Income) ",
+            "key": "UnusualExpense(Income)",
+            "value": "4225.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Diluted Net Income ",
+            "key": "DilutedNetIncome",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "DPS- Common Stock Primary Issue ",
+            "key": "DPS-CommonStockPrimaryIssue",
+            "value": "64.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Provisionfor Income Taxes ",
+            "key": "ProvisionforIncomeTaxes",
+            "value": "16033.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Type ",
+            "key": "periodType",
+            "value": "Months",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Net Income Before Extra Items ",
+            "key": "NetIncomeBeforeExtraItems",
+            "value": "49210.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Total Revenue ",
+            "key": "TotalRevenue",
+            "value": "267021.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "period Length ",
+            "key": "periodLength",
+            "value": "12",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Revenue ",
+            "key": "Revenue",
+            "value": "267021.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Selling/ General/ Admin Expenses Total ",
+            "key": "Selling/General/AdminExpensesTotal",
+            "value": "184414.00",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Diluted Normalized EPS ",
+            "key": "DilutedNormalizedEPS",
+            "value": "144.79",
+            "qoQComp": null,
+            "yqoQComp": null
+          },
+          {
+            "displayName": "Diluted EPS Excluding Extra Ord Items ",
+            "key": "DilutedEPSExcludingExtraOrdItems",
+            "value": "136.01",
+            "qoQComp": null,
+            "yqoQComp": null
+          }
+        ]
+      },
+      "FiscalYear": "2026",
+      "EndDate": "2026-03-31",
+      "Type": "Annual",
+      "StatementDate": "2021-03-31",
+      "fiscalPeriodNumber": 0
+    }
+  ],
+  "recentNews": [
+    {
+      "id": 11786857696760,
+      "headline": "Mint Explainer | Why India Inc is retaining more of its profits",
+      "date": "2026-08-16T06:26:39+0000",
+      "timeToRead": 3,
+      "url": "/companies/news/india-inc-dividend-payout-ratio-fy26-profits-11786857696760.html",
+      "listimage": "https://www.livemint.com/lm-img/img/2026/08/16/90x90/mutual_fund_5_1756395514713_1756395521060_1786861302681_e87c57fa-d217-4b15-8a07-934e7e9d2718.jpg",
+      "thumbnailImage": "https://www.livemint.com/lm-img/img/2026/08/16/90x90/mutual_fund_5_1756395514713_1756395521060_1786861302681_e87c57fa-d217-4b15-8a07-934e7e9d2718.jpg",
+      "videoBody": null,
+      "summary": "Dividends hit a record  <span class='webrupee'>\u20b9</span>5.13 trillion in FY26, but payouts grew slower than profits, pushing the payout ratio to a 12-year low as companies retain more cash.",
+      "lastPublishedDate": "2026-08-16T06:26:39+0000",
+      "leadMedia": {
+        "image": {
+          "images": {
+            "thumbnailImage": "https://www.livemint.com/lm-img/img/2026/08/16/90x90/mutual_fund_5_1756395514713_1756395521060_1786861302681_e87c57fa-d217-4b15-8a07-934e7e9d2718.jpg",
+            "bigImage": "https://www.livemint.com/lm-img/img/2026/08/16/600x338/mutual_fund_5_1756395514713_1756395521060_1786861302681_92fe212b-d17e-48ad-b50d-b02970ebe03f.jpg"
+          }
+        }
+      },
+      "metadata": {
+        "url": "/companies/news/india-inc-dividend-payout-ratio-fy26-profits-11786857696760.html"
+      }
+    }
+  ]
+}
