@@ -334,3 +334,162 @@ class ProviderRequest(Base):
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ThemeRun(Base):
+    """One pass over the sources, and what it could actually read.
+
+    `sources_unavailable` is the column that stops a quiet failure looking like a quiet
+    market. Commentary is scrape-only and fails often; a run that found three themes instead
+    of eight because the documents would not download must be distinguishable from a run that
+    genuinely found three.
+    """
+
+    __tablename__ = "theme_runs"
+    __table_args__ = (Index("ix_theme_runs_started", "started_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: `requested` or `scheduled`.
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="requested")
+    #: `running`, `complete`, `failed`, or `no_reading` when every source was unavailable.
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    #: Source kinds this run could not read, so degraded detection is visible rather than
+    #: inferred from a thin result.
+    sources_unavailable: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    documents_read: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Theme(Base):
+    """A concept the market is talking about, with the counts that evidence it.
+
+    The counts are stored rather than recomputed on read, because they are the claim: a reader
+    is being told "three companies, two periods", and that has to be the figure the run
+    actually measured, not one re-derived later from a different set of rows.
+
+    Carries the same lifecycle `insights` gained in `feed-freshness-and-run-control` and for
+    the same reason — a theme that stops being evidenced must stop being displayed without
+    losing the record that it was once true.
+    """
+
+    __tablename__ = "themes"
+    __table_args__ = (
+        Index("ix_themes_key", "key", unique=True),
+        Index("ix_themes_withdrawn", "withdrawn_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    breadth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    persistence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sector_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_kinds: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    #: When this was first evidenced — never reset by a later run, so "emerging since March"
+    #: stays readable.
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    #: When its counts were last established.
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    withdrawal_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ThemeReference(Base):
+    """One company saying one thing in one period, traceable to its document."""
+
+    __tablename__ = "theme_references"
+    __table_args__ = (
+        Index("ix_theme_references_theme", "theme_key"),
+        # A company saying the same thing in the same period twice is one reference.
+        Index(
+            "ix_theme_references_unique",
+            "theme_key",
+            "symbol",
+            "period",
+            "source_ref",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    theme_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    period: Mapped[str] = mapped_column(String(32), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+    sector: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ChainLink(Base):
+    """One tier of what a theme consumes, why, and who proposed it.
+
+    Stored rather than consumed as a transient prompt result. That is what makes the model's
+    contribution auditable: a reader can see why a cable manufacturer is on their screen, and
+    reject the link if the reasoning is wrong.
+
+    `rejected` survives later runs deliberately. Without that, every run re-proposes the same
+    wrong link and the reader re-rejects it forever, which is how a review surface becomes one
+    people stop reading.
+    """
+
+    __tablename__ = "chain_links"
+    __table_args__ = (
+        Index("ix_chain_links_theme_tier", "theme_key", "tier"),
+        Index("ix_chain_links_identity", "theme_key", "tier", "label", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    theme_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: What this tier supplies; null for the first tier, which supplies the theme itself.
+    supplies: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    #: The model that proposed it. Attribution is what keeps this from reading as a
+    #: measurement the platform made.
+    proposed_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    supplier_descriptions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ThemeCandidate(Base):
+    """An instrument a tier resolved to, and how well its exposure is established.
+
+    `exposure` is a named grade and never a number. A number would be sortable, and sorting
+    candidates by theme exposure is a ranking this platform does not permit.
+    """
+
+    __tablename__ = "theme_candidates"
+    __table_args__ = (
+        Index("ix_theme_candidates_theme", "theme_key"),
+        Index("ix_theme_candidates_identity", "theme_key", "tier", "symbol", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    theme_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    exposure: Mapped[str] = mapped_column(String(16), nullable=False)
+    exposure_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    matched_description: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

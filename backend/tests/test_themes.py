@@ -17,6 +17,7 @@ import pytest
 
 from app.domain.themes import Exposure, Reference, SourceKind, Theme, ThemeEvidence
 from app.themes.detect import CONCEPTS, Thresholds, assemble, extract
+from app.themes.store import ThemeStore
 
 
 def _ref(
@@ -305,3 +306,196 @@ class TestNothingHereRanksOrScores:
         # strength or a rating is not.
         forbidden = {"score", "strength", "rank", "rating", "conviction"}
         assert set(published) & forbidden == set()
+
+
+class TestTheStore:
+    """Runs, themes and the withdrawal rule.
+
+    The rule was learned in `feed-freshness-and-run-control` and is more dangerous here. A
+    stale insight is visibly stale; a theme withdrawn because a scrape failed simply
+    disappears, and the reader cannot tell a quiet market from a broken downloader.
+    """
+
+    @pytest.fixture
+    def store(self, session_factory) -> ThemeStore:
+        return ThemeStore(session_factory)
+
+    def _theme(self, key: str = "data_centre", companies: int = 3, periods: int = 2) -> Theme:
+        references = []
+        for company in range(companies):
+            for period in range(periods):
+                references.append(
+                    _ref(f"CO{company}", concept=key, period=f"P{period}")
+                )
+        return Theme(key=key, label=key, evidence=ThemeEvidence(references=tuple(references)))
+
+    # ── runs ──────────────────────────────────────────────────────────────────
+    def test_a_run_is_recorded_and_finished(self, store: ThemeStore) -> None:
+        run_id = store.start_run()
+        store.finish_run(run_id, "complete", documents_read=12)
+
+        [run] = store.runs()
+        assert run["outcome"] == "complete"
+        assert run["documents_read"] == 12
+        assert run["finished_at"] is not None
+
+    def test_a_running_run_is_visible_so_a_second_can_be_refused(
+        self, store: ThemeStore
+    ) -> None:
+        run_id = store.start_run()
+
+        assert store.running_run() == run_id
+
+        store.finish_run(run_id, "complete")
+        assert store.running_run() is None
+
+    def test_unavailable_sources_are_recorded_on_the_run(self, store: ThemeStore) -> None:
+        """A quiet failure must not look like a quiet market."""
+        run_id = store.start_run()
+        store.finish_run(run_id, "complete", sources_unavailable=("commentary",))
+
+        assert store.runs()[0]["sources_unavailable"] == ["commentary"]
+
+    def test_a_run_that_read_nothing_is_marked_as_such(self, store: ThemeStore) -> None:
+        run_id = store.start_run()
+        store.finish_run(run_id, "no_reading", sources_unavailable=("commentary", "policy"))
+
+        assert store.runs()[0]["outcome"] == "no_reading"
+
+    def test_runs_are_newest_first(self, store: ThemeStore) -> None:
+        first = store.start_run()
+        store.finish_run(first, "complete")
+        second = store.start_run()
+        store.finish_run(second, "complete")
+
+        assert [r["id"] for r in store.runs()] == [second, first]
+
+    # ── recording ─────────────────────────────────────────────────────────────
+    def test_a_theme_is_written_with_its_counts(self, store: ThemeStore) -> None:
+        new, refreshed = store.record([self._theme()])
+
+        [theme] = store.standing()
+        assert (new, refreshed) == (1, 0)
+        assert theme["breadth"] == 3
+        assert theme["persistence"] == 2
+
+    def test_counts_are_stored_not_recomputed(self, store: ThemeStore) -> None:
+        """The counts are the claim, so they must be the figures the run measured."""
+        store.record([self._theme()])
+        stored = store.standing()[0]
+
+        assert stored["breadth"] == 3
+        assert stored["source_kinds"] == ["commentary"]
+
+    def test_re_recording_the_same_theme_does_not_duplicate_it(
+        self, store: ThemeStore
+    ) -> None:
+        store.record([self._theme()])
+        new, _ = store.record([self._theme()])
+
+        assert new == 0
+        assert len(store.standing()) == 1
+
+    def test_moved_counts_refresh_in_place_and_keep_first_seen(
+        self, store: ThemeStore
+    ) -> None:
+        store.record([self._theme(companies=3)])
+        first_seen = store.standing()[0]["first_seen_at"]
+
+        _, refreshed = store.record([self._theme(companies=5)])
+
+        stored = store.standing()[0]
+        assert refreshed == 1
+        assert stored["breadth"] == 5
+        assert stored["first_seen_at"] == first_seen
+
+    def test_unchanged_counts_are_not_reported_as_refreshed(
+        self, store: ThemeStore
+    ) -> None:
+        store.record([self._theme()])
+        _, refreshed = store.record([self._theme()])
+
+        assert refreshed == 0
+
+    def test_references_are_stored_and_traceable(self, store: ThemeStore) -> None:
+        store.record([self._theme()])
+
+        references = store.references("data_centre")
+        assert len(references) == 6
+        assert all(r.source_ref for r in references)
+
+    def test_the_same_reference_twice_is_stored_once(self, store: ThemeStore) -> None:
+        """Re-reading a document must not inflate breadth."""
+        store.record([self._theme()])
+        store.record([self._theme()])
+
+        assert len(store.references("data_centre")) == 6
+
+    # ── withdrawal ────────────────────────────────────────────────────────────
+    def test_a_faded_theme_is_withdrawn_with_its_reason(self, store: ThemeStore) -> None:
+        store.record([self._theme()])
+        thin = self._theme(companies=1, periods=1)
+
+        withdrawn = store.withdraw_short([thin], Thresholds().shortfall)
+
+        assert withdrawn == 1
+        assert store.standing() == []
+        [row] = store.standing(include_withdrawn=True)
+        assert "needs 3" in row["withdrawal_reason"]
+
+    def test_withdrawal_keeps_the_first_seen_date(self, store: ThemeStore) -> None:
+        store.record([self._theme()])
+        first_seen = store.standing()[0]["first_seen_at"]
+
+        store.withdraw_short([self._theme(companies=1)], Thresholds().shortfall)
+
+        assert store.standing(include_withdrawn=True)[0]["first_seen_at"] == first_seen
+
+    def test_an_unassessed_theme_is_never_withdrawn(self, store: ThemeStore) -> None:
+        """The rule that matters. A theme its sources could not reach is left standing."""
+        store.record([self._theme("data_centre"), self._theme("railways")])
+
+        # This run only assessed railways, and found it short.
+        store.withdraw_short(
+            [self._theme("railways", companies=1)], Thresholds().shortfall
+        )
+
+        assert [t["key"] for t in store.standing()] == ["data_centre"]
+
+    def test_a_run_that_assessed_nothing_withdraws_nothing(self, store: ThemeStore) -> None:
+        store.record([self._theme()])
+
+        assert store.withdraw_short([], Thresholds().shortfall) == 0
+        assert len(store.standing()) == 1
+
+    def test_a_theme_that_returns_stands_again_keeping_its_history(
+        self, store: ThemeStore
+    ) -> None:
+        store.record([self._theme()])
+        first_seen = store.standing()[0]["first_seen_at"]
+        store.withdraw_short([self._theme(companies=1)], Thresholds().shortfall)
+
+        store.record([self._theme()])
+
+        [row] = store.standing()
+        assert row["withdrawn_at"] is None
+        assert row["first_seen_at"] == first_seen
+
+    def test_withdrawn_themes_are_excluded_by_default(self, store: ThemeStore) -> None:
+        store.record([self._theme()])
+        store.withdraw_short([self._theme(companies=1)], Thresholds().shortfall)
+
+        assert store.standing() == []
+        assert len(store.standing(include_withdrawn=True)) == 1
+
+    def test_a_stored_theme_round_trips_with_its_references(self, store: ThemeStore) -> None:
+        store.record([self._theme()])
+
+        loaded = store.load("data_centre")
+
+        assert loaded is not None
+        assert loaded.evidence.breadth == 3
+        assert loaded.evidence.persistence == 2
+
+    def test_loading_an_unknown_theme_is_none(self, store: ThemeStore) -> None:
+        assert store.load("nope") is None
