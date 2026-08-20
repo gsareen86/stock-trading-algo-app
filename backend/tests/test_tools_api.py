@@ -18,6 +18,7 @@ class TestSkillsEndpoint:
             "filings_scan",
             "peer_compare",
             "commentary",
+            "theme_chain",
         }
         assert body["count"] == len(names)
         for tool in body["tools"]:

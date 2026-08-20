@@ -11,6 +11,7 @@ The load-bearing tests are the threshold ones and the reproducibility one. Every
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
@@ -18,6 +19,9 @@ import pytest
 from app.domain.themes import Exposure, Reference, SourceKind, Theme, ThemeEvidence
 from app.themes.detect import CONCEPTS, Thresholds, assemble, extract
 from app.themes.store import ThemeStore
+from app.tools.registry import ToolRegistry
+from app.tools.theme_chain.tool import handle
+from app.tools.types import ToolContext
 
 
 def _ref(
@@ -499,3 +503,183 @@ class TestTheStore:
 
     def test_loading_an_unknown_theme_is_none(self, store: ThemeStore) -> None:
         assert store.load("nope") is None
+
+
+class TestChainExpansion:
+    """The one place a model influences what the platform looks at.
+
+    Offline. The expander is injected, so no test here calls a model — what is under test is
+    the contract around the model, which is the part that makes its output safe to act on:
+    schema-validated, attributed, rejectable, and never a measurement.
+    """
+
+    def _expander(self, payload: str, model: str = "ollama/test"):
+        def expand(prompt: str, task: str):
+            return payload, model
+
+        return ToolContext(fetchers={"chain_expander": expand})
+
+    def _good(self) -> str:
+        return json.dumps(
+            {
+                "tiers": [
+                    {
+                        "label": "Data centre buildout",
+                        "supplies": None,
+                        "reasoning": "The activity itself.",
+                        "supplier_descriptions": ["Colocation operators"],
+                    },
+                    {
+                        "label": "Grid and power equipment",
+                        "supplies": "Data centre buildout",
+                        "reasoning": "Data centres draw continuous high load.",
+                        "supplier_descriptions": [
+                            "Transformer manufacturers",
+                            "Switchgear manufacturers",
+                            "Power cable manufacturers",
+                        ],
+                    },
+                ]
+            }
+        )
+
+    def test_tiers_are_returned_in_dependency_order(self) -> None:
+        result = handle({"theme": "data centre"}, self._expander(self._good()))
+
+        assert [i["tier"] for i in result["items"]] == [1, 2]
+        assert result["items"][0]["supplies"] is None
+        assert result["items"][1]["supplies"] == "Data centre buildout"
+
+    def test_every_tier_carries_reasoning_and_its_model(self) -> None:
+        result = handle({"theme": "data centre"}, self._expander(self._good()))
+
+        for item in result["items"]:
+            assert item["reasoning"]
+            assert item["proposed_by"] == "ollama/test"
+
+    def test_a_tier_without_reasoning_is_dropped(self) -> None:
+        """A claim a reader cannot judge is a claim this platform will not show."""
+        payload = json.dumps(
+            {"tiers": [{"label": "Mystery tier", "supplies": None, "reasoning": ""}]}
+        )
+
+        result = handle({"theme": "x"}, self._expander(payload))
+
+        assert result["items"] == []
+        assert result["available"] is False
+
+    def test_supplier_descriptions_are_categories(self) -> None:
+        result = handle({"theme": "data centre"}, self._expander(self._good()))
+        power = result["items"][1]
+
+        assert "Transformer manufacturers" in power["supplier_descriptions"]
+
+    def test_the_chain_is_bounded(self) -> None:
+        payload = json.dumps(
+            {
+                "tiers": [
+                    {"label": f"Tier {i}", "supplies": None, "reasoning": "because"}
+                    for i in range(10)
+                ]
+            }
+        )
+
+        result = handle({"theme": "x", "max_tiers": 2}, self._expander(payload))
+
+        assert len(result["items"]) == 2
+
+    # ── failure is never a partial chain ──────────────────────────────────────
+    def test_unparseable_output_produces_no_chain(self) -> None:
+        """Half a chain looks complete and would omit the tier a reader most needed."""
+        result = handle({"theme": "x"}, self._expander("I think probably transformers?"))
+
+        assert result["items"] == []
+        assert result["available"] is False
+        assert "not a usable chain" in result["reason"]
+
+    def test_a_fenced_json_block_is_still_read(self) -> None:
+        result = handle({"theme": "x"}, self._expander(f"```json\n{self._good()}\n```"))
+
+        assert result["available"] is True
+
+    def test_a_failing_model_is_reported_not_raised(self) -> None:
+        def boom(prompt: str, task: str):
+            raise RuntimeError("model unavailable")
+
+        result = handle({"theme": "x"}, ToolContext(fetchers={"chain_expander": boom}))
+
+        assert result["available"] is False
+        assert "expansion failed" in result["reason"]
+
+    def test_no_model_configured_is_an_ordinary_empty_result(self) -> None:
+        result = handle({"theme": "x"}, ToolContext())
+
+        assert result["available"] is False
+        assert result["items"] == []
+
+    def test_output_satisfies_the_declared_schema(self) -> None:
+        registry = ToolRegistry.discover()
+
+        result = registry.invoke(
+            "theme_chain", {"theme": "data centre"}, self._expander(self._good())
+        )
+
+        assert result.ok, result.error
+        assert len(result.items) == 2
+
+    def test_the_tool_is_registered(self) -> None:
+        assert ToolRegistry.discover().get("theme_chain") is not None
+
+
+class TestExpansionIsAProposalNotAMeasurement:
+    """A theme may widen attention and may never narrow it."""
+
+    def _result(self):
+        payload = json.dumps(
+            {
+                "tiers": [
+                    {
+                        "label": "Grid and power equipment",
+                        "supplies": "Data centre buildout",
+                        "reasoning": "Data centres draw continuous high load.",
+                        "supplier_descriptions": ["Transformer manufacturers"],
+                    }
+                ]
+            }
+        )
+
+        def expand(prompt: str, task: str):
+            return payload, "ollama/test"
+
+        return handle({"theme": "data centre"}, ToolContext(fetchers={"chain_expander": expand}))
+
+    def test_every_tier_declares_it_was_not_measured_here(self) -> None:
+        assert self._result()["items"][0]["measured_by_platform"] is False
+
+    def test_a_tier_is_traceable_to_the_model_that_proposed_it(self) -> None:
+        assert self._result()["items"][0]["source_ref"].startswith("model://")
+
+    def test_no_tier_carries_a_stance_or_a_score(self) -> None:
+        item = self._result()["items"][0]
+
+        assert not set(item) & {"stance", "conviction", "score", "rank", "rating"}
+
+    def test_the_prompt_asks_for_categories_never_companies(self) -> None:
+        from app.tools.theme_chain.tool import PROMPT
+
+        assert "never named companies" in PROMPT
+        assert "never stock tickers" in PROMPT
+
+    def test_the_prompt_forbids_investment_judgement(self) -> None:
+        """World knowledge is what this model call is for. Opinion is what it is not for."""
+        from app.tools.theme_chain.tool import PROMPT
+
+        assert "not making an investment recommendation" in PROMPT
+        assert "whether anything is a good investment" in PROMPT
+
+    def test_no_strategy_reads_a_chain(self) -> None:
+        from tests.conftest import source_of
+
+        strategies = source_of("strategies")
+        assert "theme_chain" not in strategies
+        assert "ChainLink" not in strategies
