@@ -157,14 +157,26 @@ def resolve_tier(
     if candidates:
         return sorted(candidates.values(), key=lambda c: c.symbol), None
 
-    # No Indian instrument. That is an answer, and the recognisable names travel with it so the
-    # tier stays legible rather than becoming a hole in the chain.
+    # Nothing matched — and the wording of that matters more than it looks.
+    #
+    # This says what the platform actually knows: no company's *name or NSE industry* matched.
+    # It is emphatically not "no Indian company does this". Kaynes Technology and CG Power are
+    # both building semiconductor assembly plants and neither carries a semiconductor word in
+    # its name or its "Capital Goods" classification, so a tier for OSAT resolves to nothing
+    # here while two real candidates sit in the universe unmatched.
+    #
+    # Claiming the market has no exposure, on evidence this shallow, would be the engine's
+    # most confidently wrong output. `theme-research-agent` is the change that goes looking
+    # properly; until then this states its own limits.
     examples = ", ".join(
         e["name"] for e in (notable_examples or []) if isinstance(e, dict) and e.get("name")
     )
-    reason = "no Indian listed company matched this tier"
+    reason = (
+        "no company matched on name or industry — this tier may still have Indian exposure "
+        "that name matching cannot see"
+    )
     if examples:
-        reason += f"; served by {examples}, not listed in India"
+        reason += f"; known suppliers include {examples}, not listed in India"
 
     return [], UnresolvedTier(
         theme_key=theme_key,

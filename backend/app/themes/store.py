@@ -27,7 +27,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.clock import now_utc
 from app.domain.themes import Reference, SourceKind, Theme, ThemeEvidence
+from app.persistence.models import ChainLink as ChainLinkRow
 from app.persistence.models import Theme as ThemeRow
+from app.persistence.models import ThemeCandidate as CandidateRow
 from app.persistence.models import ThemeReference as ReferenceRow
 from app.persistence.models import ThemeRun as RunRow
 
@@ -242,6 +244,144 @@ class ThemeStore:
             withdrawn_at=row.withdrawn_at,
             withdrawal_reason=row.withdrawal_reason,
         )
+
+
+    # ── chains and candidates ─────────────────────────────────────────────────
+    def record_chain(self, theme_key: str, tiers: list[dict[str, Any]]) -> tuple[int, int]:
+        """Write a theme's tiers, preserving any a reader has already rejected.
+
+        Returns ``(written, preserved_rejections)``. A rejected link is never quietly
+        reinstated by a later expansion — that is what makes rejecting one worth doing. Its
+        reasoning is refreshed so the reader can see what the model said this time, but the
+        rejection stands until they lift it.
+        """
+        written = preserved = 0
+        with self._sessions() as session:
+            for tier in tiers:
+                label = str(tier.get("label") or "").strip()
+                if not label:
+                    continue
+                row = session.execute(
+                    select(ChainLinkRow).where(
+                        ChainLinkRow.theme_key == theme_key,
+                        ChainLinkRow.tier == int(tier.get("tier", 1)),
+                        ChainLinkRow.label == label,
+                    )
+                ).scalar_one_or_none()
+
+                if row is None:
+                    session.add(
+                        ChainLinkRow(
+                            theme_key=theme_key,
+                            tier=int(tier.get("tier", 1)),
+                            label=label,
+                            supplies=tier.get("supplies"),
+                            reasoning=str(tier.get("reasoning") or ""),
+                            proposed_by=str(tier.get("proposed_by") or "unknown"),
+                            supplier_descriptions=list(tier.get("supplier_descriptions") or []),
+                        )
+                    )
+                    written += 1
+                else:
+                    row.reasoning = str(tier.get("reasoning") or row.reasoning)
+                    row.supplies = tier.get("supplies") or row.supplies
+                    row.supplier_descriptions = list(tier.get("supplier_descriptions") or [])
+                    row.proposed_by = str(tier.get("proposed_by") or row.proposed_by)
+                    preserved += int(row.rejected_at is not None)
+            session.commit()
+        return written, preserved
+
+    def chain(self, theme_key: str) -> list[dict[str, Any]]:
+        with self._sessions() as session:
+            rows = (
+                session.execute(
+                    select(ChainLinkRow)
+                    .where(ChainLinkRow.theme_key == theme_key)
+                    .order_by(ChainLinkRow.tier, ChainLinkRow.label)
+                )
+                .scalars()
+                .all()
+            )
+            return [_link_dict(r) for r in rows]
+
+    def reject_link(self, link_id: int, reason: str | None = None) -> bool:
+        """Reject one link. Writes no trade and touches no position."""
+        with self._sessions() as session:
+            row = session.get(ChainLinkRow, link_id)
+            if row is None:
+                return False
+            row.rejected_at = now_utc()
+            row.rejected_reason = reason
+            session.commit()
+            return True
+
+    def record_candidates(self, candidates: list) -> int:
+        written = 0
+        with self._sessions() as session:
+            for candidate in candidates:
+                exists = session.execute(
+                    select(CandidateRow.id).where(
+                        CandidateRow.theme_key == candidate.theme_key,
+                        CandidateRow.tier == candidate.tier,
+                        CandidateRow.symbol == candidate.symbol,
+                    )
+                ).first()
+                if exists:
+                    continue
+                session.add(
+                    CandidateRow(
+                        theme_key=candidate.theme_key,
+                        tier=candidate.tier,
+                        symbol=candidate.symbol,
+                        exposure=candidate.exposure.value,
+                        exposure_basis=candidate.exposure_basis,
+                        matched_description=candidate.matched_description,
+                    )
+                )
+                written += 1
+            session.commit()
+        return written
+
+    def candidates(self, theme_key: str) -> list[dict[str, Any]]:
+        with self._sessions() as session:
+            rows = (
+                session.execute(
+                    select(CandidateRow)
+                    .where(CandidateRow.theme_key == theme_key)
+                    .order_by(CandidateRow.tier, CandidateRow.symbol)
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                {
+                    "id": r.id,
+                    "theme_key": r.theme_key,
+                    "tier": r.tier,
+                    "symbol": r.symbol,
+                    "exposure": r.exposure,
+                    "exposure_basis": r.exposure_basis,
+                    "matched_description": r.matched_description,
+                }
+                for r in rows
+            ]
+
+
+def _link_dict(row) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "theme_key": row.theme_key,
+        "tier": row.tier,
+        "label": row.label,
+        "supplies": row.supplies,
+        "reasoning": row.reasoning,
+        "proposed_by": row.proposed_by,
+        "supplier_descriptions": list(row.supplier_descriptions or []),
+        "rejected": row.rejected_at is not None,
+        "rejected_reason": row.rejected_reason,
+        # Never a platform measurement, carried so nothing downstream has to infer it.
+        "measured_by_platform": False,
+    }
 
 
 def _counts(theme: Theme) -> dict[str, Any]:

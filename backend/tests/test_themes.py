@@ -26,6 +26,7 @@ from app.themes.resolve import (
     resolve_tier,
     terms,
 )
+from app.themes.runner import Gathered, ThemeRunner
 from app.themes.store import ThemeStore
 from app.tools.registry import ToolRegistry
 from app.tools.theme_chain.tool import handle
@@ -836,7 +837,10 @@ class TestTiersWithNoIndianExposure:
 
         assert found == []
         assert missing is not None
-        assert "no Indian listed company matched" in missing.reason
+        # States what it knows -- that name matching failed -- not that the market has no
+        # exposure. Kaynes and CG Power both do this and neither matches on name or industry.
+        assert "name or industry" in missing.reason
+        assert "may still have Indian exposure" in missing.reason
 
     def test_foreign_names_explain_the_tier_without_being_offered(self) -> None:
         """Knowing where the value goes is worth knowing, even when it cannot be bought here."""
@@ -944,3 +948,254 @@ class TestOnlyIndianNamesAreEverOffered:
 
         assert all("NVIDIA" not in c.symbol for c in candidates)
         assert candidates == []
+
+
+class TestTheRunner:
+    """One pass end to end, and what happens when a step cannot run.
+
+    Degradation is the design here, not an error path, so most of these are failure cases.
+    """
+
+    @pytest.fixture
+    def store(self, session_factory) -> ThemeStore:
+        return ThemeStore(session_factory)
+
+    def _refs(self, companies: int = 3, periods: int = 2) -> list[Reference]:
+        return [
+            _ref(f"CO{c}", period=f"P{p}")
+            for c in range(companies)
+            for p in range(periods)
+        ]
+
+    def _gatherer(self, gathered: Gathered):
+        return lambda: gathered
+
+    def _universe(self):
+        class Source:
+            def snapshot(self):
+                return INDIA
+
+        return Source()
+
+    def _expander(self, tiers: list[dict]):
+        return lambda theme: tiers
+
+    def _runner(self, store, gathered, expander=None, **kwargs) -> ThemeRunner:
+        return ThemeRunner(
+            store=store,
+            gatherer=self._gatherer(gathered),
+            universe_source=self._universe(),
+            expander=expander,
+            **kwargs,
+        )
+
+    # ── the happy path ────────────────────────────────────────────────────────
+    def test_a_run_surfaces_records_and_completes(self, store: ThemeStore) -> None:
+        runner = self._runner(store, Gathered(references=self._refs(), documents_read=6))
+
+        result = runner.run()
+
+        assert result.outcome == "complete"
+        assert result.surfaced == 1
+        assert result.documents_read == 6
+        assert [t["key"] for t in store.standing()] == ["data_centre"]
+
+    def test_a_chain_is_expanded_and_resolved(self, store: ThemeStore) -> None:
+        tiers = [
+            {
+                "tier": 2,
+                "label": "Grid and power equipment",
+                "reasoning": "Data centres draw continuous high load.",
+                "proposed_by": "ollama/test",
+                "supplier_descriptions": ["Transformer manufacturers"],
+            }
+        ]
+        runner = self._runner(
+            store, Gathered(references=self._refs(), documents_read=6), self._expander(tiers)
+        )
+
+        result = runner.run()
+
+        assert result.chains_expanded == 1
+        assert result.candidates >= 1
+        assert "TARIL" in {c["symbol"] for c in store.candidates("data_centre")}
+
+    def test_a_tier_without_indian_exposure_is_counted(self, store: ThemeStore) -> None:
+        tiers = [
+            {
+                "tier": 1,
+                "label": "Lithography",
+                "reasoning": "Required to pattern wafers.",
+                "proposed_by": "ollama/test",
+                "supplier_descriptions": ["EUV lithography toolmakers"],
+            }
+        ]
+        runner = self._runner(
+            store, Gathered(references=self._refs(), documents_read=1), self._expander(tiers)
+        )
+
+        result = runner.run()
+
+        assert result.tiers_without_indian_exposure == 1
+
+    # ── degradation ───────────────────────────────────────────────────────────
+    def test_a_run_that_read_nothing_says_so(self, store: ThemeStore) -> None:
+        """Not "no themes found" — nothing was read, so nothing is known."""
+        runner = self._runner(
+            store, Gathered(unavailable=(SourceKind.COMMENTARY, SourceKind.POLICY))
+        )
+
+        result = runner.run()
+
+        assert result.outcome == "no_reading"
+        assert set(result.sources_unavailable) == {"commentary", "policy"}
+
+    def test_a_run_that_read_nothing_withdraws_nothing(self, store: ThemeStore) -> None:
+        """The rule that prevents a broken scraper from erasing a real theme."""
+        self._runner(store, Gathered(references=self._refs(), documents_read=6)).run()
+        assert len(store.standing()) == 1
+
+        self._runner(store, Gathered(unavailable=(SourceKind.COMMENTARY,))).run()
+
+        assert len(store.standing()) == 1
+
+    def test_partial_sources_still_produce_themes_and_record_the_gap(
+        self, store: ThemeStore
+    ) -> None:
+        runner = self._runner(
+            store,
+            Gathered(
+                references=self._refs(),
+                documents_read=2,
+                unavailable=(SourceKind.COMMENTARY,),
+            ),
+        )
+
+        result = runner.run()
+
+        assert result.outcome == "complete"
+        assert result.surfaced == 1
+        assert result.sources_unavailable == ("commentary",)
+
+    def test_a_failing_gatherer_fails_the_run_without_raising(
+        self, store: ThemeStore
+    ) -> None:
+        def boom():
+            raise RuntimeError("source layer down")
+
+        runner = ThemeRunner(
+            store=store, gatherer=boom, universe_source=self._universe()
+        )
+
+        result = runner.run()
+
+        assert result.outcome == "failed"
+        assert "source layer down" in result.reason
+
+    def test_a_failing_expander_does_not_end_the_run(self, store: ThemeStore) -> None:
+        """A theme is useful without a chain; losing the run over one would not be."""
+
+        def boom(theme):
+            raise RuntimeError("model unavailable")
+
+        runner = self._runner(
+            store, Gathered(references=self._refs(), documents_read=3), boom
+        )
+
+        result = runner.run()
+
+        assert result.outcome == "complete"
+        assert result.surfaced == 1
+        assert result.chains_expanded == 0
+
+    def test_no_expander_configured_still_surfaces_themes(self, store: ThemeStore) -> None:
+        runner = self._runner(store, Gathered(references=self._refs(), documents_read=3))
+
+        result = runner.run()
+
+        assert result.surfaced == 1
+        assert result.chains_expanded == 0
+
+    # ── concurrency ───────────────────────────────────────────────────────────
+    def test_a_second_concurrent_run_is_refused(self, store: ThemeStore) -> None:
+        """Two runs writing the same counts would blend two passes into one figure."""
+        first = store.start_run()
+
+        result = self._runner(store, Gathered(references=self._refs())).run()
+
+        assert result.outcome == "refused"
+        assert result.run_id == first
+
+    # ── rejection survives ────────────────────────────────────────────────────
+    def test_a_rejected_link_is_not_reinstated_by_a_later_run(
+        self, store: ThemeStore
+    ) -> None:
+        tiers = [
+            {
+                "tier": 2,
+                "label": "Grid and power equipment",
+                "reasoning": "Data centres draw continuous high load.",
+                "proposed_by": "ollama/test",
+                "supplier_descriptions": ["Transformer manufacturers"],
+            }
+        ]
+        gathered = Gathered(references=self._refs(), documents_read=3)
+        self._runner(store, gathered, self._expander(tiers)).run()
+
+        [link] = store.chain("data_centre")
+        assert store.reject_link(link["id"], "wrong tier") is True
+
+        self._runner(store, gathered, self._expander(tiers)).run()
+
+        [after] = store.chain("data_centre")
+        assert after["rejected"] is True
+        assert after["rejected_reason"] == "wrong tier"
+
+    def test_a_rejected_link_stops_contributing_candidates(
+        self, store: ThemeStore
+    ) -> None:
+        tiers = [
+            {
+                "tier": 2,
+                "label": "Grid and power equipment",
+                "reasoning": "Data centres draw continuous high load.",
+                "proposed_by": "ollama/test",
+                "supplier_descriptions": ["Transformer manufacturers"],
+            }
+        ]
+        gathered = Gathered(references=self._refs(), documents_read=3)
+        self._runner(store, gathered, self._expander(tiers)).run()
+        [link] = store.chain("data_centre")
+        store.reject_link(link["id"])
+
+        result = self._runner(store, gathered, self._expander(tiers)).run()
+
+        assert result.candidates == 0
+
+    def test_rejecting_a_link_writes_no_trade(
+        self, store: ThemeStore, session_factory
+    ) -> None:
+        from app.persistence.models import Trade as TradeRow
+
+        tiers = [
+            {
+                "tier": 1,
+                "label": "Buildout",
+                "reasoning": "The activity itself.",
+                "proposed_by": "ollama/test",
+                "supplier_descriptions": [],
+            }
+        ]
+        self._runner(
+            store, Gathered(references=self._refs(), documents_read=1), self._expander(tiers)
+        ).run()
+        [link] = store.chain("data_centre")
+        store.reject_link(link["id"])
+
+        with session_factory() as session:
+            assert session.query(TradeRow).count() == 0
+
+    def test_rejecting_an_unknown_link_is_false_not_an_error(
+        self, store: ThemeStore
+    ) -> None:
+        assert store.reject_link(99999) is False
