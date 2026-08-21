@@ -186,6 +186,12 @@ class LiteLLMGateway:
         }
         if api_base:
             kwargs["api_base"] = api_base
+        if rung.provider in _OPENAI_COMPATIBLE:
+            # A local server authenticates nobody, but LiteLLM's OpenAI path refuses to send a
+            # request without a key and fails with "Missing credentials" — which reads as a
+            # configuration mistake rather than what it is. The placeholder is discarded by
+            # llama.cpp, LM Studio and Lemonade alike; it exists only to get past the check.
+            kwargs["api_key"] = "local-no-auth"
         if tools:
             kwargs["tools"] = tools
         if schema:
@@ -193,6 +199,19 @@ class LiteLLMGateway:
                 "type": "json_schema",
                 "json_schema": {"name": task, "schema": schema, "strict": True},
             }
+        # How hard to think, when the task asks for it.
+        #
+        # Sent in `extra_body` rather than as a top-level argument, because LiteLLM validates
+        # arguments against what it believes the *provider* supports and rejects
+        # `reasoning_effort` outright for a model it does not recognise — which is every local
+        # one. The server accepts it perfectly well. `extra_body` is forwarded verbatim, so the
+        # parameter reaches the server and a server that does not understand it ignores it.
+        #
+        # The alternative LiteLLM suggests, `drop_params`, would silently discard the setting
+        # and leave a task looking configured while thinking at the default.
+        effort = settings.reasoning_for_task(task)
+        if effort:
+            kwargs["extra_body"] = {"reasoning_effort": effort}
         if trace_id:
             kwargs["metadata"] = {"trace_id": trace_id, "generation_name": task}
 

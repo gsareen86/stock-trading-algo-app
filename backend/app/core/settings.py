@@ -106,6 +106,18 @@ class Settings(BaseSettings):
     #: model — with no code change.
     llm_route: dict[str, str] = Field(default_factory=dict)
 
+    #: How hard a reasoning model should think, per task. `LLM_REASONING__NARRATIVE=medium`.
+    #:
+    #: A separate axis from *which* model runs a task, because the same model wants different
+    #: settings for different jobs. Sorting headlines into policy and not-policy is a decision
+    #: a model makes instantly and reasoning only slows down; reading a forty-page transcript
+    #: and reporting what management committed to is exactly what reasoning is for.
+    #:
+    #: Accepted values are the server's — `low`, `medium`, `high`, `xhigh`, or `none` to turn
+    #: thinking off. Ignored by providers that do not support it, so setting it is never
+    #: harmful, only sometimes pointless.
+    llm_reasoning: dict[str, str] = Field(default_factory=dict)
+
     #: Ordered fallback chain per task, comma-separated, e.g.
     #: ``LLM_FALLBACK__NARRATIVE=anthropic/claude-sonnet-5,openai/gpt-4o``. Tried in order
     #: after the primary route fails. A task with no entry keeps single-target behaviour.
@@ -218,7 +230,12 @@ class Settings(BaseSettings):
     langfuse_host: str = "https://cloud.langfuse.com"
 
     @field_validator(
-        "llm_route", "llm_provider_base_url", "llm_fallback", "mcp_server", mode="after"
+        "llm_route",
+        "llm_provider_base_url",
+        "llm_fallback",
+        "llm_reasoning",
+        "mcp_server",
+        mode="after",
     )
     @classmethod
     def _lowercase_keys(cls, value: dict[str, str]) -> dict[str, str]:
@@ -277,6 +294,10 @@ class Settings(BaseSettings):
         the threshold once here is cheaper and clearer than converting every sum.
         """
         return inr_to_usd(self.llm_daily_budget_inr, self.usd_inr_rate)
+
+    def reasoning_for_task(self, task: str) -> str | None:
+        """How hard to think for a task, or ``None`` to leave the server's default alone."""
+        return self.llm_reasoning.get(task.lower())
 
     def model_for_task(self, task: str) -> str:
         """Resolve a task name to a ``<provider>/<model>`` string.
