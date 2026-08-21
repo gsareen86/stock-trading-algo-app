@@ -9,7 +9,13 @@ A tier with no Indian instrument is a real answer and is reported as one. Its re
 foreign names travel with it as explanation, marked not investable, because a chain with a hole
 in it reads as a chain nobody understood.
 
-**Matching is on what a company does, never on what it is called.** The first version of this
+**Matching is retrieve-then-rerank, on what a company does rather than what it is called.**
+Word overlap over five hundred business descriptions is instant and a poor judge — it has no
+synonymy, so a tier for OSAT never reaches a company describing "assembly and test". A model
+reading five hundred descriptions is the opposite problem: it does not fit. So overlap casts
+wide and a matcher decides which of the shortlist genuinely supply the tier.
+
+The first version of this
 module searched company names and NSE industry codes, and it was wrong in a way that a
 measurement made obvious: against the exchange's own NIFTY INDIA DEFENCE membership — all
 nineteen constituents present and available to be found — it found three. A name is branding,
@@ -60,10 +66,16 @@ MIN_TERM_LENGTH = 4
 #: alphabetical order is the kind of wrong-but-plausible output that ends trust in a tool.
 MAX_PER_DESCRIPTION = 25
 
-#: A description must match at least this many distinct query terms. One shared word between
-#: a supplier category and several hundred words of prose is a coincidence; two or more is a
-#: subject in common.
-MIN_TERM_HITS = 2
+#: Term hits needed to enter the shortlist. **One**, because this is now a *recall* step whose
+#: only job is to be generous: a matcher reads the shortlist afterwards and decides. Requiring
+#: two was right when overlap was the final judge and is wrong now — it would exclude the
+#: company whose description says "assembly and test" from a tier called OSAT before anything
+#: capable of recognising the synonym ever saw it.
+MIN_TERM_HITS = 1
+
+#: Shortlist size. Generous, because precision comes later and the cost of an extra candidate
+#: is one line in a prompt.
+SHORTLIST = 40
 
 
 def terms(description: str) -> list[str]:
@@ -80,6 +92,7 @@ def match_description(
     description: str,
     universe: UniverseSnapshot,
     profiles=None,
+    limit: int | None = None,
 ) -> tuple[list[tuple[str, str]], str | None]:
     """Instruments whose *business* matches a supplier description.
 
@@ -111,7 +124,7 @@ def match_description(
         return [], None
 
     scored.sort(key=lambda row: (-row[0], row[1]))
-    kept = scored[:MAX_PER_DESCRIPTION]
+    kept = scored[:limit or MAX_PER_DESCRIPTION]
     note = (
         f"showing {len(kept)} of {len(scored)} matches"
         if len(scored) > len(kept)
@@ -129,6 +142,8 @@ def resolve_tier(
     references: list[Reference] | None = None,
     notable_examples: list[dict] | None = None,
     profiles=None,
+    matcher=None,
+    reasoning: str = "",
 ) -> tuple[list[Candidate], UnresolvedTier | None]:
     """Candidates for one tier, or a statement that it has no Indian listed expression."""
     listed = {i.symbol for i in universe.instruments}
@@ -153,22 +168,66 @@ def resolve_tier(
                 matched_description="own commentary",
             )
 
-    # Path two: the industry looks right. Nobody has said anything.
+    # Path two: shortlist by word overlap, then let a matcher decide which of those actually
+    # supply the tier. Overlap alone cannot tell that "assembly and test" is OSAT; a matcher
+    # cannot read five hundred descriptions. Each does the half it is good at.
     unresolved: list[str] = []
     truncations: list[str] = []
+    shortlist: dict[str, str] = {}
+
     for description in supplier_descriptions or []:
-        matches, note = match_description(description, universe, profiles)
+        matches, note = match_description(description, universe, profiles, limit=SHORTLIST)
         if not matches:
-            # Recorded either way, and the note says which problem it was — "nothing matched",
-            # "no terms to match on" and "no profiles available" want different fixes.
             unresolved.append(f"{description} ({note})" if note else description)
             continue
         if note:
-            # Matches exist but were capped. Said out loud rather than swallowed: a reader
-            # looking at eight of thirteen should know there are five more.
             log.info("tier %s: %s for %r", tier, note, description)
             truncations.append(f"{description}: {note}")
-        for symbol, term in matches:
+        for symbol, why in matches:
+            shortlist.setdefault(symbol, f"{description} ({why})")
+
+    if shortlist and matcher is not None:
+        decided = matcher(
+            label or (supplier_descriptions or [""])[0],
+            reasoning or "",
+            [
+                {"symbol": symbol, "description": profiles[symbol].searchable}
+                for symbol in shortlist
+                if profiles and symbol in profiles
+            ],
+        )
+        if decided is not None:
+            # A matcher that answered replaces the shortlist entirely: the overlap step was
+            # recall and was never meant to be an answer.
+            for symbol, why in decided.items():
+                if symbol in candidates:
+                    continue
+                candidates[symbol] = Candidate(
+                    symbol=symbol,
+                    theme_key=theme_key,
+                    tier=tier,
+                    exposure=Exposure.UNESTABLISHED,
+                    exposure_basis=f"read as supplying this tier: {why}",
+                    matched_description=shortlist.get(symbol),
+                )
+        else:
+            # The matcher could not answer. Falling back to the shortlist is more useful than
+            # an empty tier, and the basis says plainly that nothing read it.
+            for symbol, description in shortlist.items():
+                if symbol in candidates:
+                    continue
+                candidates[symbol] = Candidate(
+                    symbol=symbol,
+                    theme_key=theme_key,
+                    tier=tier,
+                    exposure=Exposure.UNESTABLISHED,
+                    exposure_basis=(
+                        f"business description overlaps {description}; not read by a matcher"
+                    ),
+                    matched_description=description,
+                )
+    else:
+        for symbol, description in shortlist.items():
             if symbol in candidates:
                 continue
             candidates[symbol] = Candidate(
@@ -176,9 +235,7 @@ def resolve_tier(
                 theme_key=theme_key,
                 tier=tier,
                 exposure=Exposure.UNESTABLISHED,
-                exposure_basis=(
-                    f"business description mentions {term}; read about, not stated by them"
-                ),
+                exposure_basis=f"business description overlaps {description}",
                 matched_description=description,
             )
 
@@ -218,6 +275,7 @@ def resolve_chain(
     universe: UniverseSnapshot,
     references: list[Reference] | None = None,
     profiles=None,
+    matcher=None,
 ) -> tuple[list[Candidate], list[UnresolvedTier]]:
     """Every tier of a chain, skipping links a reader has rejected.
 
@@ -239,6 +297,8 @@ def resolve_chain(
             references=references,
             notable_examples=list(tier.get("notable_examples") or []),
             profiles=profiles,
+            matcher=matcher,
+            reasoning=str(tier.get("reasoning") or ""),
         )
         candidates.extend(found)
         if missing is not None:

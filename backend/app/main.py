@@ -33,12 +33,16 @@ from app.auth.guard import AuthGuard
 from app.auth.service import AuthService
 from app.broker.session import DEFAULT_KITE_MCP_URL, KiteSession
 from app.core.logging import configure_logging
+from app.core.scheduler import Scheduler
 from app.core.settings import Settings
+from app.data.profiles import YFinanceProfileSource
+from app.data.universe import NseUniverseSource
 from app.llm.budget import DailyBudget
 from app.llm.gateway import LiteLLMGateway
 from app.llm.recorder import CallRecorder
 from app.persistence.session import make_engine, make_session_factory
 from app.strategies.registry import StrategyRegistry
+from app.themes.assembly import build_runner
 from app.tools.registry import ToolRegistry
 
 log = logging.getLogger(__name__)
@@ -76,6 +80,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.tools = ToolRegistry.discover()
     app.state.strategies = StrategyRegistry.discover()
+
+    # Themes: assembled here so the factory stays a list of what exists. Every model-backed
+    # step degrades to absent, so a missing extra or an unreachable model produces a runner
+    # that reports what it could not read rather than a platform that will not boot.
+    app.state.universe_source = NseUniverseSource()
+    app.state.profile_source = YFinanceProfileSource(
+        cache_path=f"{settings.llm_cache_dir}/profiles.json"
+    )
+    try:
+        app.state.theme_runner = build_runner(
+            settings=settings,
+            session_factory=app.state.session_factory,
+            gateway=app.state.gateway,
+            tools=app.state.tools,
+            universe_source=app.state.universe_source,
+            profile_source=app.state.profile_source,
+        )
+    except Exception as exc:  # pragma: no cover - construction is dependency-light
+        log.warning("theme runner unavailable: %s", exc)
+        app.state.theme_runner = None
+
+    # Scheduled runs are opt-in. A platform that starts doing things on a timer the moment it
+    # is installed is one whose first surprise is a job nobody asked for.
+    app.state.scheduler = Scheduler(enabled=settings.scheduler_enabled)
+    if app.state.theme_runner is not None:
+        app.state.scheduler.every_week(
+            "themes",
+            lambda: app.state.theme_runner.run(trigger="scheduled"),
+            day=settings.theme_run_day,
+            hour=settings.theme_run_hour,
+        )
+    app.state.scheduler.start()
 
     # The browser is not a database client here; it reaches data only through this API, so
     # exactly one origin needs to be allowed.

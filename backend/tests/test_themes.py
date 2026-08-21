@@ -354,11 +354,19 @@ class TestNoHardcodedVocabularyRemains:
     """The defect this replaced: deciding what a document is about from a list of phrases."""
 
     def test_detection_holds_no_concept_table(self) -> None:
+        """No phrase list decides what a document is about, anywhere in the package.
+
+        Word boundaries: `MAX_CONCEPTS` is a batch size and contains the substring, and a test
+        that fails on that is one nobody trusts the next time it goes red. Same lesson as
+        `isinstance` tripping a search for "stance".
+        """
+        import re
+
         from tests.conftest import source_of
 
         source = source_of("themes")
-        assert "CONCEPTS" not in source
-        assert "_POLICY_MARKERS" not in source
+        assert not re.search(r"CONCEPTS", source)
+        assert not re.search(r"_?POLICY_MARKERS", source)
 
     def test_detection_calls_no_model_either(self) -> None:
         """Reading moved to a tool. Counting stayed arithmetic, which is why it is checkable."""
@@ -912,11 +920,22 @@ class TestMatching:
 
         assert "taril" not in profile.searchable
 
-    def test_one_shared_word_is_not_a_match(self) -> None:
-        """With hundreds of words of prose to search, one coincidence is not a subject."""
-        matches, _ = match_description("Renewable aviation catering", INDIA, PROFILES)
+    def test_recall_is_deliberately_generous(self) -> None:
+        """This is a shortlist, not an answer.
 
-        assert "ACMESOLAR" not in {symbol for symbol, _ in matches}
+        One shared word used to be rejected, which was right when overlap was the final judge
+        and is wrong now: it would drop the company describing "assembly and test" from a tier
+        called OSAT before anything able to recognise the synonym ever saw it. Precision is the
+        matcher's job; recall's job is not to lose the candidate first.
+        """
+        matches, _ = match_description("Renewable energy projects", INDIA, PROFILES)
+
+        assert "ACMESOLAR" in {symbol for symbol, _ in matches}
+
+    def test_a_word_shared_with_nothing_still_matches_nothing(self) -> None:
+        matches, _ = match_description("Lithography toolmaking", INDIA, PROFILES)
+
+        assert matches == []
 
     def test_several_companies_can_match_one_description(self) -> None:
         matches, _ = match_description(
@@ -982,7 +1001,7 @@ class TestResolvingATier:
         assert missing is None
         assert {c.symbol for c in found} == {"TARIL", "FINCABLES"}
         assert all(c.exposure is Exposure.UNESTABLISHED for c in found)
-        assert all("business description mentions" in c.exposure_basis for c in found)
+        assert all("business description overlaps" in c.exposure_basis for c in found)
 
     def test_a_company_that_discussed_the_theme_is_graded_claimed(self) -> None:
         """It said so itself. That is a stronger claim than an industry that looks right."""
@@ -1441,7 +1460,7 @@ class TestExposureGrading:
 
     def test_a_business_description_establishes_exposure(self) -> None:
         """The company said what it does, in its own filing prose."""
-        graded = grade(self._candidate(), "information technology services",
+        graded = grade(self._candidate(), "information technology consulting",
                        financials=self._financials())
 
         assert graded.exposure is Exposure.ESTABLISHED
@@ -1449,14 +1468,29 @@ class TestExposureGrading:
 
     def test_the_basis_quotes_the_description(self) -> None:
         """A grade a reader cannot check is a grade they have to take on trust."""
-        graded = grade(self._candidate(), "consulting", financials=self._financials())
+        graded = grade(
+            self._candidate(), "technology consulting", financials=self._financials()
+        )
 
         assert "consulting" in graded.exposure_basis
         assert "business solutions" in graded.exposure_basis
 
+    def test_one_shared_word_does_not_establish_exposure(self) -> None:
+        """"Power" appears in every utility's description; that is not a theme exposure.
+
+        Resolution has required two matching terms since it started reading descriptions.
+        Grading requiring one made `established` the easiest grade to earn rather than the
+        hardest, which is backwards.
+        """
+        graded = grade(self._candidate(), "consulting", financials=self._financials())
+
+        assert graded.exposure is Exposure.UNESTABLISHED
+
     def test_the_quotation_does_not_split_words(self) -> None:
         """An excerpt cut mid-word reads as broken rather than shortened."""
-        graded = grade(self._candidate(), "consulting", financials=self._financials())
+        graded = grade(
+            self._candidate(), "technology consulting", financials=self._financials()
+        )
         quoted = graded.exposure_basis.split("“", 1)[-1].rstrip("”")
 
         # Every whole word in the quotation appears in the description it came from.
@@ -1750,11 +1784,39 @@ class TestThemesApi:
             count = conn.execute(text("SELECT COUNT(*) FROM book_trades")).scalar_one()
         assert count == 0
 
-    def test_running_without_a_runner_configured_is_503(self, client) -> None:
-        """The platform is fine; this one capability is not wired up."""
-        response = client.post("/themes/run", json={})
+    def test_running_without_a_runner_configured_is_503(self, migrated_url: str) -> None:
+        """The platform is fine; this one capability is not wired up.
 
-        assert response.status_code == 503
+        The runner is cleared explicitly. Left in place this test *starts a real run* --
+        scraping documents and calling a model -- which is how a unit suite quietly acquires a
+        network dependency and an eleven-second test.
+        """
+        from app.core.settings import Settings
+        from app.main import create_app
+        from tests.conftest import authed_client
+
+        app = create_app(Settings(app_env="test", database_url=migrated_url))
+        app.state.theme_runner = None
+
+        assert authed_client(app).post("/themes/run", json={}).status_code == 503
+
+    def test_the_application_assembles_a_runner(self, migrated_url: str) -> None:
+        """Assembly is what makes the endpoint answer at all; asserted without running one."""
+        from app.core.settings import Settings
+        from app.main import create_app
+
+        app = create_app(Settings(app_env="test", database_url=migrated_url))
+
+        assert app.state.theme_runner is not None
+
+    def test_scheduling_is_off_unless_asked_for(self, migrated_url: str) -> None:
+        from app.core.settings import Settings
+        from app.main import create_app
+
+        app = create_app(Settings(app_env="test", database_url=migrated_url))
+
+        assert app.state.scheduler.active is False
+        assert "themes" in app.state.scheduler.job_ids()
 
     def test_no_endpoint_returns_a_stance_or_a_score(self, client, seeded) -> None:
         """A theme is a lens, not a verdict."""

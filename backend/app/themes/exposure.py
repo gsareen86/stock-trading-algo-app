@@ -31,6 +31,16 @@ from app.domain.themes import Candidate, Exposure, Reference
 #: Reused from resolution so a term that discriminates in one place discriminates in the other.
 from app.themes.resolve import MIN_TERM_LENGTH, STOPWORDS
 
+#: Distinct terms a description must contain before it *establishes* exposure.
+#:
+#: Two, not one, and the difference is the whole grade. One shared word between a theme label
+#: and several hundred words of prose is a coincidence — "power" appears in the description of
+#: every utility, and promoting one of them to the strongest grade on that basis says something
+#: the platform cannot support. Resolution has required two since it started reading
+#: descriptions; grading requiring one was an inconsistency that made `established` the easiest
+#: grade to earn rather than the hardest.
+MIN_ESTABLISHING_HITS = 2
+
 log = logging.getLogger(__name__)
 
 #: How much of a description to quote back as the basis. Enough to judge, short enough to read.
@@ -98,12 +108,13 @@ def grade(
     description = (financials.description or "") if financials else ""
     if description and terms:
         lowered = description.lower()
-        hit = next((term for term in terms if term in lowered), None)
-        if hit is not None:
+        hits = [term for term in terms if term in lowered]
+        if len(hits) >= MIN_ESTABLISHING_HITS:
+            named = ", ".join(hits[:3])
             return _with(
                 candidate,
                 Exposure.ESTABLISHED,
-                f"business description names '{hit}': “{_quote(description, hit)}”",
+                f"business description names {named}: “{_quote(description, hits[0])}”",
             )
 
     # Next: it said so itself, in commentary.

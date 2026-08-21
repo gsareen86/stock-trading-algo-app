@@ -40,7 +40,16 @@ rate limiter are all in place.
       schemes in English within hours and the platform already reads those feeds. Recorded so
       nobody spends the same afternoon on PIB
 
-## Detection — `app/themes/detect.py`
+## Detection — model reads, arithmetic counts
+- [x] **`CONCEPTS` deleted.** A phrase list could only surface themes somebody had already
+      typed in, which is a strange property for the part of a platform meant to notice what
+      you had not thought of
+- [x] `concept_extract` — open-vocabulary reading, free-form labels with quotations
+- [x] `theme_merge` — grouping, without which open vocabulary surfaces *less* than the list
+- [x] `document_concepts` + `concept_placements` (migration `0009`) — extraction persisted so
+      counting stays arithmetic; placement stored separately so a re-merge never costs a re-read
+- [x] `policy_classify` — replaces twelve keywords wrong in both directions
+- [x] `tier_match` — retrieve-then-rerank: overlap casts wide, a model decides
 - [x] Concept extraction from documents, per company per period
 - [x] Breadth (distinct companies, distinct sectors) and persistence (consecutive periods)
 - [x] Minimum breadth and persistence thresholds, declared and configurable
@@ -103,7 +112,8 @@ rate limiter are all in place.
       mysterious "already in progress" pointing nowhere near the cause
 - [x] A failing job never reaches the scheduler: a job that dies takes its own run down, a
       scheduler that dies takes every future run and nobody notices for a week
-- [ ] Wire the weekly job to the runner in `create_app`
+- [x] Wire the weekly job to the runner in `create_app` — `POST /themes/run` answers, and the
+      scheduler holds a `themes` job that fires only when `SCHEDULER_ENABLED` is set
 
 ## Tests
 - [x] One company in one period is not a theme; broad-but-single-period is not a theme
@@ -134,3 +144,33 @@ rate limiter are all in place.
       Seventeen of nineteen classify as "Capital Goods" and one carries "Defence" in its name.
       Recorded as a characterisation test so the number is visible rather than assumed;
       `theme-research-agent` exists to move it
+
+
+## Found only by running it live
+- [x] **The default local model is a thinking model.** Unconstrained it spent 3,834 completion
+      tokens reasoning and returned an empty string — indistinguishable from a document with
+      nothing to say. The gateway's `schema` parameter had existed unused since the LLM
+      change; passing it drops the same call to 42 tokens. Every model-backed tool passes one
+- [x] **The gateway rejected truncated JSON as prose.** A local model asked for eight items
+      sends six and a half, and strict parsing discarded answers already paid for in minutes.
+      Truncated structured output is now handed back for salvage; only genuinely unstructured
+      output is a failure
+- [x] **The first salvage scanner read depth zero only**, so it never saw a concept nested in
+      its wrapper — salvaging nothing while appearing to work
+- [x] **Merge reported unreadable output as a decision.** Every concept fell through to "kept
+      distinct", which reads as judgement and was not one
+- [x] **Merge could not start.** It compared only against standing themes, so from a cold
+      start every concept was trivially distinct, no theme formed, and nothing ever stood. A
+      live run placed 25 concepts onto 25 themes and surfaced none
+- [x] **Merge answers in groups, not rows.** Asked for one row per concept it returned a single
+      row for three synonyms, reasoning "all three describe the same development" — it had the
+      answer and expressed it as a group. The schema now matches how it answers
+- [x] **A test was starting a real run.** `test_running_without_a_runner_configured_is_503`
+      took eleven seconds scraping documents once assembly existed; the runner is cleared
+      explicitly now
+
+## Still open
+- [ ] Label quality: a live run produced "manufacturinger distribution growth" and "demand in
+      2024" beside good concepts. Worth tuning against real output rather than guessing
+- [ ] Policy classification returns prose against the live model more often than not
+- [ ] `filings_scan` as a third source in the assembled gatherer

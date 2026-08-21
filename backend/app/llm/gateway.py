@@ -28,7 +28,7 @@ import time
 from typing import Any
 
 from app.core.settings import Settings
-from app.llm import observability
+from app.llm import observability, parsing
 from app.llm.breaker import CircuitBreaker
 from app.llm.budget import DailyBudget
 from app.llm.cache import DiskCache, cache_key
@@ -294,24 +294,36 @@ class LiteLLMGateway:
             try:
                 parsed = json.loads(text)
             except json.JSONDecodeError:
-                # The caller asked for structured output and did not get it. Surface as a
-                # failure rather than handing back text that will break downstream parsing.
-                log.warning("task expected JSON matching a schema; provider returned prose")
-                self._recorder.record(
-                    CallRecord(
-                        task=task,
-                        provider=rung.provider,
-                        model=rung.target,
-                        requested_model=requested,
-                        used_fallback=rung.is_fallback,
-                        rung_index=rung.index,
-                        status=CallStatus.FAILED,
-                        latency_ms=latency_ms,
-                        trace_id=trace_id,
-                        error_msg="response was not valid JSON for the requested schema",
+                # Not every unparseable response is prose, and the difference decides whether
+                # the call was wasted. A **truncated** response is structured output that ran
+                # out of budget — its complete objects are usable, and a local model asked for
+                # eight items routinely sends six and a half. **Prose** is a model that ignored
+                # the schema, and nothing downstream can do anything with it.
+                #
+                # So a truncated response is handed back for the caller to salvage, and only a
+                # genuinely unstructured one is a failure. Rejecting both was throwing away
+                # answers that had already been paid for in minutes of local model time.
+                if parsing.objects(parsing.strip_fence(text)):
+                    log.info("task=%s response was truncated; returned for salvage", task)
+                else:
+                    log.warning(
+                        "task expected JSON matching a schema; provider returned prose"
                     )
-                )
-                return None
+                    self._recorder.record(
+                        CallRecord(
+                            task=task,
+                            provider=rung.provider,
+                            model=rung.target,
+                            requested_model=requested,
+                            used_fallback=rung.is_fallback,
+                            rung_index=rung.index,
+                            status=CallStatus.FAILED,
+                            latency_ms=latency_ms,
+                            trace_id=trace_id,
+                            error_msg="response was not valid JSON for the requested schema",
+                        )
+                    )
+                    return None
 
         tool_calls = self._tool_calls_of(message)
         usage = getattr(response, "usage", None)

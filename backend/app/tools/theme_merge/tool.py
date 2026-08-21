@@ -7,10 +7,13 @@ of one, none clears a threshold, and the engine would surface *nothing* — stri
 the hardcoded list it replaced. Merging is what turns faithful extraction into a countable
 theme.
 
-**Merged against the themes already standing**, not just within a run. A theme that has been
-building for three quarters must keep accumulating breadth as new companies describe it in
-their own words; comparing only within a run would restart it every time and persistence would
-never grow past one.
+**Against standing themes *and* within the batch**, and the second half is not optional. The
+first version compared only against themes already established, which cannot work from a cold
+start: with nothing standing, every concept is trivially distinct, no theme ever forms, and so
+nothing ever stands. A live run placed twenty-five concepts onto twenty-five themes and
+surfaced none. Concepts must be able to group with each other, and a theme that has been
+building for three quarters must keep absorbing new wordings — both, or the engine deadlocks at
+one end or restarts at the other.
 
 Every merge is an artefact, for the same reason a chain link is: it is a model's judgement, a
 reader may disagree, and a wrong merge is worse than a wrong chain link because it silently
@@ -80,51 +83,57 @@ OUTPUT_SCHEMA = items_output_schema(
 
 #: What the model is constrained to emit. See `concept_extract.MODEL_SCHEMA` — unconstrained,
 #: the local thinking model returns nothing at all.
+#: **Groups, not per-concept rows**, and the shape had to change to match how the model
+#: actually answers. Asked for one row per concept it returned a single row for three
+#: synonyms, with the reasoning "all three demand-related terms describe the same
+#: development" — it understood the task perfectly and expressed the answer as a group,
+#: because a group is what it had found. Fighting that produced one placement and three
+#: silent fall-throughs to "distinct".
 MODEL_SCHEMA = {
     "type": "object",
     "properties": {
-        "placements": {
+        "groups": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "concept": {"type": "string"},
                     "theme": {"type": "string"},
+                    "concepts": {"type": "array", "items": {"type": "string"}},
                     "reasoning": {"type": "string"},
                 },
-                "required": ["concept", "theme", "reasoning"],
+                "required": ["theme", "concepts", "reasoning"],
             },
         }
     },
-    "required": ["placements"],
+    "required": ["groups"],
 }
 
-PROMPT = """You are grouping industry themes that different companies described in their own \
-words.
+PROMPT = """You are grouping industry themes that companies described in their own words.
 
 Themes already established:
 {standing}
 
-New concepts to place:
+Concepts to group:
 {concepts}
 
-For each new concept, decide whether it describes the same underlying commercial theme as one \
-of the established themes, or is a distinct theme of its own.
+Put every concept into a group. A group is one theme. Some concepts belong to an established
+theme above; others form new groups together; a concept describing something on its own forms
+a group by itself.
 
-For each give:
-- concept: the new concept, copied exactly
-- theme: the established theme it belongs to, or the concept itself if it is distinct
+For each group give:
+- theme: its name — an established theme, or the clearest wording from the concepts in it
+- concepts: every concept in this group, copied exactly
 - reasoning: at most 12 words
 
 Rules:
-- Merge only when the same underlying development is being described. "data centre demand" and \
-"hyperscaler capex" are one theme; "data centre demand" and "cloud software revenue" are not.
-- Being in the same sector is not enough. Two different developments in one industry are two \
-themes.
-- When unsure, keep it distinct. A wrong merge silently combines unrelated evidence.
+- Every concept listed above must appear in exactly one group.
+- Concepts describing the same development go in one group. "data center demand", "demand in
+  data centers" and "demand for data centers" are one group.
+- Different developments stay apart, even in the same industry. "data centre demand" and
+  "cloud software revenue" are two groups.
 
 Reply with JSON only:
-{{"placements": [{{"concept": "...", "theme": "...", "reasoning": "..."}}]}}"""
+{{"groups": [{{"theme": "...", "concepts": ["...", "..."], "reasoning": "..."}}]}}"""
 
 
 def handle(arguments: dict, context: ToolContext) -> dict:
@@ -152,7 +161,19 @@ def handle(arguments: dict, context: ToolContext) -> dict:
         log.warning("theme merge failed: %s", exc)
         return {**empty, "reason": f"merge failed: {exc}"}
 
-    placements, clean = items_from(raw, "placements", "concept")
+    groups, clean = items_from(raw, "groups", "concepts")
+    # Groups come back; placements are what the platform stores. Expanding here keeps the
+    # model answering in the shape it answers well and the store in the shape it queries well.
+    placements = [
+        {
+            "concept": concept,
+            "theme": group.get("theme") or concept,
+            "reasoning": group.get("reasoning"),
+        }
+        for group in groups
+        for concept in (group.get("concepts") or [])
+        if isinstance(concept, str)
+    ]
     if not placements and not clean:
         # Every concept would otherwise fall through to "kept distinct", which reads as a
         # considered decision and is not one. A merge step that cannot be read must say so:
