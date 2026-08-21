@@ -45,6 +45,11 @@ data = [
     "beautifulsoup4>=4.12",
     "pdfplumber>=0.11",
 ]
+# Scheduled runs. Imported lazily by app/core/scheduler.py, which degrades to scheduling
+# nothing when it is absent -- the state the platform ran in before this.
+scheduling = [
+    "apscheduler>=3.10",
+]
 postgres = [
     "psycopg[binary]>=3.2",
 ]

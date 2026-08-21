@@ -26,7 +26,8 @@ rate limiter are all in place.
       are recorded as the different facts they are
 - [x] Every adapter signals a dead source by failing rather than by returning empty, so
       "answered with nothing recent" stays distinguishable from "could not be read"
-- [ ] Filings via the existing `filings_scan` — not wired yet
+- [x] Filings adapter — each announcement its own document, attributed to its company;
+      weaker signal than commentary, stronger provenance
 
 ### Two corrections to what this file previously said
 - [x] **Order books are not in the financials endpoint.** `quarter_results` carries sales,
@@ -67,7 +68,7 @@ rate limiter are all in place.
 ## The invariant
 - [x] Themes are additive only — no gate, no exclusion, no reordering
 - [x] Assert `app/themes/` contains no function that scores or ranks instruments
-- [ ] Assert verdicts are byte-identical with themes active and disabled
+- [x] Assert verdicts are byte-identical with themes active and disabled
 
 ## API
 - [x] `POST /themes/run`, `GET /themes/runs`, `GET /themes/runs/{id}`
@@ -82,11 +83,27 @@ rate limiter are all in place.
 - [x] "No run yet", "run produced no reading" and "no themes found" are three renderings
 - [x] Nothing on the surface carries a theme-derived stance, score or ordering
 
-## Not done — carried forward
-- [ ] Verdicts-identical-with-themes-on-and-off: nothing yet reads themes during a cycle, so
-      there is no integration point to assert against. Lands with `discovery-funnel`
-- [ ] Scheduled runs: the platform still has no scheduler, the question raised during review
-      and not yet answered
+## Wiring — themes widen a cycle and label its verdicts
+- [x] `screen` takes theme candidates and **unions** them into the eligible set. The only
+      operation performed on the screened list is a union, so the invariant is enforced by
+      construction rather than by care
+- [x] A theme name outside the universe is ignored; a failing theme source leaves the screen
+      exactly as it was — widening is a bonus, losing the screen would be a regression
+- [x] `theme_labels` node runs **after** narration, where every verdict already exists and is
+      frozen. Remove the node and every verdict is byte-identical, which is the invariant
+      proved by topology
+- [x] Widening is reported (`theme_added`) so a longer instrument list is distinguishable from
+      a screen that behaved differently
+
+## Scheduling
+- [x] `app/core/scheduler.py` — APScheduler, off by default, weekly theme run configurable
+- [x] **Reload guard.** `uvicorn --reload` runs two processes and both execute the app factory,
+      so a naive scheduler fires every job twice — silently, in development only. Two theme
+      runs colliding is exactly what `running_run` refuses, so the symptom would have been a
+      mysterious "already in progress" pointing nowhere near the cause
+- [x] A failing job never reaches the scheduler: a job that dies takes its own run down, a
+      scheduler that dies takes every future run and nobody notices for a week
+- [ ] Wire the weekly job to the runner in `create_app`
 
 ## Tests
 - [x] One company in one period is not a theme; broad-but-single-period is not a theme
@@ -102,7 +119,7 @@ rate limiter are all in place.
 - [x] A faded theme is withdrawn with its reason, keeping its first-seen date
 - [x] **An unavailable source never withdraws a theme**
 - [x] Breadth and persistence recompute identically over the same inputs
-- [ ] **Verdicts identical with themes on and off**
+- [x] **Verdicts identical with themes on and off** — asserted against a real cycle
 - [x] **Grep `app/themes/` for ranking or scoring over instruments — none**
 - [x] Rejection writes no trade
 

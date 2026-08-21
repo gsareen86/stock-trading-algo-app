@@ -92,13 +92,20 @@ def make_regime_node(price_source: PriceSource):
 
 
 # ── screen ────────────────────────────────────────────────────────────────────
-def make_screen_node(screener, universe_source, criteria):
+def make_screen_node(screener, universe_source, criteria, theme_candidates=None):
     """Narrow the universe to names worth evaluating.
 
     Skipped entirely when the caller supplied instruments: asking about a specific stock should
     return an answer about that stock, including when it would not have survived a screen. A
     screen chooses *what to look at*; it never changes what a strategy concludes about a name
     it does look at.
+
+    **Themes widen this and can never narrow it.** `theme_candidates` supplies names a theme
+    surfaced, and they are *added* to whatever the screen produced — never substituted for it,
+    never used to drop a name, never used to reorder one. A cycle with themes active evaluates
+    a superset of the names it would otherwise, and every one of them is evaluated identically.
+    That is the whole of the invariant, and it is enforced here by construction: the only
+    operation performed on the screened list is a union.
     """
 
     async def screen(state: CycleState) -> dict[str, Any]:
@@ -120,9 +127,35 @@ def make_screen_node(screener, universe_source, criteria):
             # A stale list under-excludes silently; saying so is the whole point of tracking age.
             notes.append("screen: surveillance list is stale")
 
+        eligible = list(result.eligible)
+
+        # Union, and only ever a union. Order is preserved and screened names come first, so
+        # nothing downstream that reads this list positionally changes behaviour either.
+        added: list[Instrument] = []
+        if theme_candidates is not None:
+            try:
+                known = {i.symbol for i in eligible}
+                by_symbol = {i.symbol: i for i in snapshot.instruments}
+                for symbol in theme_candidates():
+                    if symbol in known or symbol not in by_symbol:
+                        continue
+                    known.add(symbol)
+                    added.append(by_symbol[symbol])
+            except Exception as exc:
+                # A theme source failing must not change which names get screened. Widening is
+                # a bonus; losing the screen would be a regression.
+                log.warning("screen: theme candidates unavailable: %s", exc)
+                added = []
+
+        if added:
+            notes.append(
+                f"screen: {len(added)} name(s) added by themes that the screen did not surface"
+            )
+
         return {
-            "instruments": list(result.eligible),
+            "instruments": [*eligible, *added],
             "screen": result.as_dict(),
+            "theme_added": [i.symbol for i in added],
             "notes": notes,
         }
 
@@ -298,6 +331,42 @@ def make_narrate_node(gateway: LLMGateway):
     return narrate
 
 
+# ── theme labels ──────────────────────────────────────────────────────────────
+def make_theme_label_node(labeller):
+    """Attach theme membership to the names a cycle evaluated.
+
+    **A label, and only a label.** It runs after the strategies have finished, it writes to a
+    key nothing else reads, and no stance or conviction is in scope. A reader seeing "also in:
+    data-centre buildout, tier 2" beside a verdict is being told something true about the
+    company; they are not being told anything about the verdict.
+
+    Kept as its own node rather than folded into narration so that the invariant is provable by
+    inspection: remove this node and every verdict is byte-identical.
+    """
+
+    async def theme_labels(state: CycleState) -> dict[str, Any]:
+        verdicts = state.get("verdicts") or []
+        tickers = sorted({v.ticker for v in verdicts})
+        if not tickers:
+            return {}
+
+        try:
+            labels = labeller(tickers)
+        except Exception as exc:
+            # Losing labels costs a display nicety. Losing the cycle would not be worth it.
+            log.warning("theme labelling failed: %s", exc)
+            return {"notes": ["themes: labels unavailable"]}
+
+        if not labels:
+            return {}
+        return {
+            "theme_labels": labels,
+            "notes": [f"themes: {len(labels)} name(s) carry a theme label"],
+        }
+
+    return theme_labels
+
+
 # ── insights ──────────────────────────────────────────────────────────────────
 def make_insights_node(feed, ledger, book, limits):
     """Turn the cycle into the few things worth someone's attention.
@@ -422,5 +491,9 @@ def summarise(state: CycleState) -> dict[str, Any]:
         "as_of": (state.get("as_of") or now_utc()).isoformat(),
         "regime": regime.as_dict() if regime else None,
         "research": _finding_dicts(state),
+        # Reported so widening is visible as widening. A longer instrument list with no
+        # explanation is indistinguishable from a screen that behaved differently.
+        "theme_added": list(state.get("theme_added") or []),
+        "theme_labels": dict(state.get("theme_labels") or {}),
         "notes": list(state.get("notes") or []),
     }

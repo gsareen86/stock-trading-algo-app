@@ -79,6 +79,7 @@ class ThemeRunResult:
 def compose_gatherer(
     commentary: SourceResult | None = None,
     policy: SourceResult | None = None,
+    filings: SourceResult | None = None,
 ):
     """Build a gatherer from already-read sources.
 
@@ -93,7 +94,11 @@ def compose_gatherer(
         documents = 0
         unavailable = []
 
-        for result, kind in ((commentary, _Kind.COMMENTARY), (policy, _Kind.POLICY)):
+        for result, kind in (
+            (commentary, _Kind.COMMENTARY),
+            (policy, _Kind.POLICY),
+            (filings, _Kind.FILING),
+        ):
             if result is None:
                 continue
             references.extend(result.references)

@@ -16,6 +16,7 @@ from app.agents.graph import build_graph, run_cycle
 from app.agents.mcp_client import McpServerStatus, McpTool
 from app.agents.state import RegimeRead
 from app.agents.toolbelt import Toolbelt
+from app.core.clock import now_utc
 from app.data.fake import FakePriceSource
 from app.data.fundamentals import StaticFundamentalsSource
 from app.domain.instrument import Instrument
@@ -534,3 +535,160 @@ class TestSurfacesDoNotBlendVerdicts:
     def test_no_surface_sorts_names_by_agreement(self) -> None:
         for name, src in self._web_sources().items():
             assert "sort" not in src or "localeCompare" in src or "cost_basis" in src, name
+
+
+class TestThemesWidenAndNeverNarrow:
+    """The invariant, asserted against a real cycle rather than argued for in a docstring.
+
+    Themes do two things to a cycle: they add names to the screened set, and they attach a
+    display label to verdicts afterwards. Neither may change what a strategy concludes about
+    any name, and this is where that is proved.
+    """
+
+    @pytest.fixture
+    def pieces(self):
+        from app.data.fake import FakePriceSource
+        from app.data.protocols import UniverseSnapshot
+        from app.data.surveillance import load as load_surveillance
+        from app.screening.screener import ScreenCriteria, Screener
+        from app.strategies.registry import StrategyRegistry
+
+        universe = UniverseSnapshot(
+            instruments=tuple(
+                Instrument(s, f"{s} Ltd.", "Capital Goods")
+                for s in ("AAA", "BBB", "CCC", "DDD")
+            ),
+            origin="live",
+            index_name="TEST",
+        )
+
+        class Source:
+            def snapshot(self):
+                return universe
+
+        prices = FakePriceSource()
+        return {
+            "registry": StrategyRegistry.discover(),
+            "context": StrategyContext(price_source=prices),
+            "prices": prices,
+            "universe_source": Source(),
+            "screener": Screener(prices, load_surveillance()),
+            "criteria": ScreenCriteria(limit=2, min_turnover_inr=0, min_price_inr=0, min_bars=0),
+        }
+
+    async def _run(self, pieces, *, theme_candidates=None, theme_labeller=None):
+        from app.agents.graph import build_graph, run_cycle
+
+        compiled = build_graph(
+            registry=pieces["registry"],
+            strategy_context=pieces["context"],
+            price_source=pieces["prices"],
+            toolbelt=Toolbelt(registry=ToolRegistry.discover(), context=ToolContext()),
+            gateway=SilentGateway(),
+            max_tool_rounds=0,
+            screener=pieces["screener"],
+            universe_source=pieces["universe_source"],
+            screen_criteria=pieces["criteria"],
+            theme_candidates=theme_candidates,
+            theme_labeller=theme_labeller,
+        )
+        return await run_cycle(
+            compiled,
+            {
+                "cycle_id": "t",
+                "as_of": now_utc(),
+                "instruments": [],
+                "narrate": False,
+                "verdicts": [],
+                "notes": [],
+            },
+        )
+
+    def _verdicts(self, result) -> dict:
+        return {
+            (v.strategy_id, v.ticker): (v.stance.value, v.conviction, v.gates_passed)
+            for v in result["verdicts"]
+        }
+
+    async def test_themes_add_names_the_screen_did_not_surface(self, pieces) -> None:
+        without = await self._run(pieces)
+        with_themes = await self._run(pieces, theme_candidates=lambda: ["DDD"])
+
+        assert "DDD" in {v.ticker for v in with_themes["verdicts"]}
+        assert "DDD" not in {v.ticker for v in without["verdicts"]}
+
+    async def test_widening_is_reported(self, pieces) -> None:
+        result = await self._run(pieces, theme_candidates=lambda: ["DDD"])
+
+        assert result["theme_added"] == ["DDD"]
+
+    async def test_every_name_the_screen_found_is_still_evaluated(self, pieces) -> None:
+        """Widening is a union. Nothing the screen surfaced may disappear."""
+        without = await self._run(pieces)
+        with_themes = await self._run(pieces, theme_candidates=lambda: ["DDD"])
+
+        assert {v.ticker for v in without["verdicts"]} <= {
+            v.ticker for v in with_themes["verdicts"]
+        }
+
+    async def test_verdicts_are_identical_with_themes_on_and_off(self, pieces) -> None:
+        """**The invariant.** Same name, same verdict, whatever themes did to the cycle."""
+        without = await self._run(pieces)
+        with_themes = await self._run(
+            pieces,
+            theme_candidates=lambda: ["DDD"],
+            theme_labeller=lambda tickers: {t: [{"key": "x", "tier": 1}] for t in tickers},
+        )
+
+        baseline = self._verdicts(without)
+        widened = self._verdicts(with_themes)
+
+        assert baseline, "the baseline cycle produced no verdicts to compare"
+        for key, value in baseline.items():
+            assert widened[key] == value, key
+
+    async def test_a_label_changes_no_verdict(self, pieces) -> None:
+        unlabelled = await self._run(pieces)
+        labelled = await self._run(
+            pieces,
+            theme_labeller=lambda tickers: {t: [{"key": "x", "tier": 2}] for t in tickers},
+        )
+
+        assert self._verdicts(unlabelled) == self._verdicts(labelled)
+
+    async def test_labels_are_attached_where_asked_for(self, pieces) -> None:
+        result = await self._run(
+            pieces,
+            theme_labeller=lambda tickers: {
+                t: [{"key": "data_centre", "tier": 2}] for t in tickers
+            },
+        )
+
+        assert result["theme_labels"]
+        assert all(v[0]["key"] == "data_centre" for v in result["theme_labels"].values())
+
+    async def test_a_failing_theme_source_does_not_change_the_screen(self, pieces) -> None:
+        """Widening is a bonus. Losing the screen to it would be a regression."""
+
+        def boom():
+            raise RuntimeError("theme store down")
+
+        without = await self._run(pieces)
+        broken = await self._run(pieces, theme_candidates=boom)
+
+        assert self._verdicts(broken) == self._verdicts(without)
+
+    async def test_a_failing_labeller_does_not_end_the_cycle(self, pieces) -> None:
+        def boom(tickers):
+            raise RuntimeError("theme store down")
+
+        result = await self._run(pieces, theme_labeller=boom)
+
+        assert result["verdicts"]
+
+    async def test_a_theme_name_outside_the_universe_is_ignored(self, pieces) -> None:
+        """A candidate the universe does not contain cannot be conjured into a cycle."""
+        result = await self._run(pieces, theme_candidates=lambda: ["NOTLISTED"])
+
+        assert result["theme_added"] == []
+        assert "NOTLISTED" not in {v.ticker for v in result["verdicts"]}

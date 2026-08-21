@@ -142,6 +142,51 @@ def policy_references(
     )
 
 
+def filing_references(
+    symbols: list[str],
+    reader,
+    period: str,
+    sectors: dict[str, str] | None = None,
+    limit: int | None = None,
+) -> SourceResult:
+    """Concepts a company disclosed to the exchange.
+
+    Weaker signal than commentary and stronger provenance. A transcript is management talking;
+    a filing is the thing itself — a new plant, a capacity addition, an order won — and it is
+    where a capex commitment appears before anyone discusses it on a call.
+
+    ``reader`` takes a symbol and returns ``(text, source_ref)`` pairs, one per filing, so a
+    company's several announcements each get read. Injected for the same reasons as the others.
+    """
+    sectors = sectors or {}
+    references: list[Reference] = []
+    read = 0
+
+    for symbol in symbols[: limit or len(symbols)]:
+        try:
+            filings = reader(symbol) or []
+        except Exception as exc:
+            log.debug("filing read failed for %s: %s", symbol, exc)
+            continue
+
+        for text, source_ref in filings:
+            if not text:
+                continue
+            read += 1
+            references.extend(
+                extract(
+                    symbol=symbol,
+                    period=period,
+                    text=text,
+                    kind=SourceKind.FILING,
+                    source_ref=source_ref,
+                    sector=sectors.get(symbol),
+                )
+            )
+
+    return SourceResult(references=references, documents_read=read, available=read > 0)
+
+
 #: Words that mark an item as being about government action rather than about a company. Kept
 #: deliberately narrow: a policy reference that is really a company story would attribute a
 #: scheme to a market move.

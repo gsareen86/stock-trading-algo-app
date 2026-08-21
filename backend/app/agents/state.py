@@ -82,6 +82,12 @@ class CycleState(TypedDict, total=False):
     narrate: bool
     #: What the screen decided, when one ran. Reported so an empty cycle is diagnosable.
     screen: dict[str, Any]
+    #: Names a theme added that the screen did not surface. Recorded so widening is visible
+    #: rather than inferred from a longer list — and so it can be shown to have added only.
+    theme_added: list[str]
+    #: Which themes each evaluated name belongs to, keyed by ticker. A **display label**: it
+    #: is attached after verdicts exist and nothing reads it to decide anything.
+    theme_labels: dict[str, list[dict[str, Any]]]
     #: Per-verdict risk decisions. A decision *about acting*; the verdicts are untouched.
     risk: list[dict[str, Any]]
     #: What the insights node wrote, suppressed and truncated.

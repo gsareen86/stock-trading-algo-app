@@ -41,6 +41,7 @@ RESEARCH = "research"
 RISK = "risk"
 NARRATE = "narrate"
 INSIGHTS = "insights"
+THEME_LABELS = "theme_labels"
 STRATEGY_PREFIX = "strategy."
 
 
@@ -59,6 +60,8 @@ def build_graph(
     risk_limits=None,
     book=None,
     feed=None,
+    theme_candidates=None,
+    theme_labeller=None,
 ):
     """Compile the cycle graph. Raises only if LangGraph is missing."""
     from langgraph.graph import END, START, StateGraph
@@ -67,7 +70,12 @@ def build_graph(
 
     screening = screener is not None and universe_source is not None
     if screening:
-        graph.add_node(SCREEN, nodes.make_screen_node(screener, universe_source, screen_criteria))
+        graph.add_node(
+            SCREEN,
+            nodes.make_screen_node(
+                screener, universe_source, screen_criteria, theme_candidates
+            ),
+        )
     graph.add_node(REGIME, nodes.make_regime_node(price_source))
     graph.add_node(RESEARCH, nodes.make_research_node(toolbelt, gateway, max_tool_rounds))
     risking = ledger is not None and risk_limits is not None and book is not None
@@ -107,12 +115,22 @@ def build_graph(
 
     if risking:
         graph.add_edge(RISK, NARRATE)
+
+    # Labelling sits after narration, which is the only place it can go without being able to
+    # influence anything: by then every verdict exists and `Verdict` is frozen. Remove this
+    # node and every verdict is byte-identical — which is the invariant, provable by topology.
+    labelling = theme_labeller is not None
+    if labelling:
+        graph.add_node(THEME_LABELS, nodes.make_theme_label_node(theme_labeller))
+        graph.add_edge(NARRATE, THEME_LABELS)
+    tail = THEME_LABELS if labelling else NARRATE
+
     if surfacing:
         # Last: it reads verdicts, narratives, risk decisions, research and the regime.
-        graph.add_edge(NARRATE, INSIGHTS)
+        graph.add_edge(tail, INSIGHTS)
         graph.add_edge(INSIGHTS, END)
     else:
-        graph.add_edge(NARRATE, END)
+        graph.add_edge(tail, END)
     return graph.compile()
 
 

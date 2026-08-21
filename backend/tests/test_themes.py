@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from app.core.scheduler import Scheduler, is_reloader_supervisor
 from app.data.protocols import UniverseSnapshot
 from app.domain.instrument import Instrument
 from app.domain.themes import (
@@ -36,7 +37,11 @@ from app.themes.resolve import (
     terms,
 )
 from app.themes.runner import Gathered, ThemeRunner, compose_gatherer
-from app.themes.sources import commentary_references, policy_references
+from app.themes.sources import (
+    commentary_references,
+    filing_references,
+    policy_references,
+)
 from app.themes.store import ThemeStore
 from app.tools.registry import ToolRegistry
 from app.tools.theme_chain.tool import handle
@@ -1849,3 +1854,134 @@ class TestSourceAdapters:
         gathered = compose_gatherer(commentary=commentary)()
 
         assert gathered.unavailable == ()
+
+
+class TestFilingsAdapter:
+    """Weaker signal than commentary, stronger provenance."""
+
+    def _filings(self) -> dict:
+        return {
+            "ABB": [
+                ("Board approved a new transformer plant with capacity expansion.",
+                 "nse://ann/1"),
+                ("Company received an order for substation equipment.", "nse://ann/2"),
+            ]
+        }
+
+    def test_concepts_are_extracted_from_filings(self) -> None:
+        filings = self._filings()
+
+        result = filing_references(["ABB"], lambda s: filings.get(s), "Jun 2026")
+
+        assert result.available is True
+        assert "power_transmission" in {r.concept for r in result.references}
+
+    def test_each_filing_is_its_own_document(self) -> None:
+        filings = self._filings()
+
+        result = filing_references(["ABB"], lambda s: filings.get(s), "Jun 2026")
+
+        assert result.documents_read == 2
+
+    def test_filings_are_attributed_to_their_company(self) -> None:
+        filings = self._filings()
+
+        result = filing_references(["ABB"], lambda s: filings.get(s), "Jun 2026")
+
+        assert all(r.symbol == "ABB" for r in result.references)
+        assert all(r.kind is SourceKind.FILING for r in result.references)
+
+    def test_a_failing_reader_marks_the_source_unavailable(self) -> None:
+        def boom(symbol):
+            raise RuntimeError("NSE blocked")
+
+        result = filing_references(["ABB"], boom, "Jun 2026")
+
+        assert result.available is False
+        assert result.references == []
+
+    def test_filings_compose_with_the_other_sources(self) -> None:
+        filings = filing_references(["ABB"], lambda s: self._filings().get(s), "Jun 2026")
+        commentary = commentary_references(["B"], lambda s: None, "Jun 2026")
+
+        gathered = compose_gatherer(commentary=commentary, filings=filings)()
+
+        assert gathered.unavailable == (SourceKind.COMMENTARY,)
+        assert gathered.documents_read == 2
+
+
+class TestScheduler:
+    """The reload guard, and failing safely."""
+
+    def test_a_plain_process_schedules(self, monkeypatch) -> None:
+        monkeypatch.delenv("UVICORN_RELOAD", raising=False)
+        monkeypatch.delenv("RUN_MAIN", raising=False)
+
+        assert is_reloader_supervisor() is False
+
+    def test_the_reload_supervisor_does_not_schedule(self, monkeypatch) -> None:
+        """Both uvicorn processes run the app factory; only the child may schedule.
+
+        Without this every scheduled job fires twice under `--reload`, silently, and the
+        symptom is a mysterious "run already in progress" rather than anything pointing here.
+        """
+        monkeypatch.setenv("UVICORN_RELOAD", "true")
+        monkeypatch.delenv("RUN_MAIN", raising=False)
+
+        assert is_reloader_supervisor() is True
+
+    def test_the_reload_child_does_schedule(self, monkeypatch) -> None:
+        monkeypatch.setenv("UVICORN_RELOAD", "true")
+        monkeypatch.setenv("RUN_MAIN", "true")
+
+        assert is_reloader_supervisor() is False
+
+    def test_a_supervisor_scheduler_runs_nothing(self, monkeypatch) -> None:
+        monkeypatch.setenv("UVICORN_RELOAD", "true")
+        monkeypatch.delenv("RUN_MAIN", raising=False)
+
+        scheduler = Scheduler()
+        scheduler.every_week("themes", lambda: None, "sun", 8)
+
+        assert scheduler.start() is False
+        assert scheduler.active is False
+
+    def test_disabled_schedules_nothing(self, monkeypatch) -> None:
+        monkeypatch.delenv("UVICORN_RELOAD", raising=False)
+        scheduler = Scheduler(enabled=False)
+        scheduler.every_week("themes", lambda: None, "sun", 8)
+
+        assert scheduler.start() is False
+
+    def test_no_jobs_means_nothing_started(self, monkeypatch) -> None:
+        monkeypatch.delenv("UVICORN_RELOAD", raising=False)
+
+        assert Scheduler().start() is False
+
+    def test_a_job_is_registered_and_started(self, monkeypatch) -> None:
+        monkeypatch.delenv("UVICORN_RELOAD", raising=False)
+        monkeypatch.delenv("RUN_MAIN", raising=False)
+
+        scheduler = Scheduler()
+        scheduler.every_week("themes", lambda: None, "sun", 8)
+        started = scheduler.start()
+        try:
+            assert started is True
+            assert scheduler.job_ids() == ["themes"]
+        finally:
+            scheduler.shutdown()
+
+    def test_a_failing_job_never_reaches_the_scheduler(self) -> None:
+        """A job that dies takes its run down. A scheduler that dies takes every future run."""
+        from app.core.scheduler import _guarded
+
+        def boom():
+            raise RuntimeError("run failed")
+
+        _guarded("themes", boom)()  # must not raise
+
+    def test_scheduling_is_off_by_default(self) -> None:
+        """A platform that starts doing things on a timer when installed is a surprise."""
+        from app.core.settings import Settings
+
+        assert Settings(_env_file=None).scheduler_enabled is False

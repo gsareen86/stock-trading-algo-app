@@ -202,6 +202,16 @@ class Settings(BaseSettings):
     #: the market is open, and one payload answers every index.
     nse_quote_cache_seconds: Annotated[float, Field(ge=0.0, le=3600.0)] = 60.0
 
+    # ── Scheduled runs ────────────────────────────────────────────────────────
+    #: Off by default. A platform that starts doing things on a timer the moment it is
+    #: installed is one whose first surprise is a scheduled job nobody asked for.
+    scheduler_enabled: bool = False
+
+    #: Day and hour, IST, for the weekly theme run. Sunday morning by default: the week's
+    #: filings and commentary have landed and nothing is competing for the machine.
+    theme_run_day: str = "sun"
+    theme_run_hour: Annotated[int, Field(ge=0, le=23)] = 8
+
     # ── Observability ─────────────────────────────────────────────────────────
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
