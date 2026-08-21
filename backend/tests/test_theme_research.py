@@ -698,3 +698,71 @@ class TestNothingHereDecidesAnything:
 
         assert result.ok
         assert all(item["measured_by_platform"] is False for item in result.items)
+
+
+class TestResearchCannotMoveAVerdict:
+    """The invariant the whole theme engine rests on: a theme widens attention, never narrows it.
+
+    Research is the most invasive thing in the engine — it decomposes tiers, searches the open
+    web and proposes company names — so it is the piece most worth proving inert with respect
+    to what the platform actually decides.
+
+    Proved structurally rather than by comparing two runs, because structure is the stronger
+    claim. A strategy evaluates an `Instrument` against a `StrategyContext`, and neither
+    carries a theme, a candidate or a sub-category. There is no path along which research
+    *could* reach a verdict, so there is no configuration in which enabling it changes one.
+    """
+
+    def test_no_strategy_can_see_a_theme(self) -> None:
+        import inspect
+
+        from app.strategies.protocols import StrategyContext
+
+        fields = set(inspect.signature(StrategyContext).parameters)
+
+        for themed in ("theme", "themes", "candidate", "candidates", "exposure", "sub_category"):
+            assert themed not in fields, f"a strategy can see {themed}"
+
+    def test_no_strategy_module_imports_the_theme_engine(self) -> None:
+        from pathlib import Path
+
+        from tests.conftest import code_only
+
+        for module in Path("app/strategies").glob("*.py"):
+            source = code_only(module.read_text("utf-8"))
+            assert "app.themes" not in source, module.name
+            assert "app.data.search" not in source, module.name
+
+    def test_the_verdict_for_a_symbol_does_not_depend_on_it_being_a_candidate(self) -> None:
+        """A candidate is a name to look at. It carries nothing a strategy reads."""
+        from app.domain.themes import Candidate
+
+        candidate = Candidate(
+            symbol="KAYNES",
+            theme_key="semi",
+            tier=2,
+            exposure=Exposure.UNESTABLISHED,
+            exposure_basis="proposed by search",
+        )
+
+        # Everything a candidate carries is provenance. None of it is a price, a fundamental
+        # or a gate, which is all a strategy consumes.
+        assert set(candidate.as_dict()) == {
+            "symbol",
+            "theme_key",
+            "tier",
+            "exposure",
+            "exposure_basis",
+            "matched_description",
+        }
+
+    def test_no_search_result_can_become_evidence(self) -> None:
+        """An `Evidence` row is a platform measurement. Nothing here is one."""
+        from app.tools.registry import ToolRegistry
+
+        registry = ToolRegistry.discover()
+
+        for name in ("web_search", "theme_participants", "tier_decompose"):
+            manifest = registry.get(name)
+            item = manifest.output_schema["properties"]["items"]["items"]
+            assert "measured_by_platform" in item["properties"], name

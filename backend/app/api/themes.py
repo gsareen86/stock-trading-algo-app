@@ -110,6 +110,15 @@ async def read_theme(
     return {
         **theme,
         "chain": store.chain(theme_key),
+        # What each coarse tier broke into. A sub-category carries whether it was searched,
+        # so "searched and found nothing" is distinguishable from "never searched" — they
+        # look identical on a screen and mean opposite things.
+        "sub_categories": store.sub_categories(theme_key),
+        # Every company a search proposed, **including the refusals**. A name the universe
+        # could not confirm is published as `not_found` and an ambiguous one as `ambiguous`,
+        # because the refusals are the safety property and a surface that showed only the
+        # successes would give no sign they had happened.
+        "proposals": store.proposals(theme_key),
         "candidates": store.candidates(theme_key),
         "references": [
             {

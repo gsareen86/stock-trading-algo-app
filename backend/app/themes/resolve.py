@@ -306,15 +306,22 @@ def resolve_tier(
 
     # Nothing matched — and the wording of that matters more than it looks.
     #
-    # This says what the platform actually knows: no company's *name or NSE industry* matched.
-    # It is emphatically not "no Indian company does this". Kaynes Technology and CG Power are
-    # both building semiconductor assembly plants and neither carries a semiconductor word in
-    # its name or its "Capital Goods" classification, so a tier for OSAT resolves to nothing
-    # here while two real candidates sit in the universe unmatched.
+    # This says exactly what this function knows and no more: no company's *business
+    # description* matched. It is still not "no Indian company does this", and the gap between
+    # those two statements is now measured rather than guessed at.
     #
-    # Claiming the market has no exposure, on evidence this shallow, would be the engine's
-    # most confidently wrong output. `theme-research-agent` is the change that goes looking
-    # properly; until then this states its own limits.
+    # Of the two companies this comment used to name as unreachable, one no longer is. CG
+    # Power's description says "outsourced semiconductor assembly and testing" outright, and
+    # `tier_decompose` splitting the tier fine enough to ask the question is what surfaces it —
+    # against the coarse tier it tied with Infosys and Shree Cement on a single word. Kaynes is
+    # still invisible here and always will be: its description says "integrated electronics
+    # manufacturer" and its assembly plant post-dates it, so the fact is not in the data at any
+    # granularity. `theme_participants` reaches it by searching, and `propose.validate` is what
+    # keeps a proposed name inert until the universe confirms it.
+    #
+    # So the stronger claim is available, but not from here. A sub-category records whether a
+    # search then ran, and only the two together can say "looked properly and found nobody"
+    # rather than "this function did not match anything".
     examples = ", ".join(
         e["name"] for e in (notable_examples or []) if isinstance(e, dict) and e.get("name")
     )

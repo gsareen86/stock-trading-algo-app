@@ -26,6 +26,7 @@ from app.api.insights import router as insights_router
 from app.api.llm import router as llm_router
 from app.api.root import router as root_router
 from app.api.screening import router as screening_router
+from app.api.research import router as research_router
 from app.api.themes import router as themes_router
 from app.api.tools import router as tools_router
 from app.api.verdicts import router as verdicts_router
@@ -35,7 +36,10 @@ from app.broker.session import DEFAULT_KITE_MCP_URL, KiteSession
 from app.core.logging import configure_logging
 from app.core.scheduler import Scheduler
 from app.core.settings import Settings
+from app.core.rate_limit import RateLimiter
 from app.data.profiles import YFinanceProfileSource
+from app.data.provider_budget import MonthlyRequestBudget
+from app.data.search import TavilySearchSource
 from app.data.universe import NseUniverseSource
 from app.llm.budget import DailyBudget
 from app.llm.gateway import LiteLLMGateway
@@ -87,6 +91,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.universe_source = NseUniverseSource()
     app.state.profile_source = YFinanceProfileSource(
         cache_path=f"{settings.llm_cache_dir}/profiles.json"
+    )
+    # One search source per process. It holds the per-run query cache, so a second one
+    # built elsewhere would spend a second credit on a question already answered.
+    app.state.search_source = (
+        TavilySearchSource(
+            api_key=settings.tavily_api_key,
+            budget=MonthlyRequestBudget(
+                app.state.session_factory, "search", settings.search_monthly_request_limit
+            ),
+            limiter=RateLimiter(settings.search_min_request_interval_seconds),
+            max_results=settings.search_max_results,
+        )
+        if settings.search_configured
+        else None
     )
     try:
         app.state.theme_runner = build_runner(
@@ -140,6 +158,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(backtest_router)
     app.include_router(broker_router)
     app.include_router(themes_router)
+    app.include_router(research_router)
 
     log.info("app ready (env=%s, version=%s)", settings.app_env, settings.app_version)
     return app
