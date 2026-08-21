@@ -21,6 +21,7 @@ class TestSkillsEndpoint:
             "theme_chain",
             "concept_extract",
             "theme_merge",
+            "policy_classify",
         }
         assert body["count"] == len(names)
         for tool in body["tools"]:

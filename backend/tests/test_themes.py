@@ -28,20 +28,17 @@ from app.domain.themes import (
     Theme,
     ThemeEvidence,
 )
-from app.themes.detect import CONCEPTS, Thresholds, assemble, extract
+from app.themes.detect import Thresholds, assemble
 from app.themes.exposure import grade, grade_many
+from app.themes.extraction import ConceptStore
 from app.themes.resolve import (
     match_description,
     resolve_chain,
     resolve_tier,
     terms,
 )
-from app.themes.runner import Gathered, ThemeRunner, compose_gatherer
-from app.themes.sources import (
-    commentary_references,
-    filing_references,
-    policy_references,
-)
+from app.themes.runner import Gathered, ThemeRunner
+from app.themes.sources import policy_references, read_documents
 from app.themes.store import ThemeStore
 from app.tools.registry import ToolRegistry
 from app.tools.theme_chain.tool import handle
@@ -192,97 +189,187 @@ class TestReproducibility:
         assert [t.evidence.breadth for t in first] == [t.evidence.breadth for t in second]
 
 
-class TestExtraction:
-    def test_a_known_concept_is_found(self) -> None:
-        found = extract(
-            "ABB", "Jun 2026", "Data centre demand is driving orders.",
-            SourceKind.COMMENTARY, "doc://x",
+class TestStoredExtraction:
+    """Reading is a model call; counting is arithmetic over what it wrote down.
+
+    That split is what lets an open vocabulary coexist with thresholds. A model answers
+    differently every time it is asked, so counts recomputed from fresh readings would drift
+    and a threshold over drifting numbers means nothing. The reading is persisted; the counting
+    reads rows.
+    """
+
+    @pytest.fixture
+    def store(self, session_factory) -> ConceptStore:
+        return ConceptStore(session_factory)
+
+    def _concept(self, symbol: str, label: str, period: str = "Jun 2026", **extra) -> dict:
+        return {
+            "symbol": symbol,
+            "period": period,
+            "label": label,
+            "excerpt": f"{symbol} said something about {label}",
+            "source_ref": extra.get("source_ref", f"doc://{symbol}/{period}"),
+            "extracted_by": "ollama/test",
+            # A theme crosses sectors, so the default thresholds require at least one known
+            # sector. A reading with none is a real state, just not one that surfaces.
+            "sector": extra.get("sector", "Capital Goods"),
+            **{k: v for k, v in extra.items() if k != "source_ref"},
+        }
+
+    def test_a_reading_is_stored_and_read_back(self, store: ConceptStore) -> None:
+        store.record([self._concept("ABB", "data centre demand")])
+
+        [reference] = store.references()
+        assert reference.symbol == "ABB"
+        assert reference.concept == "data centre demand"
+
+    def test_a_document_is_only_read_once(self, store: ConceptStore) -> None:
+        """The check that keeps a weekly run affordable and the counts still."""
+        assert store.has_read("doc://ABB/Jun 2026") is False
+
+        store.record([self._concept("ABB", "data centre demand")])
+
+        assert store.has_read("doc://ABB/Jun 2026") is True
+
+    def test_re_recording_the_same_reading_does_not_double_breadth(
+        self, store: ConceptStore
+    ) -> None:
+        store.record([self._concept("ABB", "data centre demand")])
+        store.record([self._concept("ABB", "data centre demand")])
+
+        assert len(store.references()) == 1
+
+    def test_labels_are_free_form(self, store: ConceptStore) -> None:
+        """No list anywhere. Whatever the company said is what is stored."""
+        store.record(
+            [
+                self._concept("ABB", "pent-up technology backlog"),
+                self._concept("TCS", "ai-led transformation"),
+            ]
         )
 
-        assert [r.concept for r in found] == ["data_centre"]
+        assert set(store.labels()) == {"pent-up technology backlog", "ai-led transformation"}
 
-    def test_repeated_mentions_are_one_reference(self) -> None:
-        text = "data centre " * 40
-        found = extract("ABB", "Jun 2026", text, SourceKind.COMMENTARY, "doc://x")
+    def test_an_unplaced_concept_stands_as_its_own_theme(self, store: ConceptStore) -> None:
+        """Dropping unplaced concepts would make a merge failure look like a quiet market."""
+        store.record([self._concept("ABB", "hyperscaler capex")])
 
-        assert len(found) == 1
+        [reference] = store.references()
+        assert reference.concept == "hyperscaler capex"
 
-    def test_several_concepts_in_one_document(self) -> None:
-        found = extract(
-            "ABB",
-            "Jun 2026",
-            "Data centre demand drives transformer and switchgear orders.",
-            SourceKind.COMMENTARY,
-            "doc://x",
+    def test_a_placement_renames_the_concept_to_its_theme(self, store: ConceptStore) -> None:
+        store.record([self._concept("ABB", "hyperscaler capex")])
+        store.place(
+            [
+                {
+                    "concept": "hyperscaler capex",
+                    "theme": "data centre buildout",
+                    "reasoning": "same underlying development",
+                    "decided_by": "ollama/test",
+                }
+            ]
         )
 
-        assert {r.concept for r in found} == {"data_centre", "power_transmission"}
+        [reference] = store.references()
+        assert reference.concept == "data centre buildout"
 
-    def test_an_excerpt_is_carried_for_a_reader_to_judge(self) -> None:
-        found = extract(
-            "ABB", "Jun 2026", "We expect data centre demand to double.",
-            SourceKind.COMMENTARY, "doc://x",
+    def test_placing_two_wordings_on_one_theme_builds_breadth(
+        self, store: ConceptStore
+    ) -> None:
+        """The crux. Unmerged, each wording has a breadth of one and nothing ever surfaces."""
+        store.record(
+            [
+                self._concept("ABB", "hyperscaler capex"),
+                self._concept("SIEMENS", "data centre demand"),
+                self._concept(
+                    "ABB", "ai infrastructure buildout", period="Mar 2026",
+                    source_ref="doc://ABB/Mar 2026",
+                ),
+            ]
+        )
+        store.place(
+            [
+                {"concept": "hyperscaler capex", "theme": "data centre buildout"},
+                {"concept": "data centre demand", "theme": "data centre buildout"},
+                {"concept": "ai infrastructure buildout", "theme": "data centre buildout"},
+            ]
         )
 
-        assert "data centre" in found[0].excerpt.lower()
+        surfaced, _ = assemble(store.references(), thresholds=Thresholds(min_companies=2))
 
-    def test_every_reference_is_traceable(self) -> None:
-        found = extract(
-            "ABB", "Jun 2026", "Data centre demand.", SourceKind.COMMENTARY, "doc://abb/q1"
-        )
+        assert [t.key for t in surfaced] == ["data centre buildout"]
+        assert surfaced[0].evidence.breadth == 2
+        assert surfaced[0].evidence.persistence == 2
 
-        assert found[0].source_ref == "doc://abb/q1"
-        assert found[0].symbol == "ABB"
-        assert found[0].period == "Jun 2026"
+    def test_unmerged_wordings_surface_nothing(self) -> None:
+        """Why merging is the crux rather than a tidying step.
 
-    def test_no_text_is_no_references(self) -> None:
-        assert extract("ABB", "Jun 2026", "", SourceKind.COMMENTARY, "d") == []
-
-    def test_an_unlisted_concept_is_simply_not_found(self) -> None:
-        """A gap, and an honest one — the alternative is a model that is not reproducible."""
-        found = extract(
-            "ABB", "Jun 2026", "We are investing in artisanal cheese.",
-            SourceKind.COMMENTARY, "doc://x",
-        )
-
-        assert found == []
-
-    def test_concept_phrases_are_lowercase(self) -> None:
-        """Matching is done on lowered text; an upper-case phrase would never match."""
-        for phrases in CONCEPTS.values():
-            assert all(p == p.lower() for p in phrases)
-
-
-class TestTheWorkedExample:
-    """The case this change exists for: a theme found, and its supply chain one step behind."""
-
-    def _corpus(self) -> list[Reference]:
-        rows = [
-            ("ABB", "Infrastructure", "Jun 2026", "Data centre demand drives transformer orders."),
-            ("SIEMENS", "Infrastructure", "Jun 2026",
-             "Substation demand from hyperscaler build-outs."),
-            ("POLYCAB", "Metal", "Jun 2026", "Data center cabling demand rose sharply."),
-            ("ABB", "Infrastructure", "Mar 2026", "Data centre orders continued to build."),
+        The same three readings, unplaced: three themes of one company each, and the
+        thresholds correctly reject every one. Open-vocabulary extraction without merging is
+        strictly worse than the fixed list it replaced.
+        """
+        references = [
+            Reference("ABB", "hyperscaler capex", "Jun 2026", SourceKind.COMMENTARY, "d1"),
+            Reference("SIEMENS", "data centre demand", "Jun 2026", SourceKind.COMMENTARY, "d2"),
+            Reference("ABB", "ai infrastructure buildout", "Mar 2026", SourceKind.COMMENTARY, "d3"),
         ]
-        found: list[Reference] = []
-        for symbol, sector, period, text in rows:
-            found += extract(
-                symbol, period, text, SourceKind.COMMENTARY, f"doc://{symbol}/{period}",
-                sector=sector,
-            )
-        return found
 
-    def test_the_theme_surfaces_from_the_supply_chain_not_the_headline(self) -> None:
-        surfaced, _ = assemble(self._corpus())
+        surfaced, short = assemble(references, thresholds=Thresholds(min_companies=2))
 
-        keys = [t.key for t in surfaced]
-        assert "data_centre" in keys
+        assert surfaced == []
+        assert len(short) == 3
 
-    def test_it_crosses_sectors(self) -> None:
-        surfaced, _ = assemble(self._corpus())
-        theme = next(t for t in surfaced if t.key == "data_centre")
+    def test_a_rejected_placement_is_not_reinstated(self, store: ConceptStore) -> None:
+        store.record([self._concept("ABB", "hyperscaler capex")])
+        store.place([{"concept": "hyperscaler capex", "theme": "data centre buildout"}])
+        assert store.reject_placement("hyperscaler capex") is True
 
-        assert len(theme.evidence.sectors) > 1
+        written, skipped = store.place(
+            [{"concept": "hyperscaler capex", "theme": "data centre buildout"}]
+        )
+
+        assert (written, skipped) == (0, 1)
+        assert store.references()[0].concept == "hyperscaler capex"
+
+    def test_rejecting_an_unknown_placement_is_false(self, store: ConceptStore) -> None:
+        assert store.reject_placement("never heard of it") is False
+
+    def test_counts_are_identical_across_reads(self, store: ConceptStore) -> None:
+        """Stored readings mean the same corpus always yields the same numbers."""
+        store.record(
+            [
+                self._concept("ABB", "data centre demand"),
+                self._concept("SIEMENS", "data centre demand"),
+                self._concept("ABB", "data centre demand", period="Mar 2026"),
+            ]
+        )
+
+        first, _ = assemble(store.references(), thresholds=Thresholds(min_companies=2))
+        second, _ = assemble(store.references(), thresholds=Thresholds(min_companies=2))
+
+        assert [t.evidence.breadth for t in first] == [t.evidence.breadth for t in second]
+
+
+class TestNoHardcodedVocabularyRemains:
+    """The defect this replaced: deciding what a document is about from a list of phrases."""
+
+    def test_detection_holds_no_concept_table(self) -> None:
+        from tests.conftest import source_of
+
+        source = source_of("themes")
+        assert "CONCEPTS" not in source
+        assert "_POLICY_MARKERS" not in source
+
+    def test_detection_calls_no_model_either(self) -> None:
+        """Reading moved to a tool. Counting stayed arithmetic, which is why it is checkable."""
+        from tests.conftest import source_of
+
+        detect = (
+            __import__("pathlib").Path("app/themes/detect.py").read_text("utf-8")
+        )
+        assert "gateway" not in detect
+        assert "prompt" not in detect.lower()
+        assert source_of("themes")
 
 
 class TestNothingHereRanksOrScores:
@@ -1679,235 +1766,205 @@ class TestThemesApi:
 
 
 class TestSourceAdapters:
-    """Reading the sources, and reporting honestly when one could not be read."""
+    """Reading documents with a model, and reporting honestly when a source cannot be read."""
+
+    @pytest.fixture
+    def store(self, session_factory) -> ConceptStore:
+        return ConceptStore(session_factory)
 
     def _docs(self) -> dict:
         return {
-            "ABB": (
-                "Order inflow was strong; data centre demand is driving transformer orders.",
-                "doc://abb/q1",
-            ),
-            "SIEMENS": (
-                "Substation and grid capacity expansion from hyperscaler build-outs.",
-                "doc://siemens/q1",
-            ),
-            "POLYCAB": ("Data center cabling demand rose sharply.", "doc://polycab/q1"),
+            "ABB": [("Order inflow was strong on data centre demand.", "doc://abb/q1")],
+            "SIEMENS": [("Substation demand from hyperscaler build-outs.", "doc://siemens/q1")],
         }
 
-    # ── commentary ────────────────────────────────────────────────────────────
-    def test_commentary_extracts_concepts_per_company(self) -> None:
+    def _extractor(self, labels: list[str]):
+        def extract(symbol, period, text, source_ref):
+            return [
+                {
+                    "symbol": symbol,
+                    "period": period,
+                    "label": label,
+                    "excerpt": text[:80],
+                    "source_ref": source_ref,
+                    "extracted_by": "ollama/test",
+                }
+                for label in labels
+            ]
+
+        return extract
+
+    def test_documents_are_read_and_stored(self, store: ConceptStore) -> None:
         docs = self._docs()
 
-        result = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026")
-
-        assert result.available is True
-        assert result.documents_read == 3
-        assert {r.symbol for r in result.references} == {"ABB", "SIEMENS", "POLYCAB"}
-
-    def test_order_book_is_a_concept_commentary_carries(self) -> None:
-        """Order inflow is a sentence in a transcript, not a line item in a statement."""
-        docs = self._docs()
-
-        result = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026")
-
-        assert "order_book" in {r.concept for r in result.references}
-
-    def test_a_reader_that_finds_nothing_marks_the_source_unavailable(self) -> None:
-        """Every attempt failing is a source that is down, not a market that is quiet."""
-        result = commentary_references(["A", "B"], lambda s: None, "Jun 2026")
-
-        assert result.available is False
-        assert result.documents_read == 0
-
-    def test_a_failing_reader_does_not_raise(self) -> None:
-        def boom(symbol):
-            raise RuntimeError("scrape blocked")
-
-        result = commentary_references(["A"], boom, "Jun 2026")
-
-        assert result.references == []
-        assert result.available is False
-
-    def test_one_unreadable_document_does_not_lose_the_others(self) -> None:
-        docs = self._docs()
-
-        def flaky(symbol):
-            if symbol == "ABB":
-                raise RuntimeError("blocked")
-            return docs.get(symbol)
-
-        result = commentary_references(list(docs), flaky, "Jun 2026")
+        result = read_documents(
+            list(docs), lambda s: docs.get(s), self._extractor(["data centre demand"]),
+            store, "Jun 2026",
+        )
 
         assert result.documents_read == 2
         assert result.available is True
+        assert {r.symbol for r in result.references} == {"ABB", "SIEMENS"}
 
-    def test_the_document_limit_is_respected(self) -> None:
-        """Commentary is scrape-only and slow; a run over the universe would take hours."""
+    def test_a_document_already_read_is_skipped(self, store: ConceptStore) -> None:
+        """Reading is minutes of local model time and a published document never changes."""
+        docs = self._docs()
+        calls: list[str] = []
+
+        def counting(symbol, period, text, source_ref):
+            calls.append(source_ref)
+            return self._extractor(["x"])(symbol, period, text, source_ref)
+
+        read_documents(list(docs), lambda s: docs.get(s), counting, store, "Jun 2026")
+        read_documents(list(docs), lambda s: docs.get(s), counting, store, "Jun 2026")
+
+        assert len(calls) == 2
+
+    def test_a_run_with_nothing_new_still_reports_its_references(
+        self, store: ConceptStore
+    ) -> None:
+        """A week with no new filings still has themes -- counts come from the store."""
+        docs = self._docs()
+        read_documents(
+            list(docs), lambda s: docs.get(s), self._extractor(["data centre demand"]),
+            store, "Jun 2026",
+        )
+
+        again = read_documents(
+            list(docs), lambda s: docs.get(s), self._extractor(["x"]), store, "Jun 2026"
+        )
+
+        assert again.documents_read == 0
+        assert again.available is True
+        assert len(again.references) == 2
+
+    def test_every_extraction_failing_marks_the_source_unavailable(
+        self, store: ConceptStore
+    ) -> None:
         docs = self._docs()
 
-        result = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026", limit=1)
+        result = read_documents(
+            list(docs), lambda s: docs.get(s), lambda *a: [], store, "Jun 2026"
+        )
+
+        assert result.available is False
+
+    def test_a_failing_reader_does_not_raise(self, store: ConceptStore) -> None:
+        def boom(symbol):
+            raise RuntimeError("scrape blocked")
+
+        result = read_documents(["A"], boom, self._extractor(["x"]), store, "Jun 2026")
+
+        assert result.references == []
+
+    def test_the_document_limit_is_respected(self, store: ConceptStore) -> None:
+        docs = self._docs()
+
+        result = read_documents(
+            list(docs), lambda s: docs.get(s), self._extractor(["x"]), store,
+            "Jun 2026", limit=1,
+        )
 
         assert result.documents_read == 1
 
-    def test_sectors_are_carried_through_for_breadth(self) -> None:
-        docs = self._docs()
+    def test_filings_are_read_by_the_same_path_under_their_own_kind(
+        self, store: ConceptStore
+    ) -> None:
+        filings = {"ABB": [("Board approved a new plant.", "nse://ann/1")]}
 
-        result = commentary_references(
-            list(docs), lambda s: docs.get(s), "Jun 2026",
-            sectors={"ABB": "Capital Goods", "POLYCAB": "Metal"},
+        result = read_documents(
+            ["ABB"], lambda s: filings.get(s), self._extractor(["capacity expansion"]),
+            store, "Jun 2026", kind=SourceKind.FILING,
         )
 
-        assert {r.sector for r in result.references if r.symbol == "ABB"} == {"Capital Goods"}
+        assert result.documents_read == 1
+        assert all(r.kind is SourceKind.FILING for r in result.references)
 
-    # ── policy ────────────────────────────────────────────────────────────────
+
+class TestPolicyClassification:
+    """Twelve keywords replaced by a model that can read."""
+
     def _feed(self) -> list[tuple[str, str, str, str]]:
         return [
-            ("Cabinet approves PLI scheme for electronics manufacturing",
-             "The government approved production-linked incentives.", "https://x/1", "et"),
+            ("Cabinet approves incentives for electronics assembly",
+             "The government cleared support.", "https://x/1", "et"),
             ("Reliance Q1 profit rises on refining margins",
              "The company reported higher earnings.", "https://x/2", "et"),
         ]
 
-    def test_policy_items_are_extracted(self) -> None:
-        result = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+    def _classifier(self, results: list[dict]):
+        return lambda headlines: results
+
+    def test_policy_items_become_references(self) -> None:
+        result = policy_references(
+            classifier=self._classifier(
+                [{"index": 0, "subject": "electronics manufacturing", "headline": "Cabinet"}]
+            ),
+            fetcher=lambda hours: self._feed(),
+            period="Jun 2026",
+        )
 
         assert result.available is True
-        assert "electronics_manufacturing" in {r.concept for r in result.references}
+        assert [r.concept for r in result.references] == ["electronics manufacturing"]
 
-    def test_a_company_story_is_not_policy(self) -> None:
-        """A scheme attributed to a market move would be a different claim entirely."""
-        result = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+    def test_the_subject_is_the_concept(self) -> None:
+        """The policy's own description of what it touches, not a guessed keyword."""
+        result = policy_references(
+            classifier=self._classifier(
+                [{"index": 0, "subject": "semiconductor fabrication", "headline": "h"}]
+            ),
+            fetcher=lambda hours: self._feed(),
+        )
 
-        assert all("reliance" not in (r.excerpt or "").lower() for r in result.references)
+        assert result.references[0].concept == "semiconductor fabrication"
 
     def test_policy_references_carry_no_company(self) -> None:
-        result = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+        result = policy_references(
+            classifier=self._classifier([{"index": 0, "subject": "x", "headline": "h"}]),
+            fetcher=lambda hours: self._feed(),
+        )
 
         assert all(r.symbol == "" for r in result.references)
 
     def test_policy_cannot_inflate_breadth(self) -> None:
         """The rule that stops one budget announcement manufacturing a theme."""
-        policy = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
-        evidence = ThemeEvidence(references=tuple(policy.references))
-
-        assert evidence.breadth == 0
-
-    def test_policy_still_shows_in_a_themes_sources(self) -> None:
-        """It corroborates. It just does not count as a company saying something."""
-        docs = {"ABB": ("PLI scheme drives electronics manufacturing demand.", "doc://abb")}
-        commentary = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026")
-        policy = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
-
-        evidence = ThemeEvidence(
-            references=tuple(
-                r for r in [*commentary.references, *policy.references]
-                if r.concept == "electronics_manufacturing"
-            )
+        result = policy_references(
+            classifier=self._classifier([{"index": 0, "subject": "x", "headline": "h"}]),
+            fetcher=lambda hours: self._feed(),
         )
 
-        assert SourceKind.POLICY in evidence.source_kinds
-        assert evidence.breadth == 1
+        assert ThemeEvidence(references=tuple(result.references)).breadth == 0
 
-    def test_an_unreachable_feed_is_unavailable(self) -> None:
-        def boom(hours):
-            raise RuntimeError("feeds unreachable")
-
-        result = policy_references(fetcher=boom)
-
-        assert result.references == []
-        assert result.available is False
-
-    def test_feeds_that_answered_with_nothing_recent_are_still_available(self) -> None:
-        """"Answered and had nothing" is not "could not be read"."""
-        result = policy_references(fetcher=lambda hours: [])
+    def test_an_index_nobody_offered_is_dropped(self) -> None:
+        """A classification of a headline that was not sent is the model inventing one."""
+        result = policy_references(
+            classifier=self._classifier([{"index": 99, "subject": "x", "headline": "h"}]),
+            fetcher=lambda hours: self._feed(),
+        )
 
         assert result.references == []
-        assert result.available is True
 
-    # ── composition ───────────────────────────────────────────────────────────
-    def test_composed_sources_report_what_could_not_be_read(self) -> None:
-        commentary = commentary_references(["A"], lambda s: None, "Jun 2026")
-        policy = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+    def test_a_failing_classifier_marks_the_source_unavailable(self) -> None:
+        def boom(headlines):
+            raise RuntimeError("model down")
 
-        gathered = compose_gatherer(commentary=commentary, policy=policy)()
-
-        assert gathered.unavailable == (SourceKind.COMMENTARY,)
-        assert gathered.read_nothing is False
-
-    def test_everything_unavailable_is_read_nothing(self) -> None:
-        def boom(hours):
-            raise RuntimeError("feeds unreachable")
-
-        commentary = commentary_references(["A"], lambda s: None, "Jun 2026")
-        policy = policy_references(fetcher=boom)
-
-        gathered = compose_gatherer(commentary=commentary, policy=policy)()
-
-        assert gathered.read_nothing is True
-        assert set(gathered.unavailable) == {SourceKind.COMMENTARY, SourceKind.POLICY}
-
-    def test_an_absent_adapter_is_not_reported_as_unavailable(self) -> None:
-        """Not configured and could-not-be-read are different facts."""
-        docs = self._docs()
-        commentary = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026")
-
-        gathered = compose_gatherer(commentary=commentary)()
-
-        assert gathered.unavailable == ()
-
-
-class TestFilingsAdapter:
-    """Weaker signal than commentary, stronger provenance."""
-
-    def _filings(self) -> dict:
-        return {
-            "ABB": [
-                ("Board approved a new transformer plant with capacity expansion.",
-                 "nse://ann/1"),
-                ("Company received an order for substation equipment.", "nse://ann/2"),
-            ]
-        }
-
-    def test_concepts_are_extracted_from_filings(self) -> None:
-        filings = self._filings()
-
-        result = filing_references(["ABB"], lambda s: filings.get(s), "Jun 2026")
-
-        assert result.available is True
-        assert "power_transmission" in {r.concept for r in result.references}
-
-    def test_each_filing_is_its_own_document(self) -> None:
-        filings = self._filings()
-
-        result = filing_references(["ABB"], lambda s: filings.get(s), "Jun 2026")
-
-        assert result.documents_read == 2
-
-    def test_filings_are_attributed_to_their_company(self) -> None:
-        filings = self._filings()
-
-        result = filing_references(["ABB"], lambda s: filings.get(s), "Jun 2026")
-
-        assert all(r.symbol == "ABB" for r in result.references)
-        assert all(r.kind is SourceKind.FILING for r in result.references)
-
-    def test_a_failing_reader_marks_the_source_unavailable(self) -> None:
-        def boom(symbol):
-            raise RuntimeError("NSE blocked")
-
-        result = filing_references(["ABB"], boom, "Jun 2026")
+        result = policy_references(classifier=boom, fetcher=lambda hours: self._feed())
 
         assert result.available is False
         assert result.references == []
 
-    def test_filings_compose_with_the_other_sources(self) -> None:
-        filings = filing_references(["ABB"], lambda s: self._filings().get(s), "Jun 2026")
-        commentary = commentary_references(["B"], lambda s: None, "Jun 2026")
+    def test_unreachable_feeds_are_unavailable(self) -> None:
+        def boom(hours):
+            raise RuntimeError("feeds unreachable")
 
-        gathered = compose_gatherer(commentary=commentary, filings=filings)()
+        result = policy_references(classifier=lambda h: [], fetcher=boom)
 
-        assert gathered.unavailable == (SourceKind.COMMENTARY,)
-        assert gathered.documents_read == 2
+        assert result.available is False
+
+    def test_feeds_that_answered_with_nothing_are_still_available(self) -> None:
+        result = policy_references(classifier=lambda h: [], fetcher=lambda hours: [])
+
+        assert result.available is True
 
 
 class TestScheduler:

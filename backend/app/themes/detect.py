@@ -1,14 +1,19 @@
 """Deciding what counts as a theme.
 
-**Arithmetic, not judgement.** A model asked "what themes are emerging in India" answers
-fluently every time, whether or not anything is emerging — the answer is unfalsifiable and
-changes between runs. Breadth and persistence are neither: *fourteen companies across three
-sectors, referenced in three consecutive quarters* is a claim that can be checked, disagreed
-with, and shown to be wrong.
+**Counting, not comprehension.** Whether a document describes a data-centre buildout is a
+reading question and a model answers it — that lives in `concept_extract`. Whether enough
+companies have said it for long enough to be a theme is arithmetic, and it lives here.
 
-It is also the claim that would have caught the thing this whole change exists for. Transformer
-and cable makers were describing data-centre demand in their order-book commentary long before
-it reached an index, and no headline reader would have joined those up.
+The division matters because the two fail differently. A model asked "what themes are emerging
+in India" answers fluently whether or not anything is, and the answer changes between runs. But
+*three companies across two sectors in two periods* is a claim that can be checked and can be
+wrong — and it is only checkable because extraction is written down and counted rather than
+re-formed on every run.
+
+This module previously did the reading too, by matching ten hardcoded phrase groups. That could
+only surface themes somebody had already typed in, which is a strange property for the part of
+a platform whose whole job is noticing what you had not thought of. The reading moved to a
+model; the counting stayed here, unchanged.
 
 Nothing in this module calls a model, and nothing in it produces a score. Given the same
 references it produces the same themes, in the same order, forever.
@@ -17,7 +22,6 @@ references it produces the same themes, in the same order, forever.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 
 from app.domain.themes import Reference, Theme, ThemeEvidence
@@ -99,89 +103,3 @@ def assemble(
     surfaced.sort(key=lambda t: (-t.evidence.breadth, -t.evidence.persistence, t.key))
     short.sort(key=lambda t: t.key)
     return surfaced, short
-
-
-# ── concept extraction ────────────────────────────────────────────────────────
-#: Concepts the platform recognises, as phrase alternatives. A data file rather than a model
-#: call: extraction has to be reproducible for the counts to mean anything, and a model
-#: deciding what a paragraph is "about" would give a different answer on a second run.
-#:
-#: Deliberately a seed list, and deliberately narrow. A concept nobody listed is invisible to
-#: detection, which is a real limitation and the honest one to take: the alternative is a model
-#: deciding what a paragraph is about, and then the counts stop being reproducible and stop
-#: meaning anything. Adding a concept is a data change.
-CONCEPTS: dict[str, tuple[str, ...]] = {
-    "data_centre": ("data centre", "data center", "hyperscaler", "colocation", "colo facility"),
-    "power_transmission": (
-        "transmission line",
-        "power transmission",
-        "substation",
-        "transformer",
-        "switchgear",
-        "grid capacity",
-    ),
-    "renewables": ("solar", "wind energy", "renewable capacity", "green energy"),
-    "green_hydrogen": ("green hydrogen", "electrolyser", "electrolyzer"),
-    "defence": ("defence order", "defense order", "indigenisation", "defence capex"),
-    "railways": ("railway capex", "vande bharat", "wagon", "locomotive", "rail infrastructure"),
-    "electronics_manufacturing": (
-        "electronics manufacturing",
-        "pli scheme",
-        "semiconductor fab",
-        "assembly plant",
-    ),
-    "ev_supply_chain": ("electric vehicle", "battery cell", "charging infrastructure", " ev "),
-    "capex_cycle": ("capacity expansion", "capex cycle", "brownfield expansion", "greenfield"),
-    "order_book": ("order book", "order inflow", "order intake", "orders received"),
-}
-
-
-def extract(
-    symbol: str,
-    period: str,
-    text: str,
-    kind,
-    source_ref: str,
-    sector: str | None = None,
-    period_end=None,
-) -> list[Reference]:
-    """References to known concepts in one document, one per concept matched.
-
-    One reference per concept per document, however many times the phrase appears. A company
-    that says "data centre" forty times in one call is one company saying it once as far as
-    breadth is concerned — counting mentions would let a single voluble management team
-    manufacture a theme.
-    """
-    if not text:
-        return []
-
-    lowered = f" {text.lower()} "
-    found: list[Reference] = []
-    for concept, phrases in CONCEPTS.items():
-        hit = next((p for p in phrases if p in lowered), None)
-        if hit is None:
-            continue
-        found.append(
-            Reference(
-                symbol=symbol,
-                concept=concept,
-                period=period,
-                kind=kind,
-                source_ref=source_ref,
-                sector=sector,
-                period_end=period_end,
-                excerpt=_excerpt(text, hit),
-            )
-        )
-    return found
-
-
-def _excerpt(text: str, phrase: str, width: int = 240) -> str:
-    """The sentence around a match, so a reader can judge the reference without the document."""
-    lowered = text.lower()
-    at = lowered.find(phrase)
-    if at < 0:
-        return ""
-    start = max(0, at - width // 2)
-    end = min(len(text), at + len(phrase) + width // 2)
-    return re.sub(r"\s+", " ", text[start:end]).strip()

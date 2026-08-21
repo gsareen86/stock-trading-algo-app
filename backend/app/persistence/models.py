@@ -493,3 +493,68 @@ class ThemeCandidate(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class DocumentConcept(Base):
+    """One theme a model read out of one document.
+
+    **Persisted so the counts can be arithmetic.** Extraction is a model call and a model
+    answers differently each time, so breadth and persistence would drift on every run if they
+    were recomputed from scratch — and thresholds over drifting numbers mean nothing. Storing
+    what was read makes re-reading a document a deliberate act rather than something that
+    happens by accident, which is how open vocabulary and stable counting coexist.
+
+    The label here is **not a theme**. It is whatever words that company used; the placement
+    that turns it into a theme lives in `concept_placements`, separately, so re-merging never
+    requires re-reading.
+    """
+
+    __tablename__ = "document_concepts"
+    __table_args__ = (
+        Index("ix_document_concepts_label", "label"),
+        Index("ix_document_concepts_symbol_period", "symbol", "period"),
+        # Re-reading the same document must not double a company's contribution to breadth.
+        Index("ix_document_concepts_identity", "source_ref", "label", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    period: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: Free-form, in the company's own words.
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="commentary")
+    sector: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+    #: The model that read it. Attribution is what keeps this from reading as a measurement.
+    extracted_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ConceptPlacement(Base):
+    """Which theme a freely-worded concept belongs to.
+
+    Separate from the extraction it came from, because the two change for different reasons: a
+    document is read once and never differently, while a placement may be revised as more
+    themes stand or rejected by a reader who disagrees.
+
+    A rejected placement survives later runs, for the same reason a rejected chain link does.
+    Re-proposing a merge somebody already threw out is how a review surface becomes one people
+    stop reading — and a wrong merge is worse than a wrong chain link, because it silently
+    combines unrelated evidence into the counts that decide what surfaces.
+    """
+
+    __tablename__ = "concept_placements"
+    __table_args__ = (Index("ix_concept_placements_label", "label", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    theme_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

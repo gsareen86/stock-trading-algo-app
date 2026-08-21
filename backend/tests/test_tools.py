@@ -92,6 +92,7 @@ class TestDiscovery:
             "filings_scan",
             "news_research",
             "peer_compare",
+            "policy_classify",
             "theme_chain",
             "theme_merge",
         ]
