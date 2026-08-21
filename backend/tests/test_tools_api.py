@@ -19,6 +19,8 @@ class TestSkillsEndpoint:
             "peer_compare",
             "commentary",
             "theme_chain",
+            "concept_extract",
+            "theme_merge",
         }
         assert body["count"] == len(names)
         for tool in body["tools"]:

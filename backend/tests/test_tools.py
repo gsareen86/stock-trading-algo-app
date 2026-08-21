@@ -87,11 +87,13 @@ class TestDiscovery:
         """
         assert registry.names() == [
             "commentary",
+            "concept_extract",
             "event_calendar",
             "filings_scan",
             "news_research",
             "peer_compare",
             "theme_chain",
+            "theme_merge",
         ]
 
     def test_every_summary_says_when_to_use_it(self, registry: ToolRegistry) -> None:

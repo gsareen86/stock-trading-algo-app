@@ -86,6 +86,29 @@ OUTPUT_SCHEMA = items_output_schema(
     },
 )
 
+#: What the model is constrained to emit. The local default is a thinking model and returns an
+#: empty string unconstrained, which this tool would report as "not a usable chain".
+MODEL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tiers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "supplies": {"type": "string"},
+                    "reasoning": {"type": "string"},
+                    "supplier_descriptions": {"type": "array", "items": {"type": "string"}},
+                    "notable_examples": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["label", "reasoning", "supplier_descriptions"],
+            },
+        }
+    },
+    "required": ["tiers"],
+}
+
 PROMPT = """You are describing a physical and economic supply chain, not making an investment \
 recommendation.
 
@@ -142,7 +165,9 @@ def handle(arguments: dict, context: ToolContext) -> dict:
         return {**empty, "reason": "no model is configured for chain expansion"}
 
     try:
-        raw, model = expander(PROMPT.format(theme=theme, max_tiers=max_tiers), TASK)
+        raw, model = expander(
+            PROMPT.format(theme=theme, max_tiers=max_tiers), TASK, MODEL_SCHEMA
+        )
     except Exception as exc:
         log.warning("chain expansion failed for %r: %s", theme, exc)
         return {**empty, "reason": f"expansion failed: {exc}"}

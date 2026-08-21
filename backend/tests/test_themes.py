@@ -542,7 +542,7 @@ class TestChainExpansion:
     """
 
     def _expander(self, payload: str, model: str = "ollama/test"):
-        def expand(prompt: str, task: str):
+        def expand(prompt: str, task: str, schema=None):
             return payload, model
 
         return ToolContext(fetchers={"chain_expander": expand})
@@ -631,7 +631,7 @@ class TestChainExpansion:
         assert result["available"] is True
 
     def test_a_failing_model_is_reported_not_raised(self) -> None:
-        def boom(prompt: str, task: str):
+        def boom(prompt: str, task: str, schema=None):
             raise RuntimeError("model unavailable")
 
         result = handle({"theme": "x"}, ToolContext(fetchers={"chain_expander": boom}))
@@ -676,7 +676,7 @@ class TestExpansionIsAProposalNotAMeasurement:
             }
         )
 
-        def expand(prompt: str, task: str):
+        def expand(prompt: str, task: str, schema=None):
             return payload, "ollama/test"
 
         return handle({"theme": "data centre"}, ToolContext(fetchers={"chain_expander": expand}))
