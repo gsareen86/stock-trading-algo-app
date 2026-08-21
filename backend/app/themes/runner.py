@@ -84,6 +84,7 @@ class ThemeRunner:
         gatherer,
         universe_source,
         expander=None,
+        profile_source=None,
         thresholds: Thresholds | None = None,
         labels: dict[str, str] | None = None,
     ) -> None:
@@ -91,6 +92,10 @@ class ThemeRunner:
         self._gather = gatherer
         self._universe_source = universe_source
         self._expander = expander
+        #: Business descriptions. Without them resolution has nothing to match against and
+        #: says so, rather than falling back to company names — which is the defect this
+        #: seam exists to have replaced.
+        self._profiles = profile_source
         self._thresholds = thresholds or Thresholds()
         self._labels = labels or {}
 
@@ -190,6 +195,7 @@ class ThemeRunner:
                 stored,
                 universe,
                 references=list(theme.evidence.references),
+                profiles=self._profiles.all() if self._profiles is not None else None,
             )
             candidates += self._store.record_candidates(found)
             gaps += len(unresolved)

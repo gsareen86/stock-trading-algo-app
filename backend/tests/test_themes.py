@@ -717,6 +717,71 @@ def _universe(*rows: tuple[str, str, str]) -> UniverseSnapshot:
     )
 
 
+def _profiles(**descriptions) -> dict:
+    from app.data.profiles import CompanyProfile
+
+    return {
+        symbol: CompanyProfile(symbol=symbol, description=text, industry=industry, source="test")
+        for symbol, (text, industry) in descriptions.items()
+    }
+
+
+#: What these companies do, in the prose a provider supplies. Deliberately never mentioning a
+#: company's own name -- matching on a name is the defect this corpus exists to prove fixed.
+PROFILES = _profiles(
+    TARIL=(
+        "designs and manufactures power transformers, rectifiers and traction "
+        "transformers for utilities and industry",
+        "Electrical Equipment & Parts",
+    ),
+    FINCABLES=(
+        "manufactures electrical cables, wires and communication cables for "
+        "industrial and household use",
+        "Electrical Equipment & Parts",
+    ),
+    ACMESOLAR=(
+        "develops and operates solar power generation projects and renewable energy assets",
+        "Solar",
+    ),
+    ADANIPOWER=(
+        "generates and supplies thermal electricity to distribution utilities",
+        "Utilities - Independent Power Producers",
+    ),
+    NTPC=(
+        "generates electricity from coal, gas, hydro and renewable sources for bulk supply",
+        "Utilities - Independent Power Producers",
+    ),
+    TATAPOWER=(
+        "generates, transmits and distributes electricity across India",
+        "Utilities - Independent Power Producers",
+    ),
+    JSWENERGY=(
+        "generates thermal and renewable electricity",
+        "Utilities - Independent Power Producers",
+    ),
+    NHPC=(
+        "develops and operates hydroelectric power generation stations",
+        "Utilities - Renewable",
+    ),
+    SJVN=(
+        "builds and operates hydroelectric and solar power projects",
+        "Utilities - Renewable",
+    ),
+    TORNTPOWER=(
+        "generates and distributes electricity to licensed areas",
+        "Utilities - Independent Power Producers",
+    ),
+    CESC=(
+        "generates and distributes electricity in metropolitan areas",
+        "Utilities - Independent Power Producers",
+    ),
+    INFY=(
+        "provides consulting, technology and outsourcing services including software "
+        "engineering and digital transformation",
+        "Information Technology Services",
+    ),
+)
+
 INDIA = _universe(
     ("TARIL", "Transformers and Rectifiers India Ltd.", "Capital Goods"),
     ("FINCABLES", "Finolex Cables Ltd.", "Capital Goods"),
@@ -734,53 +799,97 @@ INDIA = _universe(
 
 
 class TestMatching:
-    def test_the_rarest_term_wins(self) -> None:
-        """"Transformer manufacturers" must not resolve on the word "power"."""
-        matches, _ = match_description("Transformer manufacturers", INDIA)
+    """Matching reads what a company does, never what it is called."""
 
-        assert [symbol for symbol, _ in matches] == ["TARIL"]
-        assert matches[0][1] == "transformer"
+    def test_a_company_is_found_by_what_it_does(self) -> None:
+        """TARIL's name says nothing to a term matcher; its business description does."""
+        matches, _ = match_description(
+            "Transformer and rectifier manufacturers", INDIA, PROFILES
+        )
 
-    def test_a_description_too_broad_to_narrow_says_so(self) -> None:
-        """An arbitrary eight of twenty is worse than an honest "this narrowed to nothing"."""
-        matches, reason = match_description("Power companies", INDIA)
+        assert "TARIL" in {symbol for symbol, _ in matches}
 
-        assert matches == []
-        assert "too broad" in reason
+    def test_the_company_name_is_not_searched(self) -> None:
+        """The defect this replaced. A name is branding, not a description of a business."""
+        from app.data.profiles import CompanyProfile
+
+        profile = CompanyProfile(
+            symbol="TARIL", description="makes widgets", industry="Widgets"
+        )
+
+        assert "taril" not in profile.searchable
+
+    def test_one_shared_word_is_not_a_match(self) -> None:
+        """With hundreds of words of prose to search, one coincidence is not a subject."""
+        matches, _ = match_description("Renewable aviation catering", INDIA, PROFILES)
+
+        assert "ACMESOLAR" not in {symbol for symbol, _ in matches}
+
+    def test_several_companies_can_match_one_description(self) -> None:
+        matches, _ = match_description(
+            "Electricity generation and distribution utilities", INDIA, PROFILES
+        )
+
+        assert len(matches) > 1
+
+    def test_the_basis_names_the_terms_that_matched(self) -> None:
+        matches, _ = match_description("Power transformer manufacturers", INDIA, PROFILES)
+        why = next((w for symbol, w in matches if symbol == "TARIL"), "")
+
+        assert "transformers" in why or "power" in why
 
     def test_stopwords_alone_match_nothing(self) -> None:
-        matches, reason = match_description("Providers and suppliers", INDIA)
+        matches, reason = match_description("Providers and suppliers", INDIA, PROFILES)
 
         assert matches == []
         assert reason == "no discriminating terms"
 
-    def test_an_unmatched_description_is_not_too_broad(self) -> None:
-        """Nothing matched and everything matched are different problems."""
-        matches, reason = match_description("Lithography toolmakers", INDIA)
+    def test_without_profiles_nothing_matches_and_it_says_why(self) -> None:
+        """Better than falling back to names, which is exactly what this replaced."""
+        matches, reason = match_description("Transformer manufacturers", INDIA, None)
+
+        assert matches == []
+        assert "profiles" in reason
+
+    def test_an_unmatched_description_reports_no_special_reason(self) -> None:
+        matches, reason = match_description("Lithography toolmakers", INDIA, PROFILES)
 
         assert matches == []
         assert reason is None
 
+    def test_truncation_is_reported_rather_than_silent(self) -> None:
+        """Thirteen defence companies once tied and a cap dropped four alphabetically."""
+        from app.themes import resolve as resolve_module
+
+        original = resolve_module.MAX_PER_DESCRIPTION
+        resolve_module.MAX_PER_DESCRIPTION = 2
+        try:
+            matches, note = match_description(
+                "Electricity generation utilities", INDIA, PROFILES
+            )
+        finally:
+            resolve_module.MAX_PER_DESCRIPTION = original
+
+        assert len(matches) == 2
+        assert note is not None
+        assert "of" in note
+
     def test_short_tokens_do_not_match_accidentally(self) -> None:
         assert terms("EV and IT gas") == []
-
-    def test_industry_is_searched_as_well_as_name(self) -> None:
-        matches, _ = match_description("Information technology", INDIA)
-
-        assert [symbol for symbol, _ in matches] == ["INFY"]
 
 
 class TestResolvingATier:
     def test_candidates_come_back_with_how_they_matched(self) -> None:
         found, missing = resolve_tier(
             "data_centre", 2, "Grid and power equipment",
-            ["Transformer manufacturers", "Power cable manufacturers"], INDIA,
+            ["Transformer and rectifier manufacturers", "Electrical cable manufacturers"],
+            INDIA, profiles=PROFILES,
         )
 
         assert missing is None
         assert {c.symbol for c in found} == {"TARIL", "FINCABLES"}
         assert all(c.exposure is Exposure.UNESTABLISHED for c in found)
-        assert all("nothing corroborates it" in c.exposure_basis for c in found)
+        assert all("business description mentions" in c.exposure_basis for c in found)
 
     def test_a_company_that_discussed_the_theme_is_graded_claimed(self) -> None:
         """It said so itself. That is a stronger claim than an industry that looks right."""
@@ -830,8 +939,8 @@ class TestResolvingATier:
         )
 
         found, _ = resolve_tier(
-            "data_centre", 1, "Buildout", ["Transformer manufacturers"], INDIA,
-            references=[reference],
+            "data_centre", 1, "Buildout", ["Transformer and rectifier manufacturers"],
+            INDIA, references=[reference], profiles=PROFILES,
         )
 
         assert next(c for c in found if c.symbol == "TARIL").exposure is Exposure.CLAIMED
@@ -841,21 +950,18 @@ class TestTiersWithNoIndianExposure:
     def test_a_tier_with_no_match_says_so(self) -> None:
         found, missing = resolve_tier(
             "data_centre", 1, "Semiconductor fabrication",
-            ["Advanced semiconductor foundries"], INDIA,
+            ["Advanced semiconductor foundries"], INDIA, profiles=PROFILES,
         )
 
         assert found == []
         assert missing is not None
-        # States what it knows -- that name matching failed -- not that the market has no
-        # exposure. Kaynes and CG Power both do this and neither matches on name or industry.
-        assert "name or industry" in missing.reason
-        assert "may still have Indian exposure" in missing.reason
+        assert "business description matched" in missing.reason
 
     def test_foreign_names_explain_the_tier_without_being_offered(self) -> None:
         """Knowing where the value goes is worth knowing, even when it cannot be bought here."""
         _, missing = resolve_tier(
             "data_centre", 1, "Semiconductor fabrication",
-            ["EUV lithography toolmakers"], INDIA,
+            ["EUV lithography toolmakers"], INDIA, profiles=PROFILES,
             notable_examples=[{"name": "ASML", "investable": False}],
         )
 
@@ -864,20 +970,24 @@ class TestTiersWithNoIndianExposure:
 
     def test_unresolved_descriptions_are_recorded(self) -> None:
         _, missing = resolve_tier(
-            "data_centre", 1, "Fabrication", ["Advanced semiconductor foundries"], INDIA
+            "data_centre", 1, "Fabrication", ["Advanced semiconductor foundries"], INDIA,
+            profiles=PROFILES,
         )
 
         assert "Advanced semiconductor foundries" in missing.unresolved_descriptions[0]
 
-    def test_a_too_broad_description_records_why(self) -> None:
-        _, missing = resolve_tier("t", 2, "Power", ["Power companies"], INDIA)
+    def test_a_description_with_no_usable_terms_records_why(self) -> None:
+        _, missing = resolve_tier(
+            "t", 2, "Power", ["Providers and suppliers"], INDIA, profiles=PROFILES
+        )
 
-        assert "too broad" in missing.unresolved_descriptions[0]
+        assert "no discriminating terms" in missing.unresolved_descriptions[0]
 
     def test_no_substitute_is_ever_offered(self) -> None:
         """A tenuous domestic smallcap in place of a foreign supplier is the failure to avoid."""
         found, missing = resolve_tier(
-            "data_centre", 1, "Lithography", ["EUV lithography toolmakers"], INDIA
+            "data_centre", 1, "Lithography", ["EUV lithography toolmakers"], INDIA,
+            profiles=PROFILES,
         )
 
         assert found == []
@@ -896,12 +1006,14 @@ class TestResolvingAChain:
             {
                 "tier": 2,
                 "label": "Grid and power equipment",
-                "supplier_descriptions": ["Transformer manufacturers"],
+                "supplier_descriptions": ["Transformer and rectifier manufacturers"],
             },
         ]
 
     def test_a_chain_yields_candidates_and_gaps_together(self) -> None:
-        candidates, unresolved = resolve_chain("data_centre", self._tiers(), INDIA)
+        candidates, unresolved = resolve_chain(
+            "data_centre", self._tiers(), INDIA, profiles=PROFILES
+        )
 
         assert [c.symbol for c in candidates] == ["TARIL"]
         assert [u.tier for u in unresolved] == [1]
@@ -910,7 +1022,7 @@ class TestResolvingAChain:
         tiers = self._tiers()
         tiers[1]["rejected"] = True
 
-        candidates, _ = resolve_chain("data_centre", tiers, INDIA)
+        candidates, _ = resolve_chain("data_centre", tiers, INDIA, profiles=PROFILES)
 
         assert candidates == []
 
@@ -919,7 +1031,7 @@ class TestResolvingAChain:
         tiers = self._tiers()
         tiers[0]["rejected"] = True
 
-        _, unresolved = resolve_chain("data_centre", tiers, INDIA)
+        _, unresolved = resolve_chain("data_centre", tiers, INDIA, profiles=PROFILES)
 
         assert unresolved == []
 
@@ -936,6 +1048,7 @@ class TestOnlyIndianNamesAreEverOffered:
             [{"tier": 1, "label": "x", "supplier_descriptions": []}],
             INDIA,
             references=references,
+            profiles=PROFILES,
         )
 
         listed = {i.symbol for i in INDIA.instruments}
@@ -953,6 +1066,7 @@ class TestOnlyIndianNamesAreEverOffered:
                 }
             ],
             INDIA,
+            profiles=PROFILES,
         )
 
         assert all("NVIDIA" not in c.symbol for c in candidates)
@@ -990,11 +1104,16 @@ class TestTheRunner:
         return lambda theme: tiers
 
     def _runner(self, store, gathered, expander=None, **kwargs) -> ThemeRunner:
+        class Profiles:
+            def all(self):
+                return PROFILES
+
         return ThemeRunner(
             store=store,
             gatherer=self._gatherer(gathered),
             universe_source=self._universe(),
             expander=expander,
+            profile_source=Profiles(),
             **kwargs,
         )
 
@@ -1016,7 +1135,7 @@ class TestTheRunner:
                 "label": "Grid and power equipment",
                 "reasoning": "Data centres draw continuous high load.",
                 "proposed_by": "ollama/test",
-                "supplier_descriptions": ["Transformer manufacturers"],
+                "supplier_descriptions": ["Transformer and rectifier manufacturers"],
             }
         ]
         runner = self._runner(
@@ -1145,7 +1264,7 @@ class TestTheRunner:
                 "label": "Grid and power equipment",
                 "reasoning": "Data centres draw continuous high load.",
                 "proposed_by": "ollama/test",
-                "supplier_descriptions": ["Transformer manufacturers"],
+                "supplier_descriptions": ["Transformer and rectifier manufacturers"],
             }
         ]
         gathered = Gathered(references=self._refs(), documents_read=3)
@@ -1169,7 +1288,7 @@ class TestTheRunner:
                 "label": "Grid and power equipment",
                 "reasoning": "Data centres draw continuous high load.",
                 "proposed_by": "ollama/test",
-                "supplier_descriptions": ["Transformer manufacturers"],
+                "supplier_descriptions": ["Transformer and rectifier manufacturers"],
             }
         ]
         gathered = Gathered(references=self._refs(), documents_read=3)
@@ -1314,18 +1433,18 @@ class TestExposureGrading:
 class TestAgainstTheExchangesOwnTheme:
     """Measured against NIFTY INDIA DEFENCE, whose membership NSE publishes.
 
-    This is the validation `theme-engine` needed and it returns an uncomfortable number. The
-    nineteen constituents *are* the entire universe under test, so every one of them is there
-    to be found, and resolution finds three.
+    This is the test that caught the engine classifying companies by **name**. Matching a
+    supplier description against `company name + NSE industry` found three of nineteen
+    constituents, with all nineteen present in the universe and available to be found — because
+    seventeen of them file as "Capital Goods" and exactly one carries "Defence" in its name.
 
-    The cause is visible in the fixture: seventeen of the nineteen are classified "Capital
-    Goods" and only one carries "Defence" in its name. Hindustan Aeronautics, Bharat Dynamics,
-    Mazagon Dock, Cochin Shipyard, Garden Reach, Zen, Paras, MTAR and Midhani are the core of
-    Indian defence manufacturing and none of them says so in the two strings the platform holds.
+    Matching on what a company *does* — its business description and a granular industry —
+    finds all nineteen. Hindustan Aeronautics never says "defence" in its name; its description
+    says it designs and manufactures aircraft, helicopters and aero-engines.
 
-    This is a **characterisation test**: it records what the platform does today so the number
-    is visible rather than assumed. `theme-research-agent` exists to move it, and when it does,
-    these assertions should be updated deliberately rather than discovered by accident.
+    Both halves are asserted: that it works now, and that the specific companies which used to
+    be missed are found. Name matching is not a coarse version of this, it is a different and
+    wrong thing, and these numbers are the record of the difference.
     """
 
     FIXTURES = Path(__file__).parent / "fixtures" / "themes"
@@ -1344,8 +1463,19 @@ class TestAgainstTheExchangesOwnTheme:
             index_name="NIFTY INDIA DEFENCE",
         )
 
+    def _profiles(self) -> dict:
+        from app.data.profiles import YFinanceProfileSource
+
+        return YFinanceProfileSource(self.FIXTURES / "defence_profiles.json").all()
+
     def _chain(self) -> list[dict]:
         return json.loads((self.FIXTURES / "defence_chain.json").read_text("utf-8"))["tiers"]
+
+    def _found(self) -> set[str]:
+        found, _ = resolve_chain(
+            "defence", self._chain(), self._universe(), profiles=self._profiles()
+        )
+        return {c.symbol for c in found}
 
     def test_the_fixture_is_the_exchanges_own_membership(self) -> None:
         members = self._members()
@@ -1353,39 +1483,49 @@ class TestAgainstTheExchangesOwnTheme:
         assert len(members) > 10
         assert {"symbol", "name", "industry"} <= set(members[0])
 
-    def test_the_classification_is_why_this_is_hard(self) -> None:
-        """Seventeen of nineteen defence companies classify as "Capital Goods"."""
+    def test_the_nse_classification_is_why_names_failed(self) -> None:
+        """Seventeen of nineteen defence companies file as "Capital Goods"."""
         industries = [m["industry"] for m in self._members()]
 
         assert industries.count("Capital Goods") > len(industries) * 0.8
         assert sum("defence" in m["name"].lower() for m in self._members()) <= 2
 
-    def test_resolution_finds_something_rather_than_nothing(self) -> None:
-        found, _ = resolve_chain("defence", self._chain(), self._universe())
+    def test_profiles_describe_the_business_where_names_do_not(self) -> None:
+        profiles = self._profiles()
 
-        assert len(found) > 0
+        assert len(profiles) >= len(self._members())
+        assert all(p.description for p in profiles.values())
 
-    def test_resolution_misses_most_of_the_theme(self) -> None:
-        """The measured baseline: roughly one in six, with every name available to be found.
-
-        If this starts failing because the hit rate rose, that is `theme-research-agent`
-        landing. Update the bound and the docstring together — do not simply widen it.
-        """
-        found, _ = resolve_chain("defence", self._chain(), self._universe())
+    def test_resolution_finds_effectively_the_whole_theme(self) -> None:
+        """Three of nineteen by name; all nineteen by description."""
         members = {m["symbol"] for m in self._members()}
-        hits = {c.symbol for c in found} & members
+        hits = self._found() & members
 
-        assert len(hits) < len(members) * 0.5, (
-            f"hit rate rose to {len(hits)}/{len(members)} — has the research agent shipped?"
+        assert len(hits) >= len(members) * 0.9, sorted(members - hits)
+
+    def test_the_names_name_matching_missed_are_now_found(self) -> None:
+        """Not marginal names — the core of Indian defence manufacturing."""
+        hits = self._found()
+
+        for previously_missed in ("HAL", "BDL", "MAZDOCK", "COCHINSHIP", "GRSE", "ZENTEC"):
+            assert previously_missed in hits, previously_missed
+
+    def test_matching_does_not_depend_on_the_company_name(self) -> None:
+        """The regression that matters. Blank every name; the result must not change."""
+        members = self._members()
+        anonymous = UniverseSnapshot(
+            instruments=tuple(
+                Instrument(m["symbol"], None, m["industry"]) for m in members
+            ),
+            origin="live",
+            index_name="NIFTY INDIA DEFENCE",
         )
 
-    def test_the_names_that_are_missed_are_the_obvious_ones(self) -> None:
-        """Not marginal names. The core of Indian defence manufacturing."""
-        found, _ = resolve_chain("defence", self._chain(), self._universe())
-        hits = {c.symbol for c in found}
+        found, _ = resolve_chain(
+            "defence", self._chain(), anonymous, profiles=self._profiles()
+        )
 
-        for obvious in ("HAL", "BDL", "MAZDOCK", "COCHINSHIP"):
-            assert obvious not in hits, f"{obvious} is now found — update this baseline"
+        assert {c.symbol for c in found} == self._found()
 
 
 class TestThemesApi:
