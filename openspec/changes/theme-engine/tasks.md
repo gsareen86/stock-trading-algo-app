@@ -16,13 +16,28 @@ rate limiter are all in place.
       `feed-freshness-and-run-control` gave insights, for the same reason
 - [x] Runs are append-only and record which sources were unavailable
 
-## Sources
-- [ ] `app/tools/policy_scan/` — government scheme and policy announcements, dated, with
-      source refs; empty on failure, never raising
-- [ ] Order-book and capex extraction from `/historical_stats` quarterly results
-- [ ] Commentary retrieval via the shipped `commentary` tool, cached per document
-- [ ] Filings via the existing `filings_scan`
-- [ ] Each source records availability per run; detection degrades to what answered
+## Sources — `app/themes/sources.py`
+- [x] Commentary adapter — concepts per company from their own transcripts, document limit
+      respected, one unreadable document never loses the others
+- [x] Policy adapter — scheme and budget coverage, **unattributed by construction** so a
+      single announcement cannot inflate breadth; it corroborates a theme, never manufactures
+      one
+- [x] `compose_gatherer` — composes what answered; "not configured" and "could not be read"
+      are recorded as the different facts they are
+- [x] Every adapter signals a dead source by failing rather than by returning empty, so
+      "answered with nothing recent" stays distinguishable from "could not be read"
+- [ ] Filings via the existing `filings_scan` — not wired yet
+
+### Two corrections to what this file previously said
+- [x] **Order books are not in the financials endpoint.** `quarter_results` carries sales,
+      expenses, margins, profit and EPS and nothing about order inflow. Order books are
+      disclosed in commentary — a sentence in a transcript, not a line item — so the
+      commentary adapter is where that signal lives and `order_book` is one of its concepts
+- [x] **Policy comes from English financial media, not PIB.** PIB's release listing is an
+      ASP.NET postback page serving no links, and its RSS returns Hindi whatever the language
+      parameter says, which English phrase matching cannot read. Indian financial media cover
+      schemes in English within hours and the platform already reads those feeds. Recorded so
+      nobody spends the same afternoon on PIB
 
 ## Detection — `app/themes/detect.py`
 - [x] Concept extraction from documents, per company per period

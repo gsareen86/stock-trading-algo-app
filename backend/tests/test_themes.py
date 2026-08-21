@@ -35,7 +35,8 @@ from app.themes.resolve import (
     resolve_tier,
     terms,
 )
-from app.themes.runner import Gathered, ThemeRunner
+from app.themes.runner import Gathered, ThemeRunner, compose_gatherer
+from app.themes.sources import commentary_references, policy_references
 from app.themes.store import ThemeStore
 from app.tools.registry import ToolRegistry
 from app.tools.theme_chain.tool import handle
@@ -1670,3 +1671,181 @@ class TestThemesApi:
 
         for forbidden in ('"stance"', '"conviction"', '"score"', '"rank"'):
             assert forbidden not in serialised
+
+
+class TestSourceAdapters:
+    """Reading the sources, and reporting honestly when one could not be read."""
+
+    def _docs(self) -> dict:
+        return {
+            "ABB": (
+                "Order inflow was strong; data centre demand is driving transformer orders.",
+                "doc://abb/q1",
+            ),
+            "SIEMENS": (
+                "Substation and grid capacity expansion from hyperscaler build-outs.",
+                "doc://siemens/q1",
+            ),
+            "POLYCAB": ("Data center cabling demand rose sharply.", "doc://polycab/q1"),
+        }
+
+    # ── commentary ────────────────────────────────────────────────────────────
+    def test_commentary_extracts_concepts_per_company(self) -> None:
+        docs = self._docs()
+
+        result = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026")
+
+        assert result.available is True
+        assert result.documents_read == 3
+        assert {r.symbol for r in result.references} == {"ABB", "SIEMENS", "POLYCAB"}
+
+    def test_order_book_is_a_concept_commentary_carries(self) -> None:
+        """Order inflow is a sentence in a transcript, not a line item in a statement."""
+        docs = self._docs()
+
+        result = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026")
+
+        assert "order_book" in {r.concept for r in result.references}
+
+    def test_a_reader_that_finds_nothing_marks_the_source_unavailable(self) -> None:
+        """Every attempt failing is a source that is down, not a market that is quiet."""
+        result = commentary_references(["A", "B"], lambda s: None, "Jun 2026")
+
+        assert result.available is False
+        assert result.documents_read == 0
+
+    def test_a_failing_reader_does_not_raise(self) -> None:
+        def boom(symbol):
+            raise RuntimeError("scrape blocked")
+
+        result = commentary_references(["A"], boom, "Jun 2026")
+
+        assert result.references == []
+        assert result.available is False
+
+    def test_one_unreadable_document_does_not_lose_the_others(self) -> None:
+        docs = self._docs()
+
+        def flaky(symbol):
+            if symbol == "ABB":
+                raise RuntimeError("blocked")
+            return docs.get(symbol)
+
+        result = commentary_references(list(docs), flaky, "Jun 2026")
+
+        assert result.documents_read == 2
+        assert result.available is True
+
+    def test_the_document_limit_is_respected(self) -> None:
+        """Commentary is scrape-only and slow; a run over the universe would take hours."""
+        docs = self._docs()
+
+        result = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026", limit=1)
+
+        assert result.documents_read == 1
+
+    def test_sectors_are_carried_through_for_breadth(self) -> None:
+        docs = self._docs()
+
+        result = commentary_references(
+            list(docs), lambda s: docs.get(s), "Jun 2026",
+            sectors={"ABB": "Capital Goods", "POLYCAB": "Metal"},
+        )
+
+        assert {r.sector for r in result.references if r.symbol == "ABB"} == {"Capital Goods"}
+
+    # ── policy ────────────────────────────────────────────────────────────────
+    def _feed(self) -> list[tuple[str, str, str, str]]:
+        return [
+            ("Cabinet approves PLI scheme for electronics manufacturing",
+             "The government approved production-linked incentives.", "https://x/1", "et"),
+            ("Reliance Q1 profit rises on refining margins",
+             "The company reported higher earnings.", "https://x/2", "et"),
+        ]
+
+    def test_policy_items_are_extracted(self) -> None:
+        result = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+
+        assert result.available is True
+        assert "electronics_manufacturing" in {r.concept for r in result.references}
+
+    def test_a_company_story_is_not_policy(self) -> None:
+        """A scheme attributed to a market move would be a different claim entirely."""
+        result = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+
+        assert all("reliance" not in (r.excerpt or "").lower() for r in result.references)
+
+    def test_policy_references_carry_no_company(self) -> None:
+        result = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+
+        assert all(r.symbol == "" for r in result.references)
+
+    def test_policy_cannot_inflate_breadth(self) -> None:
+        """The rule that stops one budget announcement manufacturing a theme."""
+        policy = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+        evidence = ThemeEvidence(references=tuple(policy.references))
+
+        assert evidence.breadth == 0
+
+    def test_policy_still_shows_in_a_themes_sources(self) -> None:
+        """It corroborates. It just does not count as a company saying something."""
+        docs = {"ABB": ("PLI scheme drives electronics manufacturing demand.", "doc://abb")}
+        commentary = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026")
+        policy = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+
+        evidence = ThemeEvidence(
+            references=tuple(
+                r for r in [*commentary.references, *policy.references]
+                if r.concept == "electronics_manufacturing"
+            )
+        )
+
+        assert SourceKind.POLICY in evidence.source_kinds
+        assert evidence.breadth == 1
+
+    def test_an_unreachable_feed_is_unavailable(self) -> None:
+        def boom(hours):
+            raise RuntimeError("feeds unreachable")
+
+        result = policy_references(fetcher=boom)
+
+        assert result.references == []
+        assert result.available is False
+
+    def test_feeds_that_answered_with_nothing_recent_are_still_available(self) -> None:
+        """"Answered and had nothing" is not "could not be read"."""
+        result = policy_references(fetcher=lambda hours: [])
+
+        assert result.references == []
+        assert result.available is True
+
+    # ── composition ───────────────────────────────────────────────────────────
+    def test_composed_sources_report_what_could_not_be_read(self) -> None:
+        commentary = commentary_references(["A"], lambda s: None, "Jun 2026")
+        policy = policy_references(fetcher=lambda hours: self._feed(), period="Jun 2026")
+
+        gathered = compose_gatherer(commentary=commentary, policy=policy)()
+
+        assert gathered.unavailable == (SourceKind.COMMENTARY,)
+        assert gathered.read_nothing is False
+
+    def test_everything_unavailable_is_read_nothing(self) -> None:
+        def boom(hours):
+            raise RuntimeError("feeds unreachable")
+
+        commentary = commentary_references(["A"], lambda s: None, "Jun 2026")
+        policy = policy_references(fetcher=boom)
+
+        gathered = compose_gatherer(commentary=commentary, policy=policy)()
+
+        assert gathered.read_nothing is True
+        assert set(gathered.unavailable) == {SourceKind.COMMENTARY, SourceKind.POLICY}
+
+    def test_an_absent_adapter_is_not_reported_as_unavailable(self) -> None:
+        """Not configured and could-not-be-read are different facts."""
+        docs = self._docs()
+        commentary = commentary_references(list(docs), lambda s: docs.get(s), "Jun 2026")
+
+        gathered = compose_gatherer(commentary=commentary)()
+
+        assert gathered.unavailable == ()

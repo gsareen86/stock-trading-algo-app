@@ -26,6 +26,7 @@ from app.data.protocols import UniverseSnapshot
 from app.domain.themes import Reference, SourceKind
 from app.themes import resolve
 from app.themes.detect import Thresholds, assemble
+from app.themes.sources import SourceResult
 from app.themes.store import ThemeStore
 
 log = logging.getLogger(__name__)
@@ -73,6 +74,40 @@ class ThemeRunResult:
             "sources_unavailable": list(self.sources_unavailable),
             "reason": self.reason,
         }
+
+
+def compose_gatherer(
+    commentary: SourceResult | None = None,
+    policy: SourceResult | None = None,
+):
+    """Build a gatherer from already-read sources.
+
+    Kept separate from the adapters so a run can be assembled from whichever answered. The
+    unavailable list is what a run reports, and it is derived from the adapters themselves
+    rather than inferred from a thin result.
+    """
+    from app.domain.themes import SourceKind as _Kind
+
+    def gather() -> Gathered:
+        references = []
+        documents = 0
+        unavailable = []
+
+        for result, kind in ((commentary, _Kind.COMMENTARY), (policy, _Kind.POLICY)):
+            if result is None:
+                continue
+            references.extend(result.references)
+            documents += result.documents_read
+            if not result.available:
+                unavailable.append(kind)
+
+        return Gathered(
+            references=references,
+            documents_read=documents,
+            unavailable=tuple(unavailable),
+        )
+
+    return gather
 
 
 class ThemeRunner:

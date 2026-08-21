@@ -77,7 +77,13 @@ class ThemeEvidence:
 
     @property
     def companies(self) -> frozenset[str]:
-        return frozenset(r.symbol for r in self.references)
+        """Distinct companies that said something.
+
+        Unattributed references are excluded. A policy announcement is not a company saying
+        anything, and letting one budget item add to breadth would manufacture the exact "loud
+        month" the thresholds exist to reject.
+        """
+        return frozenset(r.symbol for r in self.references if r.symbol)
 
     @property
     def sectors(self) -> frozenset[str]:

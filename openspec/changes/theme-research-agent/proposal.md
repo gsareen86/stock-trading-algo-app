@@ -2,61 +2,86 @@
 
 ## Intent
 
-Go and find out, when name matching cannot: search for Indian listed companies that participate
-in a theme, and let a person drive that search conversationally.
+Refine a chain into the sub-categories that actually resolve, and let a person drive that
+research conversationally.
+
+## Reframed after `theme-engine` shipped
+
+This change was written as a **fallback** — fire when a tier resolves to nothing. That was the
+right shape when resolution classified companies by name and found three of nineteen defence
+constituents. Classifying on business description took the same test to nineteen of nineteen,
+so the premise the fallback rested on is gone, and the change is worth having for a different
+and better reason.
+
+**It is augmentation, not rescue.** A chain tier arrives coarse — *semiconductor fabrication* —
+and coarse is what makes both its answers wrong. Decomposed into what the tier really contains:
+
+| Sub-category | Indian listed exposure |
+|---|---|
+| EUV lithography | none, and truthfully none |
+| Wafer fabrication | none today |
+| Assembly and test (OSAT) | **Kaynes, CG Power** |
+| Semiconductor design services | **Tata Elxsi, Cyient** |
+
+The coarse tier produces either a misleading "no Indian exposure to semiconductors" or a vague
+match that means little. The decomposed one produces a precise negative *and* real candidates —
+and the precise negative is worth as much as the names, because it says where the value is
+going and that it cannot be bought here.
+
+So the agent runs against **every** tier, not only empty ones, and its output is finer supplier
+descriptions that resolution then handles by the ordinary path.
 
 ## Why
 
-`theme-engine` resolves a chain tier to candidates by matching supplier descriptions against
-company names and NSE industry classifications. That is the only company-level data the
-platform holds, and it is far too shallow for the job. Measured against the live universe:
+Chain expansion produces tiers at the granularity a model volunteers, which is coarser than the
+market. "Semiconductor fabrication" is one tier; the businesses inside it are lithography,
+deposition, metrology, photoresist chemistry, wafer handling, assembly and test, and design
+services. India has listed companies in two of those and none in the rest.
 
-| Company | NSE industry | Actually does |
-|---|---|---|
-| Kaynes Technology India | Capital Goods | Building an OSAT semiconductor plant |
-| CG Power and Industrial Solutions | Capital Goods | Semiconductor assembly JV |
-| Tata Elxsi | Information Technology | Semiconductor design services |
-| Dixon Technologies | Consumer Durables | Electronics contract manufacturing |
+Resolution cannot fix that, because the input is already wrong: it is matching a coarse category
+against companies that describe themselves precisely. It will either miss the specific ones or
+return a vague set that means little, and neither answer tells a reader where the value in that
+tier is actually going.
 
-A tier for *semiconductor assembly and test* matches **none of them** — no name and no industry
-string contains a semiconductor word. The engine therefore reports that a tier has no Indian
-exposure while at least two real candidates sit unmatched in its own universe.
+Decomposition is a **knowledge** problem — what does a fabrication plant consume, and what is a
+distinct business rather than a step — answerable from public information the platform does not
+hold and which changes over time. That is what search and a model are for.
 
-**That is the engine's most dangerous output**, because it is a confident negative. A missing
-candidate is a gap a reader might notice; a stated "no Indian exposure" closes the question and
-is believed. `theme-engine` had to soften the wording to what it actually knows — *no company
-matched on name or industry* — and this change is what makes the stronger statement earnable.
-
-The gap is a **knowledge** gap, not a data gap. "Which Indian listed companies are building OSAT
-plants" is answerable from public information the platform does not hold and cannot cheaply
-acquire, and it changes month to month. That is what search is for.
+The same machinery answers a second question worth asking on demand: *which Indian listed
+companies participate in this specific thing*, for the sub-categories where description matching
+still returns nothing.
 
 ## In scope
 
-**A targeted fallback, run automatically**
+**Tier decomposition, run over every tier**
 
-When a tier resolves to nothing, search for Indian listed companies that participate in it. The
-input is a tier and its reasoning; the output is proposed symbols with citations.
+Given a tier and its reasoning, produce finer supplier descriptions. Those go back through
+ordinary resolution, so a decomposed tier resolves by the same path as any other — and a
+sub-category with genuinely no Indian exposure says so precisely instead of vaguely.
+
+**Company proposals, where description matching finds nothing**
+
+For a sub-category that still resolves to no instrument, search for participants by name. This
+is the narrower half and it carries the sharper risk.
 
 **Validation against the universe, before anything is offered**
 
 Every proposed name is resolved against the platform's own universe before it can become a
 candidate. A name that does not resolve is recorded as *proposed but not found* and is never
-shown as something to buy. This is the property that makes the whole change safe, and it is the
-same one `theme-engine` relies on — the difference is only that the model now proposes company
-names rather than supplier categories, so the check moves from implicit to explicit.
+shown as something to buy. This is what makes the change safe: the model may propose company
+names, but only the platform turns one into a candidate.
 
 **An ad-hoc research conversation**
 
-A chat surface for driving the same tools by hand: expand a theme, search a tier, check a
-company against a theme, look up what management said. Useful for the case the automatic path
-cannot anticipate — a half-formed idea, a name someone mentioned, a theme the concept list has
-never heard of.
+A surface for driving the same tools by hand — decompose a tier, search a sub-category, check a
+company against a theme, read what management said. For the case the automatic path cannot
+anticipate: a half-formed idea, a name someone mentioned, a theme the concept list has never
+heard of.
 
 **Citations, always**
 
-Every proposal carries the sources it came from. A candidate with no citation is not a
-candidate; it is a model's recollection, and this platform does not act on those.
+Every proposal carries the sources it came from. A proposal with no citation is not a proposal,
+it is a model's recollection, and this platform does not act on those.
 
 ## Out of scope
 
@@ -65,8 +90,9 @@ candidate; it is a model's recollection, and this platform does not act on those
   refusal, not a convention: nothing in this change may write a stance, and nothing it produces
   may become an `Evidence` row.
 - **Non-Indian candidates.** Unchanged from `theme-engine`. Research is global; picks are not.
-- **Narrowing.** Search may only *add* names to tiers that resolved to nothing or few. It can
-  never remove a candidate, gate one, or reorder anything.
+- **Narrowing.** Decomposition and search may only *add* sub-categories and names. Neither may
+  remove a candidate, gate one, or reorder anything — a decomposed tier keeps everything the
+  coarse tier resolved to.
 - **Trading.** `Ledger.fill()` remains the one execution boundary, reached deliberately.
 - **Replacing detection.** Themes still surface on counted breadth and persistence. Search finds
   *companies within a theme*, never the theme itself — otherwise the counts stop meaning
