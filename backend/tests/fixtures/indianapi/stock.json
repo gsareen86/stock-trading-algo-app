@@ -199,7 +199,8 @@
     "lastRefreshAttempt": null,
     "refreshPending": null,
     "refreshError": null,
-    "fallbackSections": null
+    "fallbackSections": null,
+    "companyDescription": "Tata Consultancy Services Ltd is an India-based company. The Company is engaged in providing information technology (IT) services, consulting, and business solutions. Its business segments include Banking, Financial Services and Insurance; Manufacturing; Consumer Business; Communication, Media and Technology; Life Sciences and Healthcare and Others such as Energy, Resources and Utilities, s-Governance and Products. The Company's products include TCS ADD, TCS BaNCS, TCS BFSI Platforms, TCS CHROMA, TCS Customer Intelligence & Insights, TCS ERP on Cloud, TCS Intelligent Urban Exchange, Quartz-The Smart Ledgers, TCS Optumera, TCS TwinX, TCS TAP, TCS OmniStore, TCS MasterCraft, Jile, and others. Its services consist of Artificial Intelligence and Data & Analytics, Cloud, Cognitive Business Operations, Consulting, Cybersecurity, Enterprise Solutions, Industrial Autonomy and Engineering, and Network Solutions and Services, TCS Interactive, and others."
   },
   "currentPrice": {
     "BSE": "2287.00",

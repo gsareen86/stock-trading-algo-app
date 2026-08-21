@@ -135,6 +135,11 @@ class CompanyFinancials:
     shareholding: tuple[Shareholding, ...] = ()
     industry: str | None = None
     company_name: str | None = None
+    #: The provider's prose description of the business, which names its **segments**. The one
+    #: field that says what a company actually does, as opposed to which broad bucket the
+    #: exchange files it under — "Capital Goods" describes Kaynes Technology and a cement
+    #: plant equally badly.
+    description: str | None = None
     peers: tuple[str, ...] = ()
     source: str = ""
     fetched_at: datetime | None = None

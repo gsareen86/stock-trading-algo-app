@@ -1,0 +1,58 @@
+{
+  "theme": "Indian defence indigenisation",
+  "tiers": [
+    {
+      "source_ref": "model://ollama/gemma4:12b/theme_chain?theme=Indian defence indigenisation&tier=1",
+      "observed_at": "2026-08-21T03:53:30.062766+00:00",
+      "theme": "Indian defence indigenisation",
+      "tier": 1,
+      "label": "Indian Defence Indigenisation",
+      "supplies": null,
+      "reasoning": "This represents the primary activity of localizing the manufacturing, sourcing, and integration of military hardware and systems.",
+      "proposed_by": "ollama/gemma4:12b",
+      "supplier_descriptions": [
+        "Large-scale aerospace and defense system integrators",
+        "Heavy machinery and armor vehicle manufacturers",
+        "Electronic warfare and communications systems providers"
+      ],
+      "notable_examples": [],
+      "measured_by_platform": false
+    },
+    {
+      "source_ref": "model://ollama/gemma4:12b/theme_chain?theme=Indian defence indigenisation&tier=2",
+      "observed_at": "2026-08-21T03:53:30.062766+00:00",
+      "theme": "Indian defence indigenisation",
+      "tier": 2,
+      "label": "Defense Component Manufacturing",
+      "supplies": "Indian Defence Indigenisation",
+      "reasoning": "This tier provides the specialized sub-assemblies, precision parts, and electronic components required for final military systems.",
+      "proposed_by": "ollama/gemma4:12b",
+      "supplier_descriptions": [
+        "Precision machining and CNC tooling firms",
+        "Specialized electronics and PCB manufacturers",
+        "Materials processing and surface treatment firms",
+        "Composite material manufacturing firms"
+      ],
+      "notable_examples": [],
+      "measured_by_platform": false
+    },
+    {
+      "source_ref": "model://ollama/gemma4:12b/theme_chain?theme=Indian defence indigenisation&tier=3",
+      "observed_at": "2026-08-21T03:53:30.062766+00:00",
+      "theme": "Indian defence indigenisation",
+      "tier": 3,
+      "label": "Raw Materials and Foundational Technologies",
+      "supplies": "Defense Component Manufacturing",
+      "reasoning": "This tier provides the basic industrial inputs and fundamental technologies necessary to produce high-specification components.",
+      "proposed_by": "ollama/gemma4:12b",
+      "supplier_descriptions": [
+        "Specialized steel and high-grade alloy producers",
+        "Industrial chemicals and polymer manufacturers",
+        "Semiconductor and micro-electronics component fabricators",
+        "Precision instrument and sensor manufacturing firms"
+      ],
+      "notable_examples": [],
+      "measured_by_platform": false
+    }
+  ]
+}

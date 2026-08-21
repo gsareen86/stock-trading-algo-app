@@ -353,3 +353,79 @@ export function fetchBrokerStatus(): Promise<Fetched<BrokerStatus>> {
 export function fetchBrokerHoldings(): Promise<Fetched<BrokerHoldings>> {
   return getJson<BrokerHoldings>("/broker/holdings");
 }
+
+export type Theme = {
+  key: string;
+  label: string;
+  /** Distinct companies referencing this. The counts are the claim, not a derived display. */
+  breadth: number;
+  /** Distinct periods it has persisted across. */
+  persistence: number;
+  sector_count: number;
+  source_kinds: string[];
+  first_seen_at: string | null;
+  measured_at: string | null;
+  withdrawn_at: string | null;
+  withdrawal_reason: string | null;
+};
+
+export type ThemeRun = {
+  id: number;
+  trigger: string;
+  /** `complete`, `failed`, `running`, or `no_reading` when every source was unavailable —
+   *  which is emphatically not the same as finding no themes. */
+  outcome: string;
+  sources_unavailable: string[];
+  documents_read: number;
+  reason: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type ChainLink = {
+  id: number;
+  tier: number;
+  label: string;
+  supplies: string | null;
+  reasoning: string;
+  /** The model that proposed this link. Attribution is what stops it reading as a
+   *  measurement the platform made. */
+  proposed_by: string;
+  supplier_descriptions: string[];
+  rejected: boolean;
+  rejected_reason: string | null;
+  measured_by_platform: boolean;
+};
+
+export type ThemeCandidate = {
+  id: number;
+  tier: number;
+  symbol: string;
+  /** A named grade, never a number — a number would be sortable. */
+  exposure: "established" | "claimed" | "unestablished";
+  exposure_basis: string | null;
+  matched_description: string | null;
+};
+
+export type ThemeDetail = Theme & {
+  chain: ChainLink[];
+  candidates: ThemeCandidate[];
+  references: {
+    symbol: string;
+    period: string;
+    kind: string;
+    source_ref: string;
+    excerpt: string | null;
+    measured_by_platform: boolean;
+  }[];
+};
+
+export function fetchThemes(): Promise<
+  Fetched<{ themes: Theme[]; count: number; latest_run: ThemeRun | null }>
+> {
+  return getJson("/themes");
+}
+
+export function fetchTheme(key: string): Promise<Fetched<ThemeDetail>> {
+  return getJson(`/themes/${encodeURIComponent(key)}`);
+}

@@ -9,12 +9,12 @@ rate limiter are all in place.
 - [ ] `openspec/specs/themes/` created on archive; `project.md` surface table updated
 
 ## Persistence
-- [ ] Migration `0008` — `theme_runs`, `themes`, `theme_references`, `chain_links`,
+- [x] Migration `0008` — `theme_runs`, `themes`, `theme_references`, `chain_links`,
       `theme_candidates`
-- [ ] Links carry reasoning, proposing model, and an accepted/rejected status that survives runs
-- [ ] Themes carry `first_seen_at`, `withdrawn_at`, `withdrawal_reason` — the same lifecycle
+- [x] Links carry reasoning, proposing model, and an accepted/rejected status that survives runs
+- [x] Themes carry `first_seen_at`, `withdrawn_at`, `withdrawal_reason` — the same lifecycle
       `feed-freshness-and-run-control` gave insights, for the same reason
-- [ ] Runs are append-only and record which sources were unavailable
+- [x] Runs are append-only and record which sources were unavailable
 
 ## Sources
 - [ ] `app/tools/policy_scan/` — government scheme and policy announcements, dated, with
@@ -25,69 +25,80 @@ rate limiter are all in place.
 - [ ] Each source records availability per run; detection degrades to what answered
 
 ## Detection — `app/themes/detect.py`
-- [ ] Concept extraction from documents, per company per period
-- [ ] Breadth (distinct companies, distinct sectors) and persistence (consecutive periods)
-- [ ] Minimum breadth and persistence thresholds, declared and configurable
-- [ ] Every reference stored with company, period and source ref
-- [ ] Counting is pure and reproducible over the same inputs
+- [x] Concept extraction from documents, per company per period
+- [x] Breadth (distinct companies, distinct sectors) and persistence (consecutive periods)
+- [x] Minimum breadth and persistence thresholds, declared and configurable
+- [x] Every reference stored with company, period and source ref
+- [x] Counting is pure and reproducible over the same inputs
 
 ## Expansion — `app/tools/theme_chain/`
-- [ ] Declared tool: theme in, ordered tiers of inputs out, schema-validated
-- [ ] Output carries reasoning per tier and the model that produced it
-- [ ] Invalid output is an `INVALID_OUTPUT` result, never a partial chain
-- [ ] Tiers describe **inputs and supplier categories**, never instruments
+- [x] Declared tool: theme in, ordered tiers of inputs out, schema-validated
+- [x] Output carries reasoning per tier and the model that produced it
+- [x] Invalid output is an `INVALID_OUTPUT` result, never a partial chain
+- [x] Tiers describe **inputs and supplier categories**, never instruments
 
 ## Resolution — `app/themes/resolve.py`
-- [ ] Supplier descriptions to universe instruments, via industry and business description
-- [ ] Unresolved descriptions recorded, never guessed
-- [ ] A tier with no Indian listed suppliers reports that plainly
-- [ ] Foreign companies may appear in reasoning, never as candidates
+- [x] Supplier descriptions to universe instruments, via industry and business description
+- [x] Unresolved descriptions recorded, never guessed
+- [x] A tier with no Indian listed suppliers reports that plainly
+- [x] Foreign companies may appear in reasoning, never as candidates
 
 ## Grading — `app/themes/exposure.py`
-- [ ] `established` / `claimed` / `unestablished`, each citing what supports it
-- [ ] Reads financials only for candidates actually opened — the provider allows 500 requests
+- [x] `established` / `claimed` / `unestablished`, each citing what supports it
+- [x] Reads financials only for candidates actually opened — the provider allows 500 requests
       a month and speculative grading across a whole chain would spend it
-- [ ] No numeric exposure strength anywhere
+- [x] No numeric exposure strength anywhere
 
 ## The invariant
-- [ ] Themes are additive only — no gate, no exclusion, no reordering
-- [ ] Assert `app/themes/` contains no function that scores or ranks instruments
+- [x] Themes are additive only — no gate, no exclusion, no reordering
+- [x] Assert `app/themes/` contains no function that scores or ranks instruments
 - [ ] Assert verdicts are byte-identical with themes active and disabled
 
 ## API
-- [ ] `POST /themes/run`, `GET /themes/runs`, `GET /themes/runs/{id}`
-- [ ] `GET /themes/{id}` — chain, tiers, candidates, grades
-- [ ] `POST /themes/links/{id}/reject`
-- [ ] Withdrawn themes excluded by default, requestable
+- [x] `POST /themes/run`, `GET /themes/runs`, `GET /themes/runs/{id}`
+- [x] `GET /themes/{id}` — chain, tiers, candidates, grades
+- [x] `POST /themes/links/{id}/reject`
+- [x] Withdrawn themes excluded by default, requestable
 
 ## Web
-- [ ] Themes surface: current themes, evidence counts, sources reachable
-- [ ] Chain rendered tier by tier, reasoning visible in place, links rejectable
-- [ ] Candidates link to Stock; grades as named categories
-- [ ] "No run yet", "run produced no reading" and "no themes found" are three renderings
-- [ ] Nothing on the surface carries a theme-derived stance, score or ordering
+- [x] Themes surface: current themes, evidence counts, sources reachable
+- [x] Chain rendered tier by tier, reasoning visible in place, links rejectable
+- [x] Candidates link to Stock; grades as named categories
+- [x] "No run yet", "run produced no reading" and "no themes found" are three renderings
+- [x] Nothing on the surface carries a theme-derived stance, score or ordering
+
+## Not done — carried forward
+- [ ] Verdicts-identical-with-themes-on-and-off: nothing yet reads themes during a cycle, so
+      there is no integration point to assert against. Lands with `discovery-funnel`
+- [ ] Scheduled runs: the platform still has no scheduler, the question raised during review
+      and not yet answered
 
 ## Tests
-- [ ] One company in one period is not a theme; broad-but-single-period is not a theme
-- [ ] Every reference traces to company, period and source
-- [ ] Unreadable commentary still produces themes from policy and filings, and records the gap
-- [ ] Every source unavailable → "no reading", not "no themes"
-- [ ] Tiers are dependency-ordered; every link carries reasoning and its model
-- [ ] Invalid model output produces no chain
-- [ ] **A rejected link stops contributing candidates, and stays rejected across runs**
-- [ ] A tier with no Indian exposure says so and offers no substitute
-- [ ] A foreign company in reasoning never becomes a candidate
-- [ ] Exposure grades cite what supports them; unestablished is still listed; no numeric grade
-- [ ] A faded theme is withdrawn with its reason, keeping its first-seen date
-- [ ] **An unavailable source never withdraws a theme**
-- [ ] Breadth and persistence recompute identically over the same inputs
+- [x] One company in one period is not a theme; broad-but-single-period is not a theme
+- [x] Every reference traces to company, period and source
+- [x] Unreadable commentary still produces themes from policy and filings, and records the gap
+- [x] Every source unavailable → "no reading", not "no themes"
+- [x] Tiers are dependency-ordered; every link carries reasoning and its model
+- [x] Invalid model output produces no chain
+- [x] **A rejected link stops contributing candidates, and stays rejected across runs**
+- [x] A tier with no Indian exposure says so and offers no substitute
+- [x] A foreign company in reasoning never becomes a candidate
+- [x] Exposure grades cite what supports them; unestablished is still listed; no numeric grade
+- [x] A faded theme is withdrawn with its reason, keeping its first-seen date
+- [x] **An unavailable source never withdraws a theme**
+- [x] Breadth and persistence recompute identically over the same inputs
 - [ ] **Verdicts identical with themes on and off**
-- [ ] **Grep `app/themes/` for ranking or scoring over instruments — none**
-- [ ] Rejection writes no trade
+- [x] **Grep `app/themes/` for ranking or scoring over instruments — none**
+- [x] Rejection writes no trade
 
 ## Validation against the exchange's own themes
-- [ ] Load NSE's ~40 `THEMATIC INDICES` and their constituents from `/api/allIndices`
-- [ ] Baseline: themes the exchange already recognises need no chain expansion to find
-- [ ] **Expansion is tested against them** — expanding "defence indigenisation" should
-      rediscover most of `NIFTY INDIA DEFENCE`. If it cannot, expansion is not working, and
-      this is the test that says so rather than a hope
+- [x] NSE publishes index constituents as archive CSVs (`/api/equity-stockIndices` 404s);
+      NIFTY INDIA DEFENCE captured as a fixture
+- [x] Baseline: themes the exchange already recognises need no chain expansion to find
+- [x] **Expansion tested against them, and the answer is uncomfortable.** With all nineteen
+      NIFTY INDIA DEFENCE constituents as the entire universe — every one available to be
+      found — resolution finds **three**: BEL, BHARATFORG, SOLARINDS. It misses HAL, Bharat
+      Dynamics, Mazagon Dock, Cochin Shipyard, Garden Reach, Zen, Paras, MTAR and Midhani.
+      Seventeen of nineteen classify as "Capital Goods" and one carries "Defence" in its name.
+      Recorded as a characterisation test so the number is visible rather than assumed;
+      `theme-research-agent` exists to move it

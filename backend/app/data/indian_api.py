@@ -300,6 +300,7 @@ def parse_stock(symbol: str, payload: dict[str, Any]) -> CompanyFinancials:
         shareholding=_parse_shareholding(payload.get("shareholding") or []),
         industry=payload.get("industry"),
         company_name=payload.get("companyName"),
+        description=(profile.get("companyDescription") or None),
         peers=tuple(p for p in peers if p),
         source=SOURCE,
         fetched_at=now_utc(),

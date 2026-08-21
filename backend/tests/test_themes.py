@@ -13,13 +13,22 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from app.data.protocols import UniverseSnapshot
 from app.domain.instrument import Instrument
-from app.domain.themes import Exposure, Reference, SourceKind, Theme, ThemeEvidence
+from app.domain.themes import (
+    Candidate,
+    Exposure,
+    Reference,
+    SourceKind,
+    Theme,
+    ThemeEvidence,
+)
 from app.themes.detect import CONCEPTS, Thresholds, assemble, extract
+from app.themes.exposure import grade, grade_many
 from app.themes.resolve import (
     match_description,
     resolve_chain,
@@ -279,10 +288,10 @@ class TestNothingHereRanksOrScores:
         assert not fields & {"stance", "conviction", "score", "rank", "strength"}
 
     def test_exposure_is_a_category_not_a_number(self) -> None:
-        for grade in Exposure:
-            assert isinstance(grade.value, str)
+        for level in Exposure:
+            assert isinstance(level.value, str)
             with pytest.raises((TypeError, ValueError)):
-                float(grade.value)
+                float(level.value)
 
     def test_the_module_has_no_ranking_function(self) -> None:
         import re
@@ -1199,3 +1208,325 @@ class TestTheRunner:
         self, store: ThemeStore
     ) -> None:
         assert store.reject_link(99999) is False
+
+
+class TestExposureGrading:
+    """Three grades, ordered by what supports them. No number, ever."""
+
+    def _financials(self):
+        from app.data.indian_api import parse_stock
+
+        payload = json.loads(
+            (Path(__file__).parent / "fixtures" / "indianapi" / "stock.json").read_text("utf-8")
+        )
+        return parse_stock("TCS", payload)
+
+    def _candidate(self, exposure: Exposure = Exposure.UNESTABLISHED) -> Candidate:
+        return Candidate(
+            symbol="TCS", theme_key="t", tier=2, exposure=exposure,
+            exposure_basis="industry or name matches 'x'; nothing corroborates it",
+        )
+
+    def test_a_business_description_establishes_exposure(self) -> None:
+        """The company said what it does, in its own filing prose."""
+        graded = grade(self._candidate(), "information technology services",
+                       financials=self._financials())
+
+        assert graded.exposure is Exposure.ESTABLISHED
+        assert "business description names" in graded.exposure_basis
+
+    def test_the_basis_quotes_the_description(self) -> None:
+        """A grade a reader cannot check is a grade they have to take on trust."""
+        graded = grade(self._candidate(), "consulting", financials=self._financials())
+
+        assert "consulting" in graded.exposure_basis
+        assert "business solutions" in graded.exposure_basis
+
+    def test_the_quotation_does_not_split_words(self) -> None:
+        """An excerpt cut mid-word reads as broken rather than shortened."""
+        graded = grade(self._candidate(), "consulting", financials=self._financials())
+        quoted = graded.exposure_basis.split("“", 1)[-1].rstrip("”")
+
+        # Every whole word in the quotation appears in the description it came from.
+        description = self._financials().description
+        for word in quoted.replace("…", " ").split():
+            if word.isalpha():
+                assert word in description
+
+    def test_commentary_alone_is_claimed_not_established(self) -> None:
+        reference = Reference("TCS", "t", "Jun 2026", SourceKind.COMMENTARY, "doc://x")
+
+        graded = grade(self._candidate(), "green hydrogen", references=[reference])
+
+        assert graded.exposure is Exposure.CLAIMED
+
+    def test_neither_leaves_it_unestablished_and_still_listed(self) -> None:
+        graded = grade(self._candidate(), "green hydrogen electrolysers",
+                       financials=self._financials())
+
+        assert graded.exposure is Exposure.UNESTABLISHED
+        assert graded.symbol == "TCS"
+
+    def test_a_grade_is_never_lowered(self) -> None:
+        """A provider being unavailable is not evidence about the company."""
+        already = self._candidate(Exposure.CLAIMED)
+
+        graded = grade(already, "green hydrogen", financials=None)
+
+        assert graded.exposure is Exposure.CLAIMED
+
+    def test_grading_spends_at_most_the_limit(self) -> None:
+        """The only part of the engine costing a metered request per company."""
+        calls: list[str] = []
+
+        class Source:
+            def financials(self, instrument):
+                calls.append(instrument.symbol)
+                return None
+
+        candidates = [
+            Candidate(symbol=s, theme_key="t", tier=1, exposure=Exposure.UNESTABLISHED)
+            for s in ("A", "B", "C", "D")
+        ]
+
+        grade_many(candidates, "theme", financials_source=Source(), limit=2)
+
+        assert len(calls) == 2
+
+    def test_a_failing_lookup_does_not_lose_the_candidate(self) -> None:
+        class Source:
+            def financials(self, instrument):
+                raise RuntimeError("provider down")
+
+        candidates = [Candidate(symbol="A", theme_key="t", tier=1,
+                                exposure=Exposure.UNESTABLISHED)]
+
+        graded = grade_many(candidates, "theme", financials_source=Source())
+
+        assert [c.symbol for c in graded] == ["A"]
+
+    def test_no_grade_is_a_number(self) -> None:
+        for exposure in Exposure:
+            with pytest.raises((TypeError, ValueError)):
+                float(exposure.value)
+
+
+class TestAgainstTheExchangesOwnTheme:
+    """Measured against NIFTY INDIA DEFENCE, whose membership NSE publishes.
+
+    This is the validation `theme-engine` needed and it returns an uncomfortable number. The
+    nineteen constituents *are* the entire universe under test, so every one of them is there
+    to be found, and resolution finds three.
+
+    The cause is visible in the fixture: seventeen of the nineteen are classified "Capital
+    Goods" and only one carries "Defence" in its name. Hindustan Aeronautics, Bharat Dynamics,
+    Mazagon Dock, Cochin Shipyard, Garden Reach, Zen, Paras, MTAR and Midhani are the core of
+    Indian defence manufacturing and none of them says so in the two strings the platform holds.
+
+    This is a **characterisation test**: it records what the platform does today so the number
+    is visible rather than assumed. `theme-research-agent` exists to move it, and when it does,
+    these assertions should be updated deliberately rather than discovered by accident.
+    """
+
+    FIXTURES = Path(__file__).parent / "fixtures" / "themes"
+
+    def _members(self) -> list[dict]:
+        return json.loads(
+            (self.FIXTURES / "nifty_india_defence.json").read_text("utf-8")
+        )["members"]
+
+    def _universe(self) -> UniverseSnapshot:
+        return UniverseSnapshot(
+            instruments=tuple(
+                Instrument(m["symbol"], m["name"], m["industry"]) for m in self._members()
+            ),
+            origin="live",
+            index_name="NIFTY INDIA DEFENCE",
+        )
+
+    def _chain(self) -> list[dict]:
+        return json.loads((self.FIXTURES / "defence_chain.json").read_text("utf-8"))["tiers"]
+
+    def test_the_fixture_is_the_exchanges_own_membership(self) -> None:
+        members = self._members()
+
+        assert len(members) > 10
+        assert {"symbol", "name", "industry"} <= set(members[0])
+
+    def test_the_classification_is_why_this_is_hard(self) -> None:
+        """Seventeen of nineteen defence companies classify as "Capital Goods"."""
+        industries = [m["industry"] for m in self._members()]
+
+        assert industries.count("Capital Goods") > len(industries) * 0.8
+        assert sum("defence" in m["name"].lower() for m in self._members()) <= 2
+
+    def test_resolution_finds_something_rather_than_nothing(self) -> None:
+        found, _ = resolve_chain("defence", self._chain(), self._universe())
+
+        assert len(found) > 0
+
+    def test_resolution_misses_most_of_the_theme(self) -> None:
+        """The measured baseline: roughly one in six, with every name available to be found.
+
+        If this starts failing because the hit rate rose, that is `theme-research-agent`
+        landing. Update the bound and the docstring together — do not simply widen it.
+        """
+        found, _ = resolve_chain("defence", self._chain(), self._universe())
+        members = {m["symbol"] for m in self._members()}
+        hits = {c.symbol for c in found} & members
+
+        assert len(hits) < len(members) * 0.5, (
+            f"hit rate rose to {len(hits)}/{len(members)} — has the research agent shipped?"
+        )
+
+    def test_the_names_that_are_missed_are_the_obvious_ones(self) -> None:
+        """Not marginal names. The core of Indian defence manufacturing."""
+        found, _ = resolve_chain("defence", self._chain(), self._universe())
+        hits = {c.symbol for c in found}
+
+        for obvious in ("HAL", "BDL", "MAZDOCK", "COCHINSHIP"):
+            assert obvious not in hits, f"{obvious} is now found — update this baseline"
+
+
+class TestThemesApi:
+    """Read-heavy by design. One expensive POST, one rejection, everything else reads."""
+
+    @pytest.fixture
+    def client(self, migrated_url: str):
+        from app.core.settings import Settings
+        from app.main import create_app
+        from tests.conftest import authed_client
+
+        return authed_client(create_app(Settings(app_env="test", database_url=migrated_url)))
+
+    @pytest.fixture
+    def seeded(self, migrated_url: str) -> ThemeStore:
+        from app.core.settings import Settings
+        from app.persistence.session import make_engine, make_session_factory
+
+        factory = make_session_factory(
+            make_engine(Settings(app_env="test", database_url=migrated_url))
+        )
+        store = ThemeStore(factory)
+        references = tuple(
+            _ref(f"CO{c}", period=f"P{p}") for c in range(3) for p in range(2)
+        )
+        store.record([Theme(key="data_centre", label="Data centre buildout",
+                            evidence=ThemeEvidence(references=references))])
+        store.record_chain(
+            "data_centre",
+            [
+                {
+                    "tier": 2,
+                    "label": "Grid and power equipment",
+                    "supplies": "Data centre buildout",
+                    "reasoning": "Data centres draw continuous high load.",
+                    "proposed_by": "ollama/test",
+                    "supplier_descriptions": ["Transformer manufacturers"],
+                }
+            ],
+        )
+        store.record_candidates(
+            [
+                Candidate(symbol="TARIL", theme_key="data_centre", tier=2,
+                          exposure=Exposure.UNESTABLISHED,
+                          exposure_basis="industry or name matches 'transformer'")
+            ]
+        )
+        return store
+
+    def test_themes_are_listed_with_their_counts(self, client, seeded) -> None:
+        body = client.get("/themes").json()
+
+        assert body["count"] == 1
+        theme = body["themes"][0]
+        assert theme["breadth"] == 3
+        assert theme["persistence"] == 2
+
+    def test_the_latest_run_travels_with_the_themes(self, client, seeded) -> None:
+        """So "nothing found" and "nothing could be read" cannot be confused by a caller."""
+        seeded.finish_run(seeded.start_run(), "no_reading",
+                          sources_unavailable=("commentary",))
+
+        body = client.get("/themes").json()
+
+        assert body["latest_run"]["outcome"] == "no_reading"
+        assert body["latest_run"]["sources_unavailable"] == ["commentary"]
+
+    def test_withdrawn_themes_are_excluded_by_default(self, client, seeded) -> None:
+        seeded.withdraw_short(
+            [Theme(key="data_centre", label="x", evidence=ThemeEvidence(references=(_ref("A"),)))],
+            Thresholds().shortfall,
+        )
+
+        assert client.get("/themes").json()["count"] == 0
+        assert client.get("/themes?include_withdrawn=true").json()["count"] == 1
+
+    def test_a_theme_returns_its_chain_candidates_and_references(
+        self, client, seeded
+    ) -> None:
+        body = client.get("/themes/data_centre").json()
+
+        assert body["label"] == "Data centre buildout"
+        assert len(body["chain"]) == 1
+        assert body["chain"][0]["proposed_by"] == "ollama/test"
+        assert [c["symbol"] for c in body["candidates"]] == ["TARIL"]
+        assert len(body["references"]) == 6
+
+    def test_references_are_marked_as_quoted_not_measured(self, client, seeded) -> None:
+        body = client.get("/themes/data_centre").json()
+
+        assert all(r["measured_by_platform"] is False for r in body["references"])
+
+    def test_chain_links_are_marked_as_proposals(self, client, seeded) -> None:
+        body = client.get("/themes/data_centre").json()
+
+        assert body["chain"][0]["measured_by_platform"] is False
+
+    def test_an_unknown_theme_is_404(self, client, seeded) -> None:
+        assert client.get("/themes/nope").status_code == 404
+
+    def test_runs_are_listable(self, client, seeded) -> None:
+        seeded.finish_run(seeded.start_run(), "complete", documents_read=4)
+
+        body = client.get("/themes/runs").json()
+
+        assert body["count"] >= 1
+        assert body["runs"][0]["documents_read"] == 4
+
+    def test_a_link_can_be_rejected(self, client, seeded) -> None:
+        link_id = seeded.chain("data_centre")[0]["id"]
+
+        response = client.post(
+            f"/themes/links/{link_id}/reject", json={"reason": "wrong tier"}
+        )
+
+        assert response.status_code == 200
+        assert seeded.chain("data_centre")[0]["rejected"] is True
+
+    def test_rejecting_an_unknown_link_is_404(self, client, seeded) -> None:
+        assert client.post("/themes/links/99999/reject", json={}).status_code == 404
+
+    def test_rejecting_writes_no_trade(self, client, seeded, migrated_url: str) -> None:
+        from sqlalchemy import create_engine, text
+
+        link_id = seeded.chain("data_centre")[0]["id"]
+        client.post(f"/themes/links/{link_id}/reject", json={})
+
+        with create_engine(migrated_url).begin() as conn:
+            count = conn.execute(text("SELECT COUNT(*) FROM book_trades")).scalar_one()
+        assert count == 0
+
+    def test_running_without_a_runner_configured_is_503(self, client) -> None:
+        """The platform is fine; this one capability is not wired up."""
+        response = client.post("/themes/run", json={})
+
+        assert response.status_code == 503
+
+    def test_no_endpoint_returns_a_stance_or_a_score(self, client, seeded) -> None:
+        """A theme is a lens, not a verdict."""
+        body = client.get("/themes/data_centre").json()
+        serialised = json.dumps(body).lower()
+
+        for forbidden in ('"stance"', '"conviction"', '"score"', '"rank"'):
+            assert forbidden not in serialised

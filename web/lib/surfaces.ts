@@ -29,6 +29,12 @@ export const SURFACES: Surface[] = [
     filledBy: "gui-surfaces",
   },
   {
+    href: "/themes",
+    label: "Themes",
+    answers: "What is emerging, and who is positioned to be paid by it",
+    filledBy: "theme-engine",
+  },
+  {
     href: "/positions",
     label: "Positions",
     answers: "What do I own, across both books",

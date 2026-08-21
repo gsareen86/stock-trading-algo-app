@@ -1,0 +1,100 @@
+{
+  "index": "NIFTY INDIA DEFENCE",
+  "members": [
+    {
+      "symbol": "AXISCADES",
+      "name": "AXISCADES Technologies Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "AEQUS",
+      "name": "Aequs Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "APOLLO",
+      "name": "Apollo Micro Systems Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "ASTRAMICRO",
+      "name": "Astra Microwave Products Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "BEML",
+      "name": "BEML Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "BDL",
+      "name": "Bharat Dynamics Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "BEL",
+      "name": "Bharat Electronics Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "BHARATFORG",
+      "name": "Bharat Forge Ltd.",
+      "industry": "Automobile and Auto Components"
+    },
+    {
+      "symbol": "COCHINSHIP",
+      "name": "Cochin Shipyard Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "DATAPATTNS",
+      "name": "Data Patterns (India) Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "DYNAMATECH",
+      "name": "Dynamatic Technologies Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "GRSE",
+      "name": "Garden Reach Shipbuilders & Engineers Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "HAL",
+      "name": "Hindustan Aeronautics Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "MTARTECH",
+      "name": "MTAR Technologies Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "MAZDOCK",
+      "name": "Mazagoan Dock Shipbuilders Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "MIDHANI",
+      "name": "Mishra Dhatu Nigam Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "PARAS",
+      "name": "Paras Defence and Space Technologies Ltd.",
+      "industry": "Capital Goods"
+    },
+    {
+      "symbol": "SOLARINDS",
+      "name": "Solar Industries India Ltd.",
+      "industry": "Chemicals"
+    },
+    {
+      "symbol": "ZENTEC",
+      "name": "Zen Technologies Ltd.",
+      "industry": "Capital Goods"
+    }
+  ]
+}

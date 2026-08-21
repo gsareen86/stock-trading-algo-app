@@ -26,6 +26,7 @@ from app.api.insights import router as insights_router
 from app.api.llm import router as llm_router
 from app.api.root import router as root_router
 from app.api.screening import router as screening_router
+from app.api.themes import router as themes_router
 from app.api.tools import router as tools_router
 from app.api.verdicts import router as verdicts_router
 from app.auth.guard import AuthGuard
@@ -102,6 +103,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(insights_router)
     app.include_router(backtest_router)
     app.include_router(broker_router)
+    app.include_router(themes_router)
 
     log.info("app ready (env=%s, version=%s)", settings.app_env, settings.app_version)
     return app
