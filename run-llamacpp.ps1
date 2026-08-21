@@ -16,6 +16,12 @@
     Weights are read straight out of Ollama's blob store, so there is no second copy of a
     16 GB file on disk.
 
+    ONE MODEL AT A TIME. This machine shares 32 GB between CPU and GPU, and qwen3.8 at 32k
+    context with MTP draft buffers leaves no room for a second model. Running a task routed to
+    Ollama while this server is up produced "vk::Device::allocateMemory: ErrorOutOfDeviceMemory"
+    -- gemma4:12b was holding 8.1 GB and the allocation failed. `ollama stop <model>` frees it.
+    Either route every task here, or keep Ollama unloaded while this runs.
+
 .EXAMPLE
     .\run-llamacpp.ps1
     .\run-llamacpp.ps1 -Model gemma4:12b -Port 8081
