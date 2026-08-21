@@ -558,3 +558,85 @@ class ConceptPlacement(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ChainSubCategory(Base):
+    """One distinct business inside a coarse chain tier.
+
+    A tier arrives at the granularity a model volunteers, which is coarser than the market.
+    "Semiconductor fabrication" is one tier; the businesses inside it are lithography,
+    deposition, metrology, assembly and test, and design services, and India has listed
+    companies in two of those and none in the rest.
+
+    The row exists so a *precise negative* has somewhere to live. "No Indian listed company
+    supplies EUV lithography" is a finding worth as much as a name, and it can only be recorded
+    against the thing it is true of.
+    """
+
+    __tablename__ = "chain_sub_categories"
+    __table_args__ = (
+        Index("ix_chain_sub_categories_theme", "theme_key", "tier"),
+        Index(
+            "ix_chain_sub_categories_identity", "theme_key", "tier", "label", unique=True
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    theme_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    tier_label: Mapped[str] = mapped_column(String(200), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supplier_descriptions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    notable_examples: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    proposed_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    #: Null means never searched, which is not the same as searched and empty. The two look
+    #: identical on a screen and mean opposite things.
+    searched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    search_outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ThemeProposal(Base):
+    """A company a search proposed, and what the platform decided about it.
+
+    **The refusals are why this table exists.** A proposal that matched nothing is kept as
+    *not found* and an ambiguous one as *ambiguous*, so the record shows what was suggested and
+    what the platform declined to act on. Keeping only the successes would leave no evidence
+    that the refusals ever happened, and the refusals are the safety property — this is the one
+    place in the platform where a model proposes a name rather than a category.
+    """
+
+    __tablename__ = "theme_proposals"
+    __table_args__ = (
+        Index("ix_theme_proposals_theme", "theme_key", "tier"),
+        Index(
+            "ix_theme_proposals_identity",
+            "theme_key",
+            "tier",
+            "sub_category",
+            "company",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    theme_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    sub_category: Mapped[str] = mapped_column(String(200), nullable=False)
+    company: Mapped[str] = mapped_column(String(200), nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: At least one followable URL. A proposal without one never reaches this table.
+    sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    proposed_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    #: `resolved`, `not_found` or `ambiguous`. Only the first can become a candidate.
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    matched_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    matched: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

@@ -214,6 +214,27 @@ class Settings(BaseSettings):
     #: the market is open, and one payload answers every index.
     nse_quote_cache_seconds: Annotated[float, Field(ge=0.0, le=3600.0)] = 60.0
 
+    #: Tavily (``api.tavily.com``) — web search for theme participants. Chosen because it
+    #: returns excerpts written to be read by a model rather than a page of link titles, and
+    #: because the citation then comes from the result rather than from a model's
+    #: recollection. Absent disables participant search only: decomposition, resolution and
+    #: every verdict are unaffected.
+    tavily_api_key: str | None = None
+
+    #: Searches allowed per calendar month. The free tier is 1,000 credits and one search is
+    #: one credit. A count, not a cost — like the financials allowance, going over stops the
+    #: capability working rather than spending more, so it refuses rather than warns.
+    search_monthly_request_limit: Annotated[int | None, Field(gt=0)] = 1000
+
+    #: Floor between searches. Courtesy to a free service the platform reads under an
+    #: allowance, and the same reasoning as the NSE limiter: no need to go fast, only to
+    #: keep going.
+    search_min_request_interval_seconds: Annotated[float, Field(ge=0.0, le=60.0)] = 1.0
+
+    #: Results per search. Enough for a model to find several participants and see them
+    #: corroborated across sources; few enough that one query is one credit.
+    search_max_results: Annotated[int, Field(ge=1, le=20)] = 8
+
     # ── Scheduled runs ────────────────────────────────────────────────────────
     #: Off by default. A platform that starts doing things on a timer the moment it is
     #: installed is one whose first surprise is a scheduled job nobody asked for.
@@ -331,6 +352,16 @@ class Settings(BaseSettings):
     def financials_configured(self) -> bool:
         """Whether the wide financials seam can answer at all."""
         return bool(self.indian_api_key)
+
+    @property
+    def search_configured(self) -> bool:
+        """Whether participant search can run at all.
+
+        Distinct from *exhausted*. Unconfigured means nobody set this up; exhausted means the
+        allowance ran out this month. A reader deciding whether a tier's emptiness is real
+        needs to tell those apart, and so does anyone deciding whether to add a key.
+        """
+        return bool(self.tavily_api_key)
 
     @property
     def observability_configured(self) -> bool:

@@ -52,6 +52,13 @@ STOPWORDS = frozenset(
         "equipment", "products", "product", "industry", "industries", "sector",
         "large", "scale", "specialized", "specialised", "high", "grade", "various",
         "related", "other", "also", "including", "include", "includes",
+        # Marketing vocabulary. These appear in company descriptions *and* in supplier
+        # descriptions, so they match constantly and discriminate never -- a tier described
+        # as "a leading provider of back-end manufacturing for the global semiconductor
+        # industry" scored `global` and `leading` against half the universe and put the one
+        # company that actually does the work fourth.
+        "leading", "global", "premier", "trusted", "renowned", "innovative", "foremost",
+        "reputed", "world", "class", "range", "wide", "well", "known", "major", "across",
     }
 )
 
@@ -76,6 +83,53 @@ MIN_TERM_HITS = 1
 #: Shortlist size. Generous, because precision comes later and the cost of an extra candidate
 #: is one line in a prompt.
 SHORTLIST = 40
+
+#: Characters of description handed to the matcher per company. A budget rather than a prefix
+#: -- see `focused_excerpt`, which spends it on the sentences that answered the query.
+MATCHER_EXCERPT_CHARS = 700
+
+_SENTENCE = re.compile(r"(?<=[.;])\s+")
+
+
+def focused_excerpt(description: str, hits: set[str], limit: int = MATCHER_EXCERPT_CHARS) -> str:
+    """The sentences that answered the query, plus the one that says who the company is.
+
+    **Replaces handing the matcher the first N characters, which was silently wrong.** CG Power
+    describes itself over seventeen hundred characters; the sentence that decides whether it
+    supplies a semiconductor assembly tier -- "the company offers semiconductor design,
+    outsourced semiconductor assembly and testing" -- begins at character 938. Truncating at a
+    prefix meant the precision step could not see the single fact it existed to judge, and it
+    correctly answered "no" to a question it had not been shown.
+
+    That failure is not an edge case. A theme exposure is usually a *segment*, and a company
+    describes its segments after it has described itself, so a prefix systematically hides
+    exactly the companies whose exposure is partial -- which is most of them.
+
+    The first sentence is always kept, because "which company is this" is context the matched
+    sentences do not carry on their own.
+    """
+    text = " ".join((description or "").split())
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+
+    sentences = _SENTENCE.split(text)
+    if not sentences:
+        return text[:limit]
+
+    kept = [sentences[0]]
+    used = len(sentences[0])
+    for sentence in sentences[1:]:
+        lowered = sentence.lower()
+        if not any(hit in lowered for hit in hits):
+            continue
+        if used + len(sentence) + 1 > limit:
+            break
+        kept.append(sentence)
+        used += len(sentence) + 1
+
+    return " ".join(kept)[:limit]
 
 
 def terms(description: str) -> list[str]:
@@ -187,11 +241,19 @@ def resolve_tier(
             shortlist.setdefault(symbol, f"{description} ({why})")
 
     if shortlist and matcher is not None:
+        # Every word the tier asked about. The matcher is shown the sentences containing
+        # these rather than a prefix, because the sentence that decides a diversified
+        # company's exposure is the one describing the relevant segment, and that is never
+        # in the first paragraph.
+        asked = {term for d in supplier_descriptions or [] for term in terms(d)}
         decided = matcher(
             label or (supplier_descriptions or [""])[0],
             reasoning or "",
             [
-                {"symbol": symbol, "description": profiles[symbol].searchable}
+                {
+                    "symbol": symbol,
+                    "description": focused_excerpt(profiles[symbol].searchable, asked),
+                }
                 for symbol in shortlist
                 if profiles and symbol in profiles
             ],

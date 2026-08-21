@@ -1,0 +1,125 @@
+{
+  "tier": "Semiconductor assembly, packaging and test",
+  "sub_categories": [
+    {
+      "source_ref": "model://llama_cpp/qwen3.8/tier_decompose?tier=Semiconductor assembly, packaging and test&label=OSAT assembly and test services",
+      "observed_at": "2026-08-21T18:07:20.238232+00:00",
+      "tier": "Semiconductor assembly, packaging and test",
+      "label": "OSAT assembly and test services",
+      "reasoning": "",
+      "supplier_descriptions": [
+        "receives bare dies and wafers from foundry and fabless customers, performs die attach, wire bonding, plastic encapsulation, trimming, and full parametric and functional test, selling finished packaged CMOS and mixed-signal integrated circuits back to chip designers and contract manufacturers",
+        "operates high-volume back-end assembly and test facilities performing singulation, die bonding, wire bonding, molding, and final electrical test of logic, RF, and analog integrated circuits for fabless semiconductor companies and foundries"
+      ],
+      "notable_examples": [
+        {
+          "name": "ASE",
+          "investable": false
+        },
+        {
+          "name": "Amkor",
+          "investable": false
+        },
+        {
+          "name": "Powerchip Technology (PTI)",
+          "investable": false
+        },
+        {
+          "name": "JCET (Jiangsu Changjiang Electronics)",
+          "investable": false
+        }
+      ],
+      "proposed_by": "llama_cpp/qwen3.8",
+      "measured_by_platform": false
+    },
+    {
+      "source_ref": "model://llama_cpp/qwen3.8/tier_decompose?tier=Semiconductor assembly, packaging and test&label=Advanced 2.5D and 3D integration",
+      "observed_at": "2026-08-21T18:07:20.238232+00:00",
+      "tier": "Semiconductor assembly, packaging and test",
+      "label": "Advanced 2.5D and 3D integration",
+      "reasoning": "",
+      "supplier_descriptions": [
+        "fabricates silicon interposers, performs through-silicon via processing, micro-bump and hybrid bonding, and final test to integrate multiple high-performance logic and memory dies into a single 2.5D or 3D package for artificial-intelligence accelerators, data-center processors, and high-performance computing platforms",
+        "operates advanced packaging lines performing silicon-on-silicon integration, interposer-based assembly, chiplet stacking, and full-speed test, selling co-packaged high-density semiconductor modules to accelerator and processor designers for data-center and edge AI workloads"
+      ],
+      "notable_examples": [
+        {
+          "name": "TSMC (CoWoS)",
+          "investable": false
+        },
+        {
+          "name": "Samsung (I-Cube)",
+          "investable": false
+        },
+        {
+          "name": "Intel (EMIB, Foveros)",
+          "investable": false
+        }
+      ],
+      "proposed_by": "llama_cpp/qwen3.8",
+      "measured_by_platform": false
+    },
+    {
+      "source_ref": "model://llama_cpp/qwen3.8/tier_decompose?tier=Semiconductor assembly, packaging and test&label=Memory device packaging and test",
+      "observed_at": "2026-08-21T18:07:20.238232+00:00",
+      "tier": "Semiconductor assembly, packaging and test",
+      "label": "Memory device packaging and test",
+      "reasoning": "",
+      "supplier_descriptions": [
+        "performs wafer-level and die-level assembly, through-silicon via processing, wafer bonding, and high-speed functional test for DRAM and NAND flash products, selling packaged memory dice and components to module assemblers and original equipment manufacturers",
+        "operates back-end packaging and test lines for 3D-stacked DRAM and NAND flash devices, performing TSV formation, die stacking, singulation, and full-speed memory test, supplying finished memory components to system integrators and contract manufacturers"
+      ],
+      "notable_examples": [
+        {
+          "name": "Samsung (in-house)",
+          "investable": false
+        },
+        {
+          "name": "SK Hynix (in-house)",
+          "investable": false
+        },
+        {
+          "name": "Micron (in-house)",
+          "investable": false
+        },
+        {
+          "name": "ASE (memory OSAT)",
+          "investable": false
+        }
+      ],
+      "proposed_by": "llama_cpp/qwen3.8",
+      "measured_by_platform": false
+    },
+    {
+      "source_ref": "model://llama_cpp/qwen3.8/tier_decompose?tier=Semiconductor assembly, packaging and test&label=Power semiconductor packaging",
+      "observed_at": "2026-08-21T18:07:20.238232+00:00",
+      "tier": "Semiconductor assembly, packaging and test",
+      "label": "Power semiconductor packaging",
+      "reasoning": "",
+      "supplier_descriptions": [
+        "performs die attach via silver sintering or solder, ceramic-substrate assembly, wire bonding or direct solder interconnect, potting, and high-voltage high-current electrical test for silicon-carbide MOSFETs, IGBT modules, and gallium-nitride power devices, selling packaged power modules to automotive, industrial-drive, and renewable-energy system builders",
+        "operates power-module assembly and test facilities performing chip-on-substrate attachment, encapsulation, and full electrical characterization of high-voltage power devices for electric-vehicle traction inverters, industrial motor drives, and grid-scale power conversion systems"
+      ],
+      "notable_examples": [
+        {
+          "name": "Infineon (in-house)",
+          "investable": false
+        },
+        {
+          "name": "Wolfspeed (in-house)",
+          "investable": false
+        },
+        {
+          "name": "STMicroelectronics (in-house)",
+          "investable": false
+        },
+        {
+          "name": "Rohm (in-house)",
+          "investable": false
+        }
+      ],
+      "proposed_by": "llama_cpp/qwen3.8",
+      "measured_by_platform": false
+    }
+  ]
+}

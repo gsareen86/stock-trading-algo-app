@@ -2,30 +2,71 @@
 
 ## ADDED Requirements
 
-### Requirement: A tier that name matching cannot resolve is searched
-The system MUST attempt a search for Indian listed participants when a tier resolves to no
-candidate, and MUST record whether that search ran.
+### Requirement: Every tier is decomposed before it is resolved
+The system MUST attempt to decompose each chain tier into finer sub-categories, and MUST resolve
+those sub-categories by the ordinary path. Decomposition MUST run whether or not the coarse tier
+resolved to anything.
 
-#### Scenario: An unresolved tier triggers a search
-- GIVEN a tier no company matched on name or industry
-- WHEN the tier is resolved
+#### Scenario: A tier that already resolved is still decomposed
+- GIVEN a tier that matched companies on their business descriptions
+- WHEN the chain is resolved
+- THEN the tier is decomposed anyway
+- AND its existing candidates all remain
+
+#### Scenario: Decomposition sharpens which company matches
+- GIVEN a tier for semiconductor fabrication that matches several companies weakly
+- WHEN it is decomposed into assembly and test, design services and lithography
+- THEN a company describing outsourced semiconductor assembly matches the assembly sub-category
+  more strongly than it matched the coarse tier
+
+#### Scenario: A sub-category with no Indian expression says so precisely
+- GIVEN a sub-category for EUV lithography
+- WHEN it is resolved
+- THEN it reports that no Indian listed company matched
+- AND that statement is recorded against the sub-category rather than the coarse tier
+
+#### Scenario: Decomposition proposes categories, never companies
+- GIVEN any decomposed tier
+- WHEN its sub-categories are read
+- THEN each names a category of supplier
+- AND no sub-category is an instrument symbol
+
+#### Scenario: A tier that cannot be decomposed resolves as before
+- GIVEN a model that cannot be reached
+- WHEN a tier is decomposed
+- THEN the tier resolves by its coarse description
+- AND the tier records that decomposition did not run
+
+### Requirement: A sub-category that description matching cannot resolve is searched
+The system MUST attempt a search for Indian listed participants when a sub-category resolves to
+no candidate, and MUST record whether that search ran.
+
+#### Scenario: An unresolved sub-category triggers a search
+- GIVEN a sub-category no company matched on its business description
+- WHEN it is resolved
 - THEN a search for Indian listed participants is attempted
 
-#### Scenario: A tier that already resolved is not searched
-- GIVEN a tier that matched companies on name or industry
+#### Scenario: A resolved sub-category is not searched
+- GIVEN a sub-category that matched companies on their business descriptions
 - WHEN it is resolved
 - THEN no search is performed
 
 #### Scenario: An unavailable search is recorded, never guessed at
 - GIVEN a search provider that cannot be reached
-- WHEN a tier is searched
-- THEN the tier reports that it was not searched
+- WHEN a sub-category is searched
+- THEN the sub-category reports that it was not searched
 - AND no candidate is produced
 
-#### Scenario: A searched tier that still finds nothing says which was true
-- GIVEN a tier that was searched and produced no listed participant
+#### Scenario: An exhausted allowance is not a quiet absence
+- GIVEN a search allowance that has been used up
+- WHEN a sub-category is searched
+- THEN it reports that the allowance was exhausted
+- AND that is distinguishable from a provider that could not be reached
+
+#### Scenario: A searched sub-category that still finds nothing says which was true
+- GIVEN a sub-category that was searched and produced no listed participant
 - WHEN it is read
-- THEN it is distinguishable from a tier that was never searched
+- THEN it is distinguishable from one that was never searched
 
 ### Requirement: A proposed company is inert until the universe confirms it
 A company name proposed by search MUST be resolved against the platform's universe before it
@@ -92,8 +133,8 @@ MUST NOT be graded above the weakest grade on the strength of the search alone.
 - THEN it may be graded as claimed, citing that commentary rather than the search
 
 ### Requirement: Research may only widen the candidate set
-Search MUST NOT remove a candidate, exclude an instrument from evaluation, alter a stance or a
-conviction, or change any ordering.
+Decomposition and search MUST NOT remove a candidate, exclude an instrument from evaluation,
+alter a stance or a conviction, or change any ordering.
 
 #### Scenario: Verdicts are unchanged by research
 - GIVEN the same instruments and the same price data
@@ -101,7 +142,7 @@ conviction, or change any ordering.
 - THEN the verdicts are identical
 
 #### Scenario: Research cannot remove an existing candidate
-- GIVEN a tier with candidates found by name matching
+- GIVEN a tier with candidates found by description matching
 - WHEN research runs
 - THEN every existing candidate remains
 

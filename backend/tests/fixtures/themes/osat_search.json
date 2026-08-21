@@ -1,0 +1,25 @@
+{
+  "_note": "Search results for the OSAT case, in Tavily's response shape. CONSTRUCTED, not captured: this repository has no search key, so these were written from public reporting rather than recorded from a live call. They are shaped exactly as the provider returns them and are used only to drive the offline path. The facts they carry are real - Kaynes Semicon's Sanand OSAT unit and the CG Power/Renesas/Stars Microelectronics joint venture are both publicly announced - and the decoys are deliberate: a foreign OSAT giant, an unlisted subsidiary, and a bare group name, each of which the universe validation must refuse for a different reason.",
+  "results": [
+    {
+      "title": "Kaynes Semicon commissions OSAT unit at Sanand, Gujarat",
+      "url": "https://example-news.in/kaynes-semicon-sanand-osat",
+      "content": "Kaynes Technology India said its subsidiary Kaynes Semicon has begun assembly and test operations at its outsourced semiconductor assembly and test facility in Sanand, Gujarat. The unit will package and test chips for automotive, industrial and telecom customers, and is among the first OSAT plants approved under the India Semiconductor Mission."
+    },
+    {
+      "title": "CG Power JV with Renesas begins OSAT construction",
+      "url": "https://example-news.in/cg-power-renesas-osat-sanand",
+      "content": "CG Power and Industrial Solutions, in a joint venture with Renesas Electronics and Stars Microelectronics, is building an outsourced semiconductor assembly and test plant at Sanand. The company already lists semiconductor design and outsourced assembly and testing among its offerings."
+    },
+    {
+      "title": "India's OSAT push: who is actually building",
+      "url": "https://example-news.in/india-osat-who-is-building",
+      "content": "Beyond the two Sanand projects, most global outsourced assembly and test capacity sits with Amkor Technology and ASE Technology Holding, neither of which is listed in India. Kaynes Technology and CG Power remain the two listed Indian companies with committed OSAT capacity."
+    },
+    {
+      "title": "Semiconductor packaging: the Tata angle",
+      "url": "https://example-news.in/tata-semiconductor-packaging",
+      "content": "The Tata group is building an assembly and test facility in Assam through Tata Electronics, which is not separately listed. Analysts note the group has several separately listed entities in unrelated businesses."
+    }
+  ]
+}

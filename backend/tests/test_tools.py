@@ -95,8 +95,11 @@ class TestDiscovery:
             "policy_classify",
             "theme_chain",
             "theme_merge",
+            "theme_participants",
+            "tier_decompose",
             "tier_match",
             "transcript_summary",
+            "web_search",
         ]
 
     def test_every_summary_says_when_to_use_it(self, registry: ToolRegistry) -> None:

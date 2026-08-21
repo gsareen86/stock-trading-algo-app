@@ -32,9 +32,16 @@ TASK = "tier_match"
 #: makes it careless rather than thorough. The caller batches.
 BATCH_SIZE = 12
 
-#: Characters of each business description shown. The first paragraph says what a company does;
-#: the rest is usually subsidiaries and history.
-DESCRIPTION_CHARS = 420
+#: Characters of each business description shown. A backstop, not the selection: callers are
+#: expected to hand over an excerpt already focused on what the tier asked about.
+#:
+#: It used to be 420 and it used to be a prefix, and that combination was quietly wrong. CG
+#: Power's description reaches "outsourced semiconductor assembly and testing" at character
+#: 938, so a semiconductor assembly tier was judged against a company whose relevant sentence
+#: had been cut off -- and answered no, correctly, to a question it had not been shown. A
+#: company's exposure to a theme is usually one segment among several, and segments are
+#: described after the company has described itself.
+DESCRIPTION_CHARS = 900
 
 INPUT_SCHEMA = {
     "type": "object",

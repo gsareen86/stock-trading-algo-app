@@ -113,13 +113,117 @@ def build_runner(
             unavailable=tuple(unavailable),
         )
 
+    matcher = build_matcher(tools, gateway, settings)
     return ThemeRunner(
         store=themes,
         gatherer=gather,
         universe_source=universe_source,
         expander=_expander(tools, call),
         profile_source=profile_source,
+        # The precision half of resolution. It existed and was never wired in, so every run
+        # so far kept whatever word overlap shortlisted and said nothing had read it.
+        matcher=matcher,
+        researcher=build_researcher(
+            settings=settings,
+            session_factory=session_factory,
+            gateway=gateway,
+            tools=tools,
+            profile_source=profile_source,
+            matcher=matcher,
+            store=themes,
+        ),
     )
+
+
+def build_researcher(
+    settings: Settings,
+    session_factory,
+    gateway: LLMGateway,
+    tools: ToolRegistry,
+    store: ThemeStore,
+    profile_source=None,
+    matcher=None,
+):
+    """Decomposition and participant search, each degrading to absent on its own.
+
+    Search needs a key and decomposition does not, so a platform with no `TAVILY_API_KEY` still
+    breaks every tier into the businesses inside it — which is the half that costs nothing and
+    finds most of what there is. Search only ever runs against what description matching left
+    empty.
+    """
+    from app.core.rate_limit import RateLimiter
+    from app.data.provider_budget import MonthlyRequestBudget
+    from app.data.search import TavilySearchSource
+    from app.themes.research import TierResearcher
+
+    call = _caller(gateway, settings.model_for_task("research"))
+
+    searcher = proposer = None
+    if settings.search_configured:
+        source = TavilySearchSource(
+            api_key=settings.tavily_api_key,
+            budget=MonthlyRequestBudget(
+                session_factory, "search", settings.search_monthly_request_limit
+            ),
+            limiter=RateLimiter(settings.search_min_request_interval_seconds),
+            max_results=settings.search_max_results,
+        )
+        searcher = source.search
+        proposer = _proposer(tools, call)
+    else:
+        log.info("participant search not configured; tiers resolve by description only")
+
+    return TierResearcher(
+        store=store,
+        decomposer=_decomposer(tools, call),
+        searcher=searcher,
+        proposer=proposer,
+        profiles=profile_source.all() if profile_source is not None else None,
+        matcher=matcher,
+    )
+
+
+def _decomposer(tools: ToolRegistry, call):
+    def decompose(tier: str, reasoning: str, descriptions: list[str]) -> list[dict]:
+        result = tools.invoke(
+            "tier_decompose",
+            {
+                "tier": tier,
+                "reasoning": reasoning,
+                "supplier_descriptions": list(descriptions or []),
+            },
+            ToolContext(fetchers={"tier_decomposer": call}),
+        )
+        if not result.ok or not (result.data or {}).get("available"):
+            # Raised rather than returned empty: the caller records the tier as undecomposed,
+            # which is different from a tier that decomposed into nothing.
+            raise RuntimeError((result.data or {}).get("reason") or "decomposer unavailable")
+        return result.items
+
+    return decompose
+
+
+def _proposer(tools: ToolRegistry, call):
+    def propose(sub_category: str, reasoning: str, excerpts: list[dict]) -> list[dict]:
+        result = tools.invoke(
+            "theme_participants",
+            {
+                "sub_category": sub_category,
+                "reasoning": reasoning,
+                "excerpts": [
+                    {
+                        "title": e.get("title", ""),
+                        "url": e.get("url", ""),
+                        "excerpt": e.get("excerpt", ""),
+                    }
+                    for e in excerpts
+                ],
+            },
+            ToolContext(fetchers={"participant_proposer": call}),
+        )
+        return result.items if result.ok else []
+
+    return propose
 
 
 def _merge_unplaced(concepts: ConceptStore, tools: ToolRegistry, call, themes: ThemeStore) -> int:

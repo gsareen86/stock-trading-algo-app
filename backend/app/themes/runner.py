@@ -59,6 +59,14 @@ class ThemeRunResult:
     documents_read: int = 0
     sources_unavailable: tuple[str, ...] = ()
     reason: str | None = None
+    #: Distinct businesses the run broke coarse tiers into.
+    sub_categories: int = 0
+    #: Sub-categories description matching left empty, that a search was attempted for.
+    searched: int = 0
+    #: Names search proposed that the universe confirmed, and names it refused. Reported
+    #: separately because the refusals are the safety property, not an error rate.
+    proposals_confirmed: int = 0
+    proposals_refused: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +81,10 @@ class ThemeRunResult:
             "documents_read": self.documents_read,
             "sources_unavailable": list(self.sources_unavailable),
             "reason": self.reason,
+            "sub_categories": self.sub_categories,
+            "searched": self.searched,
+            "proposals_confirmed": self.proposals_confirmed,
+            "proposals_refused": self.proposals_refused,
         }
 
 
@@ -127,6 +139,8 @@ class ThemeRunner:
         profile_source=None,
         thresholds: Thresholds | None = None,
         labels: dict[str, str] | None = None,
+        matcher=None,
+        researcher=None,
     ) -> None:
         self._store = store
         self._gather = gatherer
@@ -138,6 +152,12 @@ class ThemeRunner:
         self._profiles = profile_source
         self._thresholds = thresholds or Thresholds()
         self._labels = labels or {}
+        #: The precision half of resolution. Absent, a tier keeps everything word overlap
+        #: shortlisted and says plainly that nothing read it.
+        self._matcher = matcher
+        #: Decomposition and participant search. Absent, tiers resolve coarsely and no
+        #: search is ever attempted — which is what a platform with no search key does.
+        self._researcher = researcher
 
     def run(self, trigger: str = "requested") -> ThemeRunResult:
         already = self._store.running_run()
@@ -185,7 +205,7 @@ class ThemeRunner:
         withdrawn = self._store.withdraw_short(short_themes, self._thresholds.shortfall)
 
         universe = self._universe_source.snapshot()
-        chains, candidates, gaps = self._expand_and_resolve(surfaced_themes, universe)
+        outcome = self._expand_and_resolve(surfaced_themes, universe)
 
         self._store.finish_run(
             run_id,
@@ -199,19 +219,27 @@ class ThemeRunner:
             surfaced=new,
             refreshed=refreshed,
             withdrawn=withdrawn,
-            chains_expanded=chains,
-            candidates=candidates,
-            tiers_without_indian_exposure=gaps,
             documents_read=gathered.documents_read,
             sources_unavailable=unavailable,
+            **outcome,
         )
 
-    def _expand_and_resolve(self, themes, universe: UniverseSnapshot) -> tuple[int, int, int]:
-        """Expand each theme's chain and resolve it to candidates. Never fatal."""
+    def _expand_and_resolve(self, themes, universe: UniverseSnapshot) -> dict[str, int]:
+        """Expand each theme's chain, resolve it, then research it. Never fatal."""
+        totals = {
+            "chains_expanded": 0,
+            "candidates": 0,
+            "tiers_without_indian_exposure": 0,
+            "sub_categories": 0,
+            "searched": 0,
+            "proposals_confirmed": 0,
+            "proposals_refused": 0,
+        }
         if self._expander is None:
-            return 0, 0, 0
+            return totals
 
-        chains = candidates = gaps = 0
+        profiles = self._profiles.all() if self._profiles is not None else None
+
         for theme in themes:
             try:
                 tiers = self._expander(theme.label or theme.key)
@@ -224,20 +252,73 @@ class ThemeRunner:
                 continue
 
             self._store.record_chain(theme.key, tiers)
-            chains += 1
+            totals["chains_expanded"] += 1
 
             # Read back rather than resolving what was just proposed: the stored chain is the
             # one carrying rejections, and resolving the proposal would quietly reinstate a
             # link the reader had already thrown out.
             stored = self._store.chain(theme.key)
+            references = list(theme.evidence.references)
             found, unresolved = resolve.resolve_chain(
                 theme.key,
                 stored,
                 universe,
-                references=list(theme.evidence.references),
-                profiles=self._profiles.all() if self._profiles is not None else None,
+                references=references,
+                profiles=profiles,
+                matcher=self._matcher,
             )
-            candidates += self._store.record_candidates(found)
-            gaps += len(unresolved)
+            totals["candidates"] += self._store.record_candidates(found)
+            totals["tiers_without_indian_exposure"] += len(unresolved)
 
-        return chains, candidates, gaps
+            totals_from_research = self._research(
+                theme.key, stored, universe, references, {c.symbol for c in found}
+            )
+            for key, value in totals_from_research.items():
+                totals[key] += value
+
+        return totals
+
+    def _research(
+        self,
+        theme_key: str,
+        tiers: list[dict[str, Any]],
+        universe: UniverseSnapshot,
+        references: list[Reference],
+        already: set[str],
+    ) -> dict[str, int]:
+        """Decompose and search one chain. Adds candidates; never removes one.
+
+        Failure here costs the extra candidates and nothing else — the coarse resolution above
+        is already recorded, so a decomposition model that is down degrades a run rather than
+        failing it.
+        """
+        empty = {
+            "candidates": 0,
+            "tiers_without_indian_exposure": 0,
+            "sub_categories": 0,
+            "searched": 0,
+            "proposals_confirmed": 0,
+            "proposals_refused": 0,
+            "chains_expanded": 0,
+        }
+        if self._researcher is None:
+            return empty
+
+        try:
+            research = self._researcher.research(
+                theme_key, tiers, universe, references=references, already=already
+            )
+        except Exception as exc:
+            log.warning("tier research failed for %s: %s", theme_key, exc)
+            return empty
+
+        confirmed = sum(1 for p in research.proposals if p.is_candidate)
+        return {
+            **empty,
+            "candidates": self._store.record_candidates(research.candidates),
+            "tiers_without_indian_exposure": len(research.unresolved),
+            "sub_categories": research.sub_categories,
+            "searched": research.searched,
+            "proposals_confirmed": confirmed,
+            "proposals_refused": len(research.proposals) - confirmed,
+        }

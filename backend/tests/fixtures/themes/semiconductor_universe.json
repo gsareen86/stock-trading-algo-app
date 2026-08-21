@@ -1,0 +1,155 @@
+{
+  "index": "semiconductor test universe",
+  "members": [
+    {
+      "symbol": "KAYNES",
+      "name": "Kaynes Technology India Limited",
+      "industry": "Electronic Components"
+    },
+    {
+      "symbol": "CGPOWER",
+      "name": "CG Power and Industrial Solutions Limited",
+      "industry": "Electrical Equipment & Parts"
+    },
+    {
+      "symbol": "TATAELXSI",
+      "name": "Tata Elxsi Limited",
+      "industry": "Software - Application"
+    },
+    {
+      "symbol": "CYIENT",
+      "name": "Cyient Limited",
+      "industry": "Conglomerates"
+    },
+    {
+      "symbol": "CYIENTDLM",
+      "name": "Cyient DLM Limited",
+      "industry": "Aerospace & Defense"
+    },
+    {
+      "symbol": "DIXON",
+      "name": "Dixon Technologies (India) Limited",
+      "industry": "Consumer Electronics"
+    },
+    {
+      "symbol": "AMBER",
+      "name": "Amber Enterprises India Limited",
+      "industry": "Furnishings, Fixtures & Appliances"
+    },
+    {
+      "symbol": "SYRMA",
+      "name": "Syrma SGS Technology Limited",
+      "industry": "Electronic Components"
+    },
+    {
+      "symbol": "POLYCAB",
+      "name": "Polycab India Limited",
+      "industry": "Electrical Equipment & Parts"
+    },
+    {
+      "symbol": "HAVELLS",
+      "name": "Havells India Limited",
+      "industry": "Electrical Equipment & Parts"
+    },
+    {
+      "symbol": "BHARATFORG",
+      "name": "Bharat Forge Limited",
+      "industry": "Auto Parts"
+    },
+    {
+      "symbol": "BEL",
+      "name": "Bharat Electronics Limited",
+      "industry": "Aerospace & Defense"
+    },
+    {
+      "symbol": "VOLTAS",
+      "name": "Voltas Limited",
+      "industry": "Furnishings, Fixtures & Appliances"
+    },
+    {
+      "symbol": "TATACHEM",
+      "name": "Tata Chemicals Limited",
+      "industry": "Chemicals"
+    },
+    {
+      "symbol": "AARTIIND",
+      "name": "Aarti Industries Limited",
+      "industry": "Specialty Chemicals"
+    },
+    {
+      "symbol": "AIAENG",
+      "name": "AIA Engineering Limited",
+      "industry": "Specialty Industrial Machinery"
+    },
+    {
+      "symbol": "AUROPHARMA",
+      "name": "Aurobindo Pharma Limited",
+      "industry": "Drug Manufacturers - Specialty & Generic"
+    },
+    {
+      "symbol": "ULTRACEMCO",
+      "name": "UltraTech Cement Limited",
+      "industry": "Building Materials"
+    },
+    {
+      "symbol": "SHREECEM",
+      "name": "Shree Cement Limited",
+      "industry": "Building Materials"
+    },
+    {
+      "symbol": "HDFCBANK",
+      "name": "HDFC Bank Limited",
+      "industry": "Banks - Regional"
+    },
+    {
+      "symbol": "ICICIBANK",
+      "name": "ICICI Bank Limited",
+      "industry": "Banks - Regional"
+    },
+    {
+      "symbol": "TCS",
+      "name": "Tata Consultancy Services Limited",
+      "industry": "Information Technology Services"
+    },
+    {
+      "symbol": "INFY",
+      "name": "Infosys Limited",
+      "industry": "Information Technology Services"
+    },
+    {
+      "symbol": "WIPRO",
+      "name": "Wipro Limited",
+      "industry": "Information Technology Services"
+    },
+    {
+      "symbol": "RELIANCE",
+      "name": "Reliance Industries Limited",
+      "industry": "Oil & Gas Refining & Marketing"
+    },
+    {
+      "symbol": "TITAN",
+      "name": "Titan Company Limited",
+      "industry": "Luxury Goods"
+    },
+    {
+      "symbol": "ASIANPAINT",
+      "name": "Asian Paints Limited",
+      "industry": "Specialty Chemicals"
+    },
+    {
+      "symbol": "MARUTI",
+      "name": "Maruti Suzuki India Limited",
+      "industry": "Auto Manufacturers"
+    },
+    {
+      "symbol": "SUNPHARMA",
+      "name": "Sun Pharmaceutical Industries Limited",
+      "industry": "Drug Manufacturers - Specialty & Generic"
+    },
+    {
+      "symbol": "NESTLEIND",
+      "name": "Nestl\u00e9 India Limited",
+      "industry": "Packaged Foods"
+    }
+  ]
+}

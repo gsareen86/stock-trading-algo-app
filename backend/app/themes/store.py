@@ -28,8 +28,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.clock import now_utc
 from app.domain.themes import Reference, SourceKind, Theme, ThemeEvidence
 from app.persistence.models import ChainLink as ChainLinkRow
+from app.persistence.models import ChainSubCategory as SubCategoryRow
 from app.persistence.models import Theme as ThemeRow
 from app.persistence.models import ThemeCandidate as CandidateRow
+from app.persistence.models import ThemeProposal as ProposalRow
 from app.persistence.models import ThemeReference as ReferenceRow
 from app.persistence.models import ThemeRun as RunRow
 
@@ -365,6 +367,181 @@ class ThemeStore:
                 }
                 for r in rows
             ]
+
+    # ── tier research ─────────────────────────────────────────────────────────
+    def record_sub_categories(
+        self, theme_key: str, tier: int, tier_label: str, sub_categories: list[dict[str, Any]]
+    ) -> int:
+        """Write what a tier decomposed into. Returns how many were newly written.
+
+        Re-decomposing refreshes the descriptions and leaves the search state alone. A weekly
+        run proposes the same breakdown in slightly different words each time, and clearing
+        `searched_at` would spend the allowance again on a question already answered.
+        """
+        written = 0
+        with self._sessions() as session:
+            for entry in sub_categories:
+                label = str(entry.get("label") or "").strip()
+                if not label:
+                    continue
+                row = session.execute(
+                    select(SubCategoryRow).where(
+                        SubCategoryRow.theme_key == theme_key,
+                        SubCategoryRow.tier == tier,
+                        SubCategoryRow.label == label,
+                    )
+                ).scalar_one_or_none()
+
+                if row is None:
+                    session.add(
+                        SubCategoryRow(
+                            theme_key=theme_key,
+                            tier=tier,
+                            tier_label=tier_label,
+                            label=label,
+                            reasoning=str(entry.get("reasoning") or "") or None,
+                            supplier_descriptions=list(
+                                entry.get("supplier_descriptions") or []
+                            ),
+                            notable_examples=list(entry.get("notable_examples") or []),
+                            proposed_by=str(entry.get("proposed_by") or ""),
+                        )
+                    )
+                    written += 1
+                else:
+                    row.reasoning = str(entry.get("reasoning") or "") or row.reasoning
+                    row.supplier_descriptions = list(
+                        entry.get("supplier_descriptions") or row.supplier_descriptions
+                    )
+                    row.notable_examples = list(
+                        entry.get("notable_examples") or row.notable_examples
+                    )
+                    row.proposed_by = str(entry.get("proposed_by") or row.proposed_by)
+            session.commit()
+        return written
+
+    def sub_categories(self, theme_key: str) -> list[dict[str, Any]]:
+        with self._sessions() as session:
+            rows = (
+                session.execute(
+                    select(SubCategoryRow)
+                    .where(SubCategoryRow.theme_key == theme_key)
+                    .order_by(SubCategoryRow.tier, SubCategoryRow.label)
+                )
+                .scalars()
+                .all()
+            )
+            return [_sub_dict(r) for r in rows]
+
+    def mark_searched(self, sub_category_id: int, outcome: str) -> bool:
+        """Record that a sub-category was searched, and what the search did.
+
+        Written whatever the outcome, including when the provider was unreachable. "Searched
+        and found nothing" and "never searched" look identical on a screen and mean opposite
+        things, and only this row can tell them apart.
+        """
+        with self._sessions() as session:
+            row = session.get(SubCategoryRow, sub_category_id)
+            if row is None:
+                return False
+            row.searched_at = now_utc()
+            row.search_outcome = outcome
+            session.commit()
+            return True
+
+    def record_proposals(self, theme_key: str, tier: int, validated: list) -> int:
+        """Write every proposal, **including the ones the platform refused**.
+
+        The refusals are the point. A name that resolved to nothing is kept as `not_found` and
+        an ambiguous one as `ambiguous`, so the record shows what was suggested and what was
+        declined. Storing only successes would leave no trace that the refusals happened, and
+        the refusals are the safety property.
+        """
+        written = 0
+        with self._sessions() as session:
+            for row in validated:
+                payload = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+                company = str(payload.get("company") or "").strip()
+                sub_category = str(payload.get("sub_category") or "").strip()
+                if not company or not sub_category:
+                    continue
+                exists = session.execute(
+                    select(ProposalRow.id).where(
+                        ProposalRow.theme_key == theme_key,
+                        ProposalRow.tier == tier,
+                        ProposalRow.sub_category == sub_category,
+                        ProposalRow.company == company,
+                    )
+                ).first()
+                if exists:
+                    continue
+                session.add(
+                    ProposalRow(
+                        theme_key=theme_key,
+                        tier=tier,
+                        sub_category=sub_category,
+                        company=company,
+                        rationale=payload.get("rationale") or None,
+                        sources=list(payload.get("sources") or []),
+                        proposed_by=str(payload.get("proposed_by") or ""),
+                        outcome=str(payload.get("outcome") or "not_found"),
+                        symbol=payload.get("symbol"),
+                        matched_name=payload.get("matched_name"),
+                        matched=list(payload.get("matched") or []),
+                        reason=payload.get("reason"),
+                    )
+                )
+                written += 1
+            session.commit()
+        return written
+
+    def proposals(self, theme_key: str) -> list[dict[str, Any]]:
+        with self._sessions() as session:
+            rows = (
+                session.execute(
+                    select(ProposalRow)
+                    .where(ProposalRow.theme_key == theme_key)
+                    .order_by(ProposalRow.tier, ProposalRow.sub_category, ProposalRow.company)
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                {
+                    "id": r.id,
+                    "theme_key": r.theme_key,
+                    "tier": r.tier,
+                    "sub_category": r.sub_category,
+                    "company": r.company,
+                    "rationale": r.rationale,
+                    "sources": list(r.sources or []),
+                    "proposed_by": r.proposed_by,
+                    "outcome": r.outcome,
+                    "symbol": r.symbol,
+                    "matched_name": r.matched_name,
+                    "matched": list(r.matched or []),
+                    "reason": r.reason,
+                }
+                for r in rows
+            ]
+
+
+def _sub_dict(row) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "theme_key": row.theme_key,
+        "tier": row.tier,
+        "tier_label": row.tier_label,
+        "label": row.label,
+        "reasoning": row.reasoning,
+        "supplier_descriptions": list(row.supplier_descriptions or []),
+        "notable_examples": list(row.notable_examples or []),
+        "proposed_by": row.proposed_by,
+        # Null means never searched. Distinct from searched and empty, deliberately.
+        "searched": row.searched_at is not None,
+        "searched_at": row.searched_at.isoformat() if row.searched_at else None,
+        "search_outcome": row.search_outcome,
+    }
 
 
 def _link_dict(row) -> dict[str, Any]:
