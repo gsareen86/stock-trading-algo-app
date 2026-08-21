@@ -47,23 +47,26 @@ INPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
+#: **Only the positives.** Asked to judge every headline the model returned one row for four
+#: inputs — it reports what it found rather than what it rejected, and a schema demanding a
+#: verdict per headline just produced silent omissions. Asking for the ones that qualify is
+#: the shape it answers in, and the ones it leaves out are the ones it rejected.
 MODEL_SCHEMA = {
     "type": "object",
     "properties": {
-        "results": {
+        "policies": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "index": {"type": "integer"},
-                    "is_policy": {"type": "boolean"},
                     "subject": {"type": "string"},
                 },
-                "required": ["index", "is_policy", "subject"],
+                "required": ["index", "subject"],
             },
         }
     },
-    "required": ["results"],
+    "required": ["policies"],
 }
 
 ITEM_SCHEMA = item_schema(
@@ -88,26 +91,27 @@ OUTPUT_SCHEMA = items_output_schema(
     },
 )
 
-PROMPT = """You are sorting news headlines into government action and everything else.
+PROMPT = """You are finding government action in a list of news headlines.
 
 Headlines:
 {headlines}
 
-For each, say whether it reports a decision, scheme, incentive, regulation, budget allocation \
-or tender by government — as opposed to a company's own results, deals or share price.
+List **every** headline that reports a decision, scheme, incentive, regulation, budget
+allocation or tender by government. Leave out everything else.
 
-For each give:
+For each one give:
 - index: the number shown
-- is_policy: true or false
-- subject: if policy, 3-6 words naming the industry or activity it affects; otherwise ""
+- subject: 3-6 words naming the industry or activity it affects
 
 Rules:
-- A company story that merely mentions government is not policy.
-- A policy story is still policy when no scheme is named.
+- Include every qualifying headline, not a sample. Several may qualify.
+- A company's own results, deals or share price is not government action, even when it
+  mentions government.
+- A policy story qualifies whether or not a scheme is named.
 - Judge the government action, not whether it is good news.
 
 Reply with JSON only:
-{{"results": [{{"index": 0, "is_policy": true, "subject": "..."}}]}}"""
+{{"policies": [{{"index": 0, "subject": "..."}}]}}"""
 
 
 def handle(arguments: dict, context: ToolContext) -> dict:
@@ -143,14 +147,12 @@ def handle(arguments: dict, context: ToolContext) -> dict:
             failures += 1
             continue
 
-        results, clean = items_from(raw, "results", "index")
+        results, clean = items_from(raw, "policies", "index")
         if not results and not clean:
             failures += 1
             continue
 
         for result in results:
-            if not result.get("is_policy"):
-                continue
             index = result.get("index")
             if not isinstance(index, int) or not 0 <= index < len(batch):
                 # An index nobody offered is the model inventing a headline. Dropped.

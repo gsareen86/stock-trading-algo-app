@@ -23,6 +23,7 @@ class TestSkillsEndpoint:
             "theme_merge",
             "policy_classify",
             "tier_match",
+            "transcript_summary",
         }
         assert body["count"] == len(names)
         for tool in body["tools"]:

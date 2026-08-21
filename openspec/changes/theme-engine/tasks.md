@@ -169,8 +169,22 @@ rate limiter are all in place.
       took eleven seconds scraping documents once assembly existed; the runner is cleared
       explicitly now
 
+## Label quality and summaries
+- [x] Quality gate on concept labels — rejects a year or quarter, a company's own affairs, a
+      single generic word, and labels of generic words only. A bad label is worse than a
+      missing one: it becomes a theme of its own, survives merging, and clutters every count
+- [x] `transcript_summary` — five analyst headings, one model call each
+- [x] Policy classification reshaped to ask for the qualifying headlines rather than a verdict
+      per headline, which is the shape the model answers in
+
 ## Still open
-- [ ] Label quality: a live run produced "manufacturinger distribution growth" and "demand in
-      2024" beside good concepts. Worth tuning against real output rather than guessing
-- [ ] Policy classification returns prose against the live model more often than not
+- [ ] **Summary quality needs a larger model.** The five headings, the "not discussed" rule and
+      the structure all work; what a 12B produces under them is thin — "Not discussed" for
+      headings the transcript plainly covers. Reading and synthesising a long document is a
+      harder job than the classification tasks it handles well. Per-task routing is exactly the
+      lever: `LLM_ROUTE__TRANSCRIPT_SUMMARY` to a frontier model, at a cost per call
+- [ ] Policy classification under-reports on a 12B — it found one of three qualifying
+      headlines. Costs little by design, since policy corroborates a theme and can never create
+      one, but it is under-reporting rather than working
 - [ ] `filings_scan` as a third source in the assembled gatherer
+- [ ] `theme-research-agent` — tier decomposition as augmentation

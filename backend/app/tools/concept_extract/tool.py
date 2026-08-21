@@ -20,6 +20,7 @@ is `theme_merge`'s job; this tool's only duty is to report faithfully what a doc
 from __future__ import annotations
 
 import logging
+import re
 
 from app.core.clock import now_utc
 from app.llm.parsing import items_from
@@ -93,8 +94,7 @@ MODEL_SCHEMA = {
     "required": ["concepts"],
 }
 
-PROMPT = """You are reading a company's own disclosure and reporting what commercial themes it \
-describes.
+PROMPT = """You are reading a company's disclosure and naming the industry themes it describes.
 
 Company: {symbol}
 Period: {period}
@@ -104,22 +104,92 @@ Document:
 {text}
 \"\"\"
 
-List up to {limit} themes this document describes — the commercial or industrial developments \
-driving the business, such as demand shifts, capacity additions, order books, regulation or \
-new end markets.
+List up to {limit} themes — commercial or industrial developments that would still make sense
+if another company in the same industry described them.
 
 For each:
-- label: 2-5 words naming the theme in ordinary industry language
-- excerpt: a short quotation from the document that supports it
+- label: 2-5 words, lower case, naming the development in ordinary industry language
+- excerpt: a short quotation from the document supporting it
+
+These ARE themes:
+  data centre demand · grid capacity expansion · import substitution · fleet electrification
+
+These are NOT themes and must not be returned:
+- this company's own results or outlook: "strong quarter", "margin improvement",
+  "order book growth", "demand in 2024"
+- this company's internal affairs: "management transition", "new ceo", "one company strategy"
+- anything naming a year or a quarter
+- generic business words alone: "growth", "expansion", "performance"
 
 Rules:
-- Report only what the document says. Do not add themes from your own knowledge.
-- Name the theme, not the company. "data centre demand", not "strong quarter".
-- Skip routine financial commentary (margins, tax, currency) unless it is the theme itself.
-- If the document describes no clear theme, return an empty list.
+- Report only what the document says. Add nothing from your own knowledge.
+- Name the development, not the company and not the quarter.
+- If the document describes no industry theme, return an empty list. That is a valid answer.
 
 Reply with JSON only:
 {{"concepts": [{{"label": "...", "excerpt": "..."}}]}}"""
+
+
+#: Labels that describe a company rather than an industry, or a moment rather than a
+#: development. The prompt asks for none of these and a 12B model produced them anyway --
+#: "manufacturinger distribution growth", "demand in 2024" and "high performance for 2024" all
+#: came out of one live run. A bad label is worse than a missing one: it becomes a theme of its
+#: own, survives merging, and clutters every count downstream.
+_YEAR = re.compile(r"\b(19|20)\d{2}\b|\bq[1-4]\b|\bfy\s?\d")
+
+_COMPANY_SHAPED = (
+    "management transition",
+    "leadership",
+    "new ceo",
+    "our strategy",
+    "company strategy",
+    "quarterly performance",
+    "strong quarter",
+    "margin improvement",
+    "cost optimisation",
+    "cost optimization",
+    "guidance",
+)
+
+#: Words that say nothing on their own. A label made only of these names no development.
+_GENERIC = {
+    "growth",
+    "demand",
+    "expansion",
+    "performance",
+    "revenue",
+    "margins",
+    "outlook",
+    "strategy",
+    "investment",
+    "opportunity",
+    "transition",
+    "momentum",
+    "recovery",
+    "strong",
+    "higher",
+    "increase",
+}
+
+
+def is_theme_shaped(label: str) -> tuple[bool, str | None]:
+    """Whether a label names an industry development. Returns ``(ok, why_not)``."""
+    cleaned = " ".join(label.lower().split())
+    if len(cleaned) < 6:
+        return False, "too short to name a development"
+    if _YEAR.search(cleaned):
+        return False, "names a year or quarter rather than a development"
+
+    words = cleaned.split()
+    if len(words) < 2:
+        return False, "a single word does not name a development"
+    if len(words) > 6:
+        return False, "too long to be a theme label"
+    if all(word in _GENERIC for word in words):
+        return False, "generic business words only"
+    if any(phrase in cleaned for phrase in _COMPANY_SHAPED):
+        return False, "describes this company rather than its industry"
+    return True, None
 
 
 def handle(arguments: dict, context: ToolContext) -> dict:
@@ -150,11 +220,14 @@ def handle(arguments: dict, context: ToolContext) -> dict:
 
     concepts, clean = items_from(raw, "concepts", "label")
     items = []
+    rejected: list[str] = []
     for concept in concepts[:MAX_CONCEPTS]:
         if not isinstance(concept, dict):
             continue
         label = str(concept.get("label") or "").strip()
-        if len(label) < 3:
+        shaped, why = is_theme_shaped(label)
+        if not shaped:
+            rejected.append(f"{label} ({why})")
             continue
         items.append(
             {
@@ -181,7 +254,13 @@ def handle(arguments: dict, context: ToolContext) -> dict:
         "symbol": symbol,
         "model": model,
         "available": True,
-        "reason": None if items else "document described no clear theme",
+        "reason": (
+            None
+            if items
+            else f"no theme-shaped concept; {len(rejected)} rejected"
+            if rejected
+            else "document described no clear theme"
+        ),
         "items": items,
     }
 

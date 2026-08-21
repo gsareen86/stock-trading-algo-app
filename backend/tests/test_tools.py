@@ -96,6 +96,7 @@ class TestDiscovery:
             "theme_chain",
             "theme_merge",
             "tier_match",
+            "transcript_summary",
         ]
 
     def test_every_summary_says_when_to_use_it(self, registry: ToolRegistry) -> None:
