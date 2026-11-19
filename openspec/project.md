@@ -60,8 +60,10 @@ backend/app/
   domain/       pure models: Instrument, Candle, Verdict, Evidence, GateResult, Position
   data/         prices (+ cache), universe, NSE calendar, surveillance lists
   screening/    eligibility filters — turnover floors, surveillance, traceable exclusions
+  discovery/    Nifty 750 scanner, 14-sector RRG, movers, quality facets, single-strategy ranking, briefing
+  themes/       secular theme discovery, assembly & research persistence
   tools/        manifest-driven capabilities, callable by agents
-  strategies/   4 independent strategies, each → Verdict
+  strategies/   4 independent strategies, each → Verdict (+ deterministic Plan)
   agents/       LangGraph nodes + A2A adapters
   llm/          LiteLLM gateway, routing, Langfuse wiring
   engine/       cycle orchestration
@@ -229,8 +231,9 @@ hosted-model number; a request still running after it is hung, not slow.
 slower and cost nothing to wait for. Found the first time a 12B model ran on real hardware,
 where every narrative call timed out and the feature looked broken rather than slow.
 
-`run-local.ps1` is the supported way to start the stack locally — the routing and timeout
-settings are environment variables, so a server started any other way loses them silently.
+`run-local.sh` (Linux/macOS) and `run-local.ps1` (Windows) are the supported ways to start the
+stack locally against `.env` (see `.env.example`) — the routing and timeout settings are
+environment variables, so a server started any other way loses them silently.
 
 ## Surfaces
 
@@ -344,12 +347,15 @@ and do not "fix" it opportunistically. If those tables are ever retired, the gua
 
 | Surface | Answers |
 |---|---|
-| **Today** | The insights feed — new verdicts, exits, alerts, agent-run summary |
-| **Ideas** | Candidates with all four verdicts side by side |
-| **Positions** | What I own across both books, thesis + live exit state |
-| **Stock** | One name: chart, VCP structure, quality, research, four verdicts |
-| **Performance** | By book, by strategy, vs benchmark |
-| **Engine** | Config, run history, agent traces, LLM cost, backtest lab |
+| **Today** (`/`) | Morning briefing (held exits, WATCH → BUY flips, top fresh BUYs), insights feed, regime |
+| **Ideas** (`/ideas`) | Nifty 750 discovery funnel, interactive 14-sector SVG RRG, movers, single-strategy ranked candidates |
+| **Stock** (`/stock`) | Instrument deep-dive: `lightweight-charts` OHLCV + DMA + Plan lines, quality, research & AI Copilot, four verdicts |
+| **Themes** (`/themes`) | Secular themes, catalyst runs, entity resolution & participant graph |
+| **Watchlist** (`/watchlist`) | Tracked ideas with book intent, distance-to-pivot & flip alerts |
+| **Positions** (`/positions`) | Both paper books (`swing`, `longterm`), structural health score & slide-over trade ticket |
+| **Performance** (`/performance`) | Analytics by book and by strategy vs benchmark (charges disclosed absent) |
+| **Zerodha** (`/broker`) | Read-only Kite MCP holdings & live verdict overlay |
+| **Engine** (`/engine`) | Config, scheduled/on-demand runs with live SSE progress, agent traces, LLM cost, backtest lab |
 
 Insights are delivered **in-app only** — no email, no push, no Telegram.
 

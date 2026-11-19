@@ -4,13 +4,12 @@ The six surfaces, how they are styled, and how they consume the backend.
 
 Introduced by `bootstrap-platform-skeleton` (see `openspec/archive/`).
 
-### Requirement: Six surfaces organised by intent
-The web application MUST expose exactly six top-level surfaces — Today, Ideas, Positions,
-Stock, Performance and Engine — each reachable from persistent navigation.
+### Requirement: Daily-driver surfaces organised by intent
+The web application MUST expose persistent navigation across its daily-driver surfaces — **Today** (`/`), **Ideas** (`/ideas`), **Stock** (`/stock`), **Themes** (`/themes`), **Watchlist** (`/watchlist`), **Positions** (`/positions`), **Performance** (`/performance`), **Zerodha** (`/broker`), and **Engine** (`/engine`) — plus a global `⌘K` symbol lookup palette.
 
 #### Scenario: Every surface is routable
 - GIVEN the web application is running
-- WHEN each of `/`, `/ideas`, `/positions`, `/stock`, `/performance`, `/engine` is visited
+- WHEN each of `/`, `/ideas`, `/stock`, `/themes`, `/watchlist`, `/positions`, `/performance`, `/broker`, `/engine` is visited
 - THEN the page renders without error
 - AND the navigation marks the visited surface as active
 
@@ -220,3 +219,22 @@ the platform's existing endpoints.
 - GIVEN an action the backend refuses
 - WHEN it is attempted
 - THEN the reason is displayed
+
+### Requirement: Long-running agent and scan runs display counted-work progress
+Surfaces triggering scans, theme runs, or agent cycles via SSE MUST render a `LiveProgressCard` showing step milestones, completed/total counters where available, and elapsed seconds — and MUST NOT display a fabricated countdown or synthetic ETA.
+
+#### Scenario: Streaming progress updates without fake ETA
+- GIVEN a user launches a discovery scan from `/ideas` or `/engine`
+- WHEN SSE progress events arrive
+- THEN the stepper displays current phase, count (`completed / total`), and `elapsed_seconds`
+- AND completes cleanly without refreshing the whole browser tab
+
+### Requirement: Single-stock workstation visualizes price structure and strategy plans
+The Stock surface (`/stock`) MUST render an interactive OHLCV candlestick + moving-average (`20 EMA`, `50/150/200 SMA`) chart with deterministic Strategy Plan horizontal Entry / Stop / Target overlays, without averaging or blending strategies.
+
+#### Scenario: Selecting a strategy plan overlays its Entry/Stop/Target lines
+- GIVEN a stock with deterministic `Plan` levels
+- WHEN a strategy plan is selected on `/stock`
+- THEN horizontal Entry, Stop, and Target reference lines appear on the candlestick chart
+- AND the side-by-side four strategy `VerdictCard` grid continues receiving one `Verdict` per card
+

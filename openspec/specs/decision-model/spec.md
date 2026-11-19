@@ -155,3 +155,18 @@ from its own contents rather than from a fixed list of allowed constants.
 - GIVEN a verdict with a conviction
 - WHEN its citable numbers are read
 - THEN the conviction appears in the set
+
+### Requirement: Actionable verdicts carry a deterministic Plan
+A `Verdict` with stance `BUY` or `WATCH` from a strategy that defines setup levels MUST carry a deterministic `Plan` (`entry`, `entry_kind`, `stop`, `target`, `risk_reward`, `expected_horizon`, `note`, `evidence_ids`), or `null` when no valid structural level exists — never an arbitrary percentage guess.
+
+#### Scenario: Plan cites verdict evidence and enforces long stop below entry
+- GIVEN a strategy producing a `BUY` verdict with base high/low evidence
+- WHEN its `Plan` is constructed
+- THEN `stop` is strictly below `entry` and `target` is strictly above `entry`
+- AND `evidence_ids` reference rows present on the same `Verdict`
+
+#### Scenario: AVOID verdict carries no active trade plan
+- GIVEN a verdict with stance `AVOID`
+- WHEN it is constructed
+- THEN `plan` is `null`
+

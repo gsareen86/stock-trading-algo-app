@@ -15,19 +15,20 @@ behavior that hasn't shipped. If you need to change what the system does, that g
 | `market-data` | Price history, universe, quarterly fundamentals and sector indices |
 | `market-calendar` | NSE trading days and session hours, with staleness made visible |
 | `decision-model` | Verdicts, evidence and gates — independence and traceability enforced |
-| `strategies` | Strategy discovery and all four implementations, each with its own conviction |
+| `strategies` | Strategy discovery and all four implementations, each with its own conviction and deterministic `Plan` |
 | `tool-registry` | Declared, schema-validated capabilities returning evidence-shaped items |
 | `verdict-narratives` | Generated prose, and the guard that keeps every figure in it traceable |
 | `screening` | Eligibility filters, turnover floors, surveillance and traceable exclusions |
-| `agent-graph` | The cycle, research bounds, MCP tools and the read-only rule |
+| `discovery` | Nifty 750 universe, 14-sector RRG, single-strategy ranking, quality facets, watchlist, morning briefing, SSE progress |
+| `agent-graph` | The cycle, research bounds, MCP tools, dynamic IdeaScout/conversation agents, and the read-only rule |
 | `books-ledger` | One ledger parameterised by book, the execution boundary, gross analytics |
 | `risk-management` | Portfolio gates and sizing — vetoes acting, never alters a verdict |
 | `insights-feed` | What reaches the reader: portfolio consequences, deduped, in-app only |
 | `portfolio-health` | Structural scoring of the book, and deterministic next steps |
 | `authentication` | Password login, revocable JWT sessions, protected-by-default routing |
 | `backtesting` | Point-in-time replay: no lookahead, fills after the bar, biases declared |
-| `platform-api` | `/health`, `/llm/usage`, `/llm/calls`, `/tools`, `/strategies`, `/verdicts`, `/cycles/run`, `/screen`, `/universe`, `/books/{book}/*`, `/insights`, `/auth/*`, `/backtest/run` |
-| `web-shell` | The six surfaces, evidence made visible, and no blending in the UI |
+| `platform-api` | `/health`, `/llm/*`, `/tools`, `/strategies`, `/verdicts`, `/discovery/*`, `/watchlist/*`, `/stocks/*`, `/themes/*`, `/cycles/*`, `/screen`, `/universe*`, `/books/{book}/*`, `/insights/*`, `/research/ask`, `/auth/*`, `/backtest/run` |
+| `web-shell` | Daily-driver interactive UI surfaces, `⌘K` lookup, `lightweight-charts` & SVG RRG, `LiveProgressCard`, no verdict blending |
 
 These carry full Requirement+Scenario depth because they describe code that was just written;
 later capabilities may enter at `Status: baseline` depth and be promoted the first time a real
@@ -35,4 +36,4 @@ change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
 `market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`,
-`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`, `portfolio-health-and-actions`, `authentication`, `backtesting`, `gui-surfaces`.
+`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`, `portfolio-health-and-actions`, `authentication`, `backtesting`, `gui-surfaces`, `daily-driver-platform`.

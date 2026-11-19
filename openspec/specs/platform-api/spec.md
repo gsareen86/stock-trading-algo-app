@@ -536,3 +536,36 @@ results together with the run's stated biases.
 - GIVEN no credentials
 - WHEN a replay is requested
 - THEN it is rejected
+
+### Requirement: Discovery endpoints expose sector rotation, movers, and Nifty 750 scans
+The API MUST expose `GET /discovery/sectors`, `GET /discovery/movers`, `POST /discovery/scan`, `POST /discovery/scan/stream`, `GET /discovery/runs`, `GET /discovery/runs/latest`, and `GET /discovery/runs/{run_id}`.
+
+#### Scenario: Latest scan candidates support facet and strategy filtering
+- GIVEN a completed discovery scan
+- WHEN `GET /discovery/runs/latest` is called with strategy, stance, sector, or quality facet filters
+- THEN candidates are filtered cleanly and ordered strictly by `ranked_by` single-strategy conviction
+
+### Requirement: Single-stock workstation endpoints serve charts, quality, and research
+The API MUST expose `GET /universe/symbols`, `GET /stocks/{symbol}/chart`, `GET /stocks/{symbol}/quality`, `GET /stocks/{symbol}/research`, and `POST /research/ask`.
+
+#### Scenario: Stock chart returns OHLCV bars and moving averages
+- GIVEN a valid NSE symbol and range (`3M`, `6M`, `1Y`, `3Y`)
+- WHEN `GET /stocks/{symbol}/chart` is requested
+- THEN OHLCV candles and `ema20`, `sma50`, `sma150`, `sma200` series are returned
+
+### Requirement: Watchlist and morning briefing endpoints support daily review
+The API MUST expose `GET/POST /watchlist`, `PATCH/DELETE /watchlist/{symbol}`, and `GET /insights/briefing`.
+
+#### Scenario: Watchlist entry stores book intent and notes
+- GIVEN a valid NSE symbol
+- WHEN `POST /watchlist` is called with `book_intent`
+- THEN the symbol is persisted and returned with live price and distance-to-entry metrics
+
+### Requirement: Theme discovery, runs, and SSE progress streaming are exposed
+The API MUST expose `/themes`, `/themes/{theme_key}`, `/themes/runs`, `/themes/discover`, `/themes/run`, `/themes/run/stream`, `/themes/links/{link_id}/reject`, and `POST /cycles/run/stream`.
+
+#### Scenario: SSE endpoints stream counted-work progress
+- GIVEN `POST /discovery/scan/stream`, `POST /cycles/run/stream`, or `POST /themes/run/stream`
+- WHEN a run is triggered
+- THEN the server streams `progress` events followed by `complete` or `error`
+
