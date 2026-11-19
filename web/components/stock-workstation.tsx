@@ -59,12 +59,20 @@ export function StockLookupHero({
   const matches = useMemo(() => {
     const q = query.trim().toUpperCase();
     if (!q) return [];
-    return universe
-      .filter(
-        (u) =>
-          u.symbol.toUpperCase().includes(q) || (u.name ?? "").toUpperCase().includes(q),
-      )
-      .slice(0, 8);
+    const exactOrPrefix: UniverseSymbol[] = [];
+    const contains: UniverseSymbol[] = [];
+    for (const u of universe) {
+      const sym = u.symbol.toUpperCase();
+      const name = (u.name ?? "").toUpperCase();
+      if (sym === q) {
+        exactOrPrefix.unshift(u);
+      } else if (sym.startsWith(q)) {
+        exactOrPrefix.push(u);
+      } else if (sym.includes(q) || name.includes(q)) {
+        contains.push(u);
+      }
+    }
+    return [...exactOrPrefix, ...contains].slice(0, 8);
   }, [query, universe]);
 
   function openSymbol(sym: string) {
@@ -88,7 +96,10 @@ export function StockLookupHero({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (query.trim()) openSymbol(query);
+            const q = query.trim().toUpperCase();
+            if (!q) return;
+            const exact = universe.find((u) => u.symbol.toUpperCase() === q);
+            openSymbol(exact?.symbol ?? matches[0]?.symbol ?? q);
           }}
           className="mx-auto mt-6 flex max-w-md gap-2"
         >
@@ -103,7 +114,7 @@ export function StockLookupHero({
           <button
             type="submit"
             disabled={!query.trim()}
-            className="shrink-0 rounded-token bg-accent px-4 py-2 text-sm font-semibold text-surface-raised disabled:opacity-40"
+            className="shrink-0 cursor-pointer rounded-token bg-accent px-4 py-2 text-sm font-semibold text-surface-raised disabled:opacity-40"
           >
             Open →
           </button>
@@ -112,18 +123,18 @@ export function StockLookupHero({
         {matches.length > 0 ? (
           <div className="mx-auto mt-2 max-w-md overflow-hidden rounded-token-lg border border-border-subtle bg-surface-raised text-left shadow-md">
             {matches.map((m) => (
-              <button
+              <Link
                 key={m.symbol}
-                type="button"
-                onClick={() => openSymbol(m.symbol)}
-                className="flex w-full items-center justify-between border-b border-border-subtle px-3.5 py-2 text-xs last:border-b-0 hover:bg-surface-sunken"
+                href={`/stock?symbol=${encodeURIComponent(m.symbol.toUpperCase())}`}
+                onClick={() => rememberSymbol(m.symbol)}
+                className="flex w-full cursor-pointer items-center justify-between border-b border-border-subtle px-3.5 py-2 text-xs last:border-b-0 hover:bg-surface-sunken"
               >
                 <span>
                   <strong className="font-mono text-text-primary">{m.symbol}</strong>
                   <span className="ml-2 text-text-secondary">{m.name}</span>
                 </span>
                 {m.sector ? <span className="text-text-muted">{m.sector}</span> : null}
-              </button>
+              </Link>
             ))}
           </div>
         ) : null}

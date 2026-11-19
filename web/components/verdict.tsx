@@ -126,19 +126,25 @@ export function VerdictCard({
             <div>
               <span className="block text-[11px] text-text-muted">Entry</span>
               <span className="tabular-nums font-mono font-semibold text-text-primary">
-                ₹{plan.entry.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                {typeof plan.entry === "number"
+                  ? `₹${plan.entry.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+                  : "—"}
               </span>
             </div>
             <div>
               <span className="block text-[11px] text-text-muted">Stop</span>
               <span className="tabular-nums font-mono font-semibold text-stance-avoid">
-                ₹{plan.stop.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                {typeof plan.stop === "number"
+                  ? `₹${plan.stop.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+                  : "—"}
               </span>
             </div>
             <div>
               <span className="block text-[11px] text-text-muted">Target</span>
               <span className="tabular-nums font-mono font-semibold text-stance-buy">
-                ₹{plan.target.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                {typeof plan.target === "number"
+                  ? `₹${plan.target.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+                  : "Trailing"}
               </span>
             </div>
             <div>

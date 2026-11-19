@@ -180,14 +180,16 @@ export function StockChart({
         axisLabelVisible: true,
         title: `Stop ₹${activePlan.stop}`,
       });
-      candleSeries.createPriceLine({
-        price: activePlan.target,
-        color: buyTone,
-        lineWidth: 2,
-        lineStyle: LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: `Target ₹${activePlan.target}`,
-      });
+      if (typeof activePlan.target === "number") {
+        candleSeries.createPriceLine({
+          price: activePlan.target,
+          color: buyTone,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: `Target ₹${activePlan.target}`,
+        });
+      }
     }
 
     chart.timeScale().fitContent();

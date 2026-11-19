@@ -19,7 +19,8 @@ export type TradeTicketProps = {
   onSuccess?: () => void;
 };
 
-function money(val: number): string {
+function money(val: number | null | undefined): string {
+  if (val === null || val === undefined) return "Trailing";
   return `₹${val.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 

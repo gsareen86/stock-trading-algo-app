@@ -187,7 +187,7 @@ export type Gate = {
 export type Plan = {
   entry: number;
   stop: number;
-  target: number;
+  target: number | null;
   risk_reward: number | null;
   entry_kind: "pivot" | "breakout" | "pullback" | "close" | string;
   valid_until?: string | null;
