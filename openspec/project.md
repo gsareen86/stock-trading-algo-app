@@ -60,7 +60,7 @@ backend/app/
   domain/       pure models: Instrument, Candle, Verdict, Evidence, GateResult, Position
   data/         prices (+ cache), universe, NSE calendar, surveillance lists
   screening/    eligibility filters — turnover floors, surveillance, traceable exclusions
-  discovery/    Nifty 750 scanner, 14-sector RRG, movers, quality facets, single-strategy ranking, briefing
+  discovery/    Nifty 750 scanner, NSE sector RRG, movers, quality facets, single-strategy ranking, briefing
   themes/       secular theme discovery, assembly & research persistence
   tools/        manifest-driven capabilities, callable by agents
   strategies/   4 independent strategies, each → Verdict (+ deterministic Plan)
@@ -361,7 +361,7 @@ and do not "fix" it opportunistically. If those tables are ever retired, the gua
 | Surface | Answers |
 |---|---|
 | **Today** (`/`) | Morning briefing (held exits, WATCH → BUY flips, top fresh BUYs), insights feed, regime |
-| **Ideas** (`/ideas`) | Nifty 750 discovery funnel, interactive 14-sector SVG RRG, movers, single-strategy ranked candidates |
+| **Ideas** (`/ideas`) | Nifty 750 discovery funnel, interactive NSE sector SVG RRG, movers, single-strategy ranked candidates |
 | **Stock** (`/stock`) | Instrument deep-dive: `lightweight-charts` OHLCV + DMA + Plan lines, quality, research & AI Copilot, four verdicts |
 | **Themes** (`/themes`) | Secular themes, catalyst runs, entity resolution & participant graph |
 | **Watchlist** (`/watchlist`) | Tracked ideas with book intent, distance-to-pivot & flip alerts |

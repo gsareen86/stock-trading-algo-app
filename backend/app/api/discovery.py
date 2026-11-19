@@ -1,4 +1,4 @@
-"""Discovery Funnel API: 14-sector RRG rotation, notable movers, Nifty 750 scans & filters."""
+"""Discovery Funnel API: NSE sector RRG rotation, notable movers, Nifty 750 scans & filters."""
 
 from __future__ import annotations
 
@@ -172,7 +172,7 @@ async def list_sectors(
     session_factory: Annotated[Any, Depends(get_session_factory)],
     benchmark: Annotated[str, Query(pattern=r"^\^(CRSLDX|NSEI)$")] = BENCHMARK_NIFTY500,
 ) -> dict[str, Any]:
-    """Compute (or return cached) 14-sector NSE RRG quadrants against benchmark."""
+    """Compute (or return cached) NSE sector NSE RRG quadrants against benchmark."""
     import asyncio
 
     from app.data.sectors import all_sector_indices

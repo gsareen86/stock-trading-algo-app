@@ -68,5 +68,24 @@ def resolve(industry: str | None) -> SectorIndex | None:
     return None
 
 
+@lru_cache(maxsize=1)
+def symbol_overrides() -> dict[str, tuple[str, str]]:
+    """Symbol -> (sector key, reason) for names whose business has a closer index than their
+    NSE industry's default — a BPO listed under "Services" belongs with IT, not with ports."""
+    payload = json.loads(SECTORS_FILE.read_text("utf-8"))
+    raw = payload.get("symbol_overrides", {})
+    return {
+        symbol: (entry["sector"], entry.get("reason", ""))
+        for symbol, entry in raw.items()
+        if not symbol.startswith("_") and isinstance(entry, dict) and entry.get("sector")
+    }
+
+
 def for_instrument(instrument: Instrument) -> SectorIndex | None:
+    override = symbol_overrides().get(instrument.symbol)
+    if override is not None:
+        indices, _ = _tables()
+        ticker = indices.get(override[0])
+        if ticker:
+            return SectorIndex(key=override[0], ticker=ticker)
     return resolve(instrument.sector)

@@ -1,6 +1,7 @@
 {
   "_comment": "NSE sector indices, and the industry strings that map onto them. Three vocabularies feed this: the NSE constituent CSV's 'Industry' column, yfinance's 'sector' string, and NSE's own index name. Industry terms are matched case-insensitively by substring, longest key first, so 'financial services' beats 'financial'. Adding a term is a data change, not a code change.",
-  "_verification": "Every index here was checked against NSE's live /api/allIndices list AND against 400 days of provider history before being added; `market-data` requires that an index without usable history is absent rather than present and unusable. NSE publishes 21 sectoral indices; these 14 are the ones with a working history ticker. NIFTY HEALTHCARE INDEX, NIFTY OIL & GAS, NIFTY CONSUMER DURABLES, NIFTY CHEMICALS and NIFTY CEMENT are published as live levels but have no provider ticker returning more than one bar, so they are readable in the index panel and cannot carry a relative-strength measurement. Re-run the verification before adding one.",
+  "_verification": "Every index here was checked against NSE's live /api/allIndices list AND against 400 days of provider history before being added; `market-data` requires that an index without usable history is absent rather than present and unusable. NSE publishes 21 sectoral indices; these 14 are the ones with a working history ticker. NIFTY HEALTHCARE INDEX, NIFTY OIL & GAS, NIFTY CONSUMER DURABLES, NIFTY CHEMICALS and NIFTY CEMENT are published as live levels but have no provider ticker returning more than one bar, so they are readable in the index panel and cannot carry a relative-strength measurement. Re-run the verification before adding one: `python -m app.data.verify_sector_indices`. NIFTY COMMODITIES (thematic, ^CNXCMDT) was added as the home of NSE's Commodities macro-sector — Chemicals (incl. fertilisers and agrochemicals) and Forest Materials — because NIFTY CHEMICALS has no usable history; its ticker was added without a history check from the environment that wrote it, so run the verification once on a machine that can reach the provider. An index with no history leaves its names exactly as an unrecognised industry does: the sector criterion fails as unavailable.",
+  "_classification": "Industry strings follow NSE's industry classification (12 macro-economic sectors). Chemicals and Forest Materials sit in NSE's Commodities macro-sector, so they map to NIFTY COMMODITIES. Telecommunication maps to NIFTY INFRASTRUCTURE, whose eligible sectors include telecom and of which Bharti Airtel is a top constituent. NSE's Services macro-sector is mostly transport — ports, shipping, airports, aviation, logistics — and also maps to NIFTY INFRASTRUCTURE; the Services and Telecommunication names whose business has a closer index are listed under symbol_overrides with the reason. Diversified (a holding company across unrelated businesses) deliberately maps to nothing: no one sector index describes it.",
 
   "indices": {
     "IT": "^CNXIT",
@@ -16,7 +17,8 @@
     "Realty": "^CNXREALTY",
     "Media": "^CNXMEDIA",
     "Infrastructure": "^CNXINFRA",
-    "Consumption": "^CNXCONSUM"
+    "Consumption": "^CNXCONSUM",
+    "Commodities": "^CNXCMDT"
   },
 
   "nse_names": {
@@ -33,11 +35,15 @@
     "Realty": "NIFTY REALTY",
     "Media": "NIFTY MEDIA",
     "Infrastructure": "NIFTY INFRASTRUCTURE",
-    "Consumption": "NIFTY INDIA CONSUMPTION"
+    "Consumption": "NIFTY INDIA CONSUMPTION",
+    "Commodities": "NIFTY COMMODITIES"
   },
 
   "industry_terms": {
     "information technology": "IT",
+    "it enabled services": "IT",
+    "it - services": "IT",
+    "it services": "IT",
     "consumer technology": "IT",
     "software": "IT",
     "technology": "IT",
@@ -74,6 +80,7 @@
     "oil gas & consumable fuels": "Energy",
     "oil gas": "Energy",
     "power": "Energy",
+    "utilities": "Energy",
     "energy": "Energy",
 
     "real estate": "Realty",
@@ -90,6 +97,29 @@
 
     "consumer services": "Consumption",
     "consumer durables": "Consumption",
-    "textiles": "Consumption"
+    "textiles": "Consumption",
+
+    "fertilizers & agrochemicals": "Commodities",
+    "chemicals & petrochemicals": "Commodities",
+    "forest materials": "Commodities",
+    "chemicals": "Commodities",
+    "paper": "Commodities",
+
+    "telecommunication": "Infrastructure",
+    "telecom": "Infrastructure",
+    "services": "Infrastructure"
+  },
+
+  "symbol_overrides": {
+    "_comment": "Symbol -> sector key, for a name whose business has a closer index than its NSE industry's default. Each entry states why; a name not listed follows its industry.",
+    "FSL": {"sector": "IT", "reason": "BPO / customer-experience outsourcing — IT-enabled services"},
+    "ECLERX": {"sector": "IT", "reason": "KPO and data analytics — IT-enabled services"},
+    "REDINGTON": {"sector": "IT", "reason": "distributor of IT and technology products"},
+    "ROUTE": {"sector": "IT", "reason": "cloud communications software (CPaaS), not a network operator"},
+    "CMSINFO": {"sector": "FinancialServices", "reason": "cash and ATM management for banks"},
+    "WEWORK": {"sector": "Realty", "reason": "flexible office space — commercial real estate"},
+    "IGIL": {"sector": "Consumption", "reason": "diamond and jewellery certification, driven by jewellery demand"},
+    "MMTC": {"sector": "Metal", "reason": "trading of metals, minerals and precious metals"},
+    "MSTCLTD": {"sector": "Metal", "reason": "e-auctions of scrap, coal and minerals"}
   }
 }

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.agents.scout import IdeaScout
 from app.core.clock import now_utc
+from app.data.sectors import all_sector_indices
 from app.domain.financials import CompanyFinancials, Metric, PeriodValue, Shareholding, StatementSeries
 from app.domain.instrument import Instrument
 from app.domain.prices import PriceSeries
@@ -275,7 +276,7 @@ class TestNewToolsAndScout:
         reg = ToolRegistry.discover()
 
         sec = reg.invoke("sector_rotation", {"benchmark": "^CRSLDX"}, ctx)
-        assert sec.ok and len(sec.items) == 14
+        assert sec.ok and len(sec.items) == len(all_sector_indices())
         for item in sec.items:
             assert "stance" not in item and "conviction" not in item
 
@@ -327,7 +328,7 @@ class TestPhase2Apis:
         sectors_res = client.get("/discovery/sectors")
         assert sectors_res.status_code == 200
         sectors_body = sectors_res.json()
-        assert sectors_body["count"] == 14
+        assert sectors_body["count"] == len(all_sector_indices())
 
         movers_res = client.get("/discovery/movers?sector=energy")
         assert movers_res.status_code == 200

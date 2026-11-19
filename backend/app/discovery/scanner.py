@@ -201,7 +201,7 @@ class DiscoveryScanner:
                 if on_progress is not None:
                     on_progress(step, label, completed, total)
 
-            # 0. Batch-prefetch OHLCV prices (universe + 14 sectors + benchmarks) into cache
+            # 0. Batch-prefetch OHLCV prices (universe + sector indices + benchmarks) into cache
             total_universe = len(snapshot.instruments)
             prefetch_fn = getattr(self._prices, "prefetch", None)
             if prefetch_fn is not None:
@@ -240,14 +240,14 @@ class DiscoveryScanner:
                 total_universe,
             )
 
-            # 2. Compute 14-sector RRG quadrants
-            emit("sectors", "Computing 14-sector RRG rotation", 0, 14)
+            # 2. Compute sector RRG quadrants
+            emit("sectors", "Computing sector RRG rotation", 0, len(all_sector_indices()))
             sector_placements = await asyncio.to_thread(
                 compute_sector_rrg, self._prices, benchmark=benchmark
             )
             emit(
                 "sectors",
-                "Computed 14-sector RRG rotation",
+                "Computed sector RRG rotation",
                 len(sector_placements),
                 len(sector_placements),
             )
