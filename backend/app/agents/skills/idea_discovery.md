@@ -3,7 +3,7 @@
 Follow this disciplined top-down research funnel for Indian listed equities:
 
 1. **Macro & Sector Rotation First (`sector_rotation`):**
-   Inspect the NSE sector NSE RRG quadrant map (`Leading`, `Improving`, `Weakening`, `Lagging`).
+   Inspect the NSE sector RRG quadrant map (`Leading`, `Improving`, `Weakening`, `Lagging`).
    Prioritise sectors rotating from `Lagging -> Improving` or holding `Improving -> Leading` with rising `RS-Momentum`.
 
 2. **Catalyst & Theme Corroboration (`news_research`, `web_search`, `filings_scan`):**

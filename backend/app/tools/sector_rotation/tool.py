@@ -1,4 +1,4 @@
-"""Query the NSE sector NSE Relative Rotation Graph (RRG) quadrant snapshot.
+"""Query the NSE sector Relative Rotation Graph (RRG) quadrant snapshot.
 
 Returns RS-Ratio and RS-Momentum against Nifty 500 (^CRSLDX) or Nifty 50 (^NSEI),
 plus each sector's quadrant (`Leading`, `Improving`, `Weakening`, `Lagging`, or `unplaced`).
