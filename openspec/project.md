@@ -353,7 +353,7 @@ and do not "fix" it opportunistically. If those tables are ever retired, the gua
 | **Themes** (`/themes`) | Secular themes, catalyst runs, entity resolution & participant graph |
 | **Watchlist** (`/watchlist`) | Tracked ideas with book intent, distance-to-pivot & flip alerts |
 | **Positions** (`/positions`) | Both paper books (`swing`, `longterm`), structural health score & slide-over trade ticket |
-| **Performance** (`/performance`) | Analytics by book and by strategy vs benchmark (charges disclosed absent) |
+| **Performance** (`/performance`) | Signal scoreboard — forward returns of every published verdict vs benchmark, per strategy — then analytics by book (charges disclosed absent) |
 | **Zerodha** (`/broker`) | Read-only Kite MCP holdings & live verdict overlay |
 | **Engine** (`/engine`) | Config, scheduled/on-demand runs with live SSE progress, agent traces, LLM cost, backtest lab |
 

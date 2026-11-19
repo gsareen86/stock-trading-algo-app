@@ -286,6 +286,72 @@ export type BookAnalytics = {
   attribution: Record<string, { trades: number; bought: number; sold: number }>;
 };
 
+/** One bucket's distribution at one holding period. Pending signals are counted, never scored. */
+export type ScoreboardHorizonStats = {
+  measured: number;
+  pending: number;
+  mean_return_pct: number | null;
+  median_return_pct: number | null;
+  positive_pct: number | null;
+  best_pct: number | null;
+  worst_pct: number | null;
+  with_benchmark: number;
+  mean_excess_pp: number | null;
+  median_excess_pp: number | null;
+  excess_se_pp: number | null;
+  beat_benchmark_pct: number | null;
+  with_stop: number;
+  stop_touched_pct: number | null;
+  thin: boolean;
+};
+
+export type ScoreboardRow = {
+  stance: "BUY" | "WATCH" | "AVOID";
+  /** "all" for the stance total, else a conviction band such as "75-84". */
+  band: string;
+  signals: number;
+  horizons: Record<string, ScoreboardHorizonStats>;
+};
+
+export type ScoreboardSignal = {
+  run_id: number;
+  strategy_id: string;
+  symbol: string;
+  stance: string;
+  conviction: number;
+  signalled_at: string;
+  is_new: boolean;
+  plan_stop: number | null;
+  status: "measured" | "pending" | "unpriced";
+  entry_date: string | null;
+  entry_price: number | null;
+  horizons: Record<
+    string,
+    { return_pct: number | null; excess_pp: number | null; stop_touched: boolean | null }
+  >;
+};
+
+export type Scoreboard = {
+  generated_at: string;
+  horizons: number[];
+  signal_filter: "new" | "all";
+  runs: { count: number; first_signal_at: string | null; last_signal_at: string | null };
+  benchmarks: string[];
+  totals: { signals: number; measured: number; pending: number; unpriced: number };
+  thin_sample_floor: number;
+  /** One entry per strategy, alphabetical. Never pooled across strategies. */
+  strategies: { strategy_id: string; rows: ScoreboardRow[] }[];
+  recent_buys: ScoreboardSignal[];
+  method: string;
+  biases: string[];
+  charges_included: boolean;
+  notes: string[];
+};
+
+export function fetchScoreboard(signals: "new" | "all" = "new"): Promise<Fetched<Scoreboard>> {
+  return getJson(`/discovery/scoreboard?signals=${signals}`);
+}
+
 export function fetchInsights(limit = 30): Promise<Fetched<{ insights: Insight[]; unread: number }>> {
   return getJson(`/insights?limit=${limit}`);
 }

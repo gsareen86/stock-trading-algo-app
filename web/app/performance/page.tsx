@@ -1,7 +1,8 @@
 import Link from "next/link";
 
+import { SignalScoreboard } from "@/components/signal-scoreboard";
 import { Empty, GrossNote, Unavailable } from "@/components/states";
-import { type BookAnalytics, type Trade, fetchAnalytics, fetchTrades } from "@/lib/api";
+import { type BookAnalytics, type Trade, fetchAnalytics, fetchScoreboard, fetchTrades } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -163,13 +164,30 @@ function BookCard({
   );
 }
 
-export default async function PerformancePage() {
-  const results = await Promise.all(
-    BOOKS.map(async (book) => {
-      const [analytics, trades] = await Promise.all([fetchAnalytics(book), fetchTrades(book, 50)]);
-      return { book, analytics, trades };
-    }),
-  );
+export default async function PerformancePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ h?: string; signals?: string }>;
+}) {
+  const params = await searchParams;
+  const signals = params.signals === "all" ? "all" : "new";
+  const [results, scoreboard] = await Promise.all([
+    Promise.all(
+      BOOKS.map(async (book) => {
+        const [analytics, trades] = await Promise.all([fetchAnalytics(book), fetchTrades(book, 50)]);
+        return { book, analytics, trades };
+      }),
+    ),
+    fetchScoreboard(signals),
+  ]);
+  // The requested holding period when the scoreboard measured it, else ~a month, else the first.
+  const measured = scoreboard.ok ? scoreboard.data.horizons : [];
+  const requested = Number(params.h);
+  const horizon = measured.includes(requested)
+    ? requested
+    : measured.includes(20)
+      ? 20
+      : (measured[0] ?? 20);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
@@ -181,9 +199,16 @@ export default async function PerformancePage() {
           Performance
         </h1>
         <p className="mt-1 text-sm text-text-secondary">
-          Realised vs unrealised gross P&amp;L, closed-only win rates, alphabetical strategy activity, and recorded trade fills.
+          Whether each strategy&apos;s published signals beat the benchmark, then realised vs unrealised gross
+          P&amp;L, closed-only win rates and recorded trade fills.
         </p>
       </section>
+
+      {scoreboard.ok ? (
+        <SignalScoreboard board={scoreboard.data} horizon={horizon} />
+      ) : (
+        <Unavailable result={scoreboard} />
+      )}
 
       {results.map(({ book, analytics, trades }) => (
         <div key={book}>

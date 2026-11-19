@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated, Any
 
@@ -13,7 +14,7 @@ from app.api.deps import get_gateway, get_session_factory, get_settings
 from app.api.screening import _universe_source
 from app.api.streaming import sse_stream_response
 from app.api.verdicts import _fundamentals_source, _price_source
-from app.core.clock import now_utc
+from app.core.clock import IST, now_utc
 from app.core.settings import Settings
 from app.data.sectors import for_instrument
 from app.data.yfinance_quality import build_company_financials_source
@@ -27,6 +28,7 @@ from app.discovery.scanner import (
     _verdict_to_dict,
     verdict_from_dict,
 )
+from app.discovery.scoreboard import build_scoreboard, normalise_horizons
 from app.discovery.sectors import BENCHMARK_NIFTY50, BENCHMARK_NIFTY500, compute_sector_rrg
 from app.persistence.models import ScanEntry as ScanEntryRow
 from app.persistence.models import ScanRun as ScanRunRow
@@ -467,3 +469,59 @@ async def get_run(
     if payload["run"] is None:
         raise HTTPException(status_code=404, detail=f"no scan run with id {run_id}")
     return payload
+
+
+#: One computed scoreboard per (latest completed scan, IST day, parameters). Forward returns only
+#: change when a new session closes or a new scan lands, and the computation reads every scanned
+#: name's history — recomputing it on each page view would be the slow path for no new answer.
+_SCOREBOARD_MEMO: dict[tuple, dict[str, Any]] = {}
+_SCOREBOARD_MEMO_LIMIT = 16
+
+
+@router.get("/scoreboard")
+async def scoreboard(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    session_factory: Annotated[Any, Depends(get_session_factory)],
+    signals: Annotated[str, Query(pattern="^(new|all)$")] = "new",
+    strategy_id: str | None = None,
+    horizons: Annotated[str | None, Query(max_length=40)] = None,
+    max_runs: Annotated[int, Query(ge=1, le=520)] = 104,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Forward returns of every published verdict, per strategy — did the signals work?"""
+    try:
+        parsed = normalise_horizons(
+            int(h) for h in (horizons.split(",") if horizons else []) if h.strip()
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="horizons must be comma-separated integers"
+        ) from exc
+
+    with session_factory() as session:
+        latest_id = session.execute(
+            select(ScanRunRow.id)
+            .where(ScanRunRow.outcome == "complete")
+            .order_by(desc(ScanRunRow.id))
+            .limit(1)
+        ).scalar_one_or_none()
+
+    key = (latest_id, now_utc().astimezone(IST).date(), signals, strategy_id, parsed, max_runs)
+    if not refresh and key in _SCOREBOARD_MEMO:
+        return _SCOREBOARD_MEMO[key]
+
+    price_source = _price_source(request, settings)
+    result = await asyncio.to_thread(
+        build_scoreboard,
+        session_factory,
+        price_source,
+        horizons=parsed,
+        signals=signals,  # type: ignore[arg-type]
+        strategy_id=strategy_id,
+        max_runs=max_runs,
+    )
+    if len(_SCOREBOARD_MEMO) >= _SCOREBOARD_MEMO_LIMIT:
+        _SCOREBOARD_MEMO.clear()
+    _SCOREBOARD_MEMO[key] = result
+    return result
