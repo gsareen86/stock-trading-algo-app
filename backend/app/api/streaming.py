@@ -23,6 +23,12 @@ from fastapi.responses import StreamingResponse
 
 log = logging.getLogger(__name__)
 
+#: How long a stream may go without sending anything. One local-model narration takes
+#: minutes and emits nothing until it ends, and the web proxy's fetch drops a response body
+#: that is silent for 300 s (undici's default `bodyTimeout`) — which ended the progress view
+#: of a scan mid-narration with "network error". Well under any proxy's idle limit.
+HEARTBEAT_SECONDS = 15.0
+
 #: Runs whose viewer disconnected. The event loop holds only weak references to tasks, so
 #: an unwatched run with nothing else pointing at it could be collected mid-flight.
 _DETACHED: set[asyncio.Task[None]] = set()
@@ -109,7 +115,12 @@ def sse_stream_response(
         task = asyncio.create_task(drive())
         try:
             while True:
-                item = await queue.get()
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
+                except TimeoutError:
+                    # An SSE comment: ignored by every client, but bytes on the wire.
+                    yield ": keepalive\n\n"
+                    continue
                 if item is None:
                     break
                 ev_name, data = item

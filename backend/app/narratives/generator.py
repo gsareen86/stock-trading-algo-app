@@ -12,6 +12,7 @@ never decides" structurally true rather than a convention.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.domain.verdict import Verdict
@@ -80,18 +81,26 @@ async def narrate(verdict: Verdict, gateway: LLMGateway) -> NarrationResult:
 
 
 async def narrate_all(
-    verdicts: list[Verdict], gateway: LLMGateway
+    verdicts: list[Verdict],
+    gateway: LLMGateway,
+    on_each: Callable[[int, int], None] | None = None,
 ) -> tuple[list[Verdict], list[dict]]:
     """Narrate a batch, reporting each outcome alongside the verdicts.
 
     Sequential rather than gathered: these share one gateway, one budget and one circuit
     breaker, and firing a batch concurrently at a local model is the reliable way to make all
     of them slow instead of some of them done.
+
+    ``on_each(done, total)`` is called after every verdict. A local model takes minutes per
+    narrative, and a batch that reports only its start and end looks hung for half an hour.
     """
     narrated: list[Verdict] = []
     report: list[dict] = []
-    for verdict in verdicts:
+    total = len(verdicts)
+    for done, verdict in enumerate(verdicts, start=1):
         outcome = await narrate(verdict, gateway)
+        if on_each is not None:
+            on_each(done, total)
         narrated.append(outcome.verdict)
         report.append(
             {

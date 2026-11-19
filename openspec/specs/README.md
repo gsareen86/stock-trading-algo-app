@@ -36,4 +36,4 @@ change touches them.
 
 Shipped so far: `bootstrap-platform-skeleton`, `llm-gateway-and-observability`,
 `market-data-foundation`, `skills-registry`, `verdict-model-and-minervini`,
-`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`, `portfolio-health-and-actions`, `authentication`, `backtesting`, `gui-surfaces`, `daily-driver-platform`, `streamed-runs-outlive-viewer`.
+`remaining-three-strategies`, `inr-cost-reporting`, `tool-registry`, `verdict-narratives`, `local-run-ergonomics`, `agent-graph-and-a2a`, `screening-universe-and-gates`, `books-ledger-and-analytics`, `insights-feed`, `portfolio-health-and-actions`, `authentication`, `backtesting`, `gui-surfaces`, `daily-driver-platform`, `streamed-runs-outlive-viewer`, `local-narratives-and-stream-keepalive`.

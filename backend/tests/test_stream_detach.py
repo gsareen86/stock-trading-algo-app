@@ -135,3 +135,34 @@ async def test_cancelled_scan_is_recorded_as_interrupted(migrated_url: str, tmp_
         rows = session.query(ScanRunRow).all()
     assert [r.outcome for r in rows] == ["interrupted"]
     assert rows[0].finished_at is not None
+
+
+async def test_silent_run_sends_keepalives(monkeypatch) -> None:
+    """A narration emits nothing for minutes; the web proxy drops a body silent for 300 s."""
+    monkeypatch.setattr(streaming, "HEARTBEAT_SECONDS", 0.05)
+
+    async def runner(emit):
+        await asyncio.sleep(0.3)
+        return {"ok": True}
+
+    body = [chunk async for chunk in sse_stream_response(runner).body_iterator]
+
+    assert any(chunk.startswith(": keepalive") for chunk in body)
+    assert "event: complete" in body[-1]
+
+
+async def test_narration_reports_each_verdict(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import app.narratives.generator as gen
+
+    async def fake_narrate(verdict, gateway):
+        return gen.NarrationResult(verdict, gen.Outcome.UNAVAILABLE, "no model answered")
+
+    monkeypatch.setattr(gen, "narrate", fake_narrate)
+    verdicts = [SimpleNamespace(strategy_id="s", ticker=t) for t in ("A", "B", "C")]
+    seen: list[tuple[int, int]] = []
+
+    await gen.narrate_all(verdicts, gateway=None, on_each=lambda d, t: seen.append((d, t)))
+
+    assert seen == [(1, 3), (2, 3), (3, 3)]

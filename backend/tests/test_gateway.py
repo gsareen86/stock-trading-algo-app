@@ -853,3 +853,113 @@ class TestTimeoutsByProvider:
         await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
 
         assert seen == [30.0, 300.0]
+
+
+class TestLocalModelSettings:
+    """Regression: gemma4:12b in Ollama returned empty narratives after three minutes each.
+
+    Thinking was never turned off (LiteLLM's Ollama provider drops ``extra_body``), and
+    Ollama's 4096-token default window was spent before any answer was written.
+    """
+
+    async def test_ollama_gets_reasoning_as_an_argument_it_forwards(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _settings(
+            tmp_path,
+            llm_route={"narrative": "ollama/gemma4:12b"},
+            llm_reasoning={"narrative": "none"},
+        )
+        calls = _record_calls(monkeypatch)
+
+        await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert calls[0]["reasoning_effort"] == "none"
+        assert "extra_body" not in calls[0]
+
+    async def test_openai_compatible_server_still_gets_reasoning_in_extra_body(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _settings(
+            tmp_path,
+            llm_route={"narrative": "llama_cpp/qwen3.8"},
+            llm_provider_base_url={"llama_cpp": "http://localhost:8080/v1"},
+            llm_reasoning={"narrative": "low"},
+        )
+        calls = _record_calls(monkeypatch)
+
+        await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert calls[0]["extra_body"] == {"reasoning_effort": "low"}
+        assert "reasoning_effort" not in calls[0]
+
+    async def test_ollama_is_given_the_configured_context_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _settings(
+            tmp_path,
+            llm_route={"narrative": "ollama/gemma4:12b"},
+            llm_local_context_tokens=8192,
+        )
+        calls = _record_calls(monkeypatch)
+
+        await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert calls[0]["num_ctx"] == 8192
+
+    async def test_context_window_default_is_larger_than_ollamas(self, tmp_path: Path) -> None:
+        assert _settings(tmp_path).llm_local_context_tokens > 4096
+
+    async def test_zero_leaves_ollamas_window_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _settings(
+            tmp_path, llm_route={"narrative": "ollama/gemma4:12b"}, llm_local_context_tokens=0
+        )
+        calls = _record_calls(monkeypatch)
+
+        await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert "num_ctx" not in calls[0]
+
+    async def test_hosted_provider_gets_no_context_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _settings(tmp_path, llm_default_task_model="anthropic/claude-sonnet-5")
+        calls = _record_calls(monkeypatch)
+
+        await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert "num_ctx" not in calls[0]
+
+    async def test_empty_answer_is_not_cached(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _settings(tmp_path, llm_route={"narrative": "ollama/gemma4:12b"})
+        calls = _record_calls(monkeypatch, result=FakeResponse(content=""))
+        gateway = LiteLLMGateway(settings)
+
+        await gateway.complete(task="narrative", messages=MESSAGES)
+        await gateway.complete(task="narrative", messages=MESSAGES)
+
+        assert len(calls) == 2, "an empty answer was served from cache instead of retried"
+
+    def test_negative_context_window_rejected(self, tmp_path: Path) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            _settings(tmp_path, llm_local_context_tokens=-1)
+
+    async def test_truncated_answer_is_logged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        response = FakeResponse(content="")
+        response.choices[0].finish_reason = "length"
+        _record_calls(monkeypatch, result=response)
+        settings = _settings(tmp_path, llm_route={"narrative": "ollama/gemma4:12b"})
+
+        with caplog.at_level("WARNING"):
+            await LiteLLMGateway(settings).complete(task="narrative", messages=MESSAGES)
+
+        assert "hit its token limit" in caplog.text
+        assert "narrative" in caplog.text

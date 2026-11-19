@@ -365,7 +365,13 @@ class DiscoveryScanner:
                 ]
                 if to_narrate:
                     emit("narrate", f"Narrating top {len(to_narrate)} verdicts", 0, len(to_narrate))
-                    narrated_list, _ = await narrate_all(to_narrate, self._gateway)
+                    narrated_list, _ = await narrate_all(
+                        to_narrate,
+                        self._gateway,
+                        on_each=lambda done, total: emit(
+                            "narrate", f"Narrated {done} / {total} verdicts", done, total
+                        ),
+                    )
                     by_key = {(v.ticker, v.strategy_id): v for v in narrated_list}
                     updated_head: list[CandidateEntry] = []
                     for entry in head_slice:

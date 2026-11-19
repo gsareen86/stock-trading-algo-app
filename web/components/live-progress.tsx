@@ -15,6 +15,9 @@ export type SseProgressEvent = {
   elapsed_seconds?: number;
 };
 
+const LOST_CONNECTION =
+  "Lost the live progress connection. The run continues on the server; refresh in a few minutes to see its result.";
+
 export function useSseStream<T = Record<string, unknown>>() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<SseProgressEvent | null>(null);
@@ -42,6 +45,7 @@ export function useSseStream<T = Record<string, unknown>>() {
       setError(null);
       setResult(null);
       setProgress({ step: "starting", label: "Connecting to runner…" });
+      let streamOpened = false;
 
       try {
         const res = await fetch(url, {
@@ -59,10 +63,14 @@ export function useSseStream<T = Record<string, unknown>>() {
           return null;
         }
 
+        streamOpened = true;
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
         let finalData: T | null = null;
+        // Set by `complete` or `error`. Reaching the end of the body without one means the
+        // connection dropped, not that the run ended.
+        let sawTerminal = false;
 
         while (true) {
           const { value, done } = await reader.read();
@@ -87,19 +95,34 @@ export function useSseStream<T = Record<string, unknown>>() {
             if (eventType === "progress") {
               setProgress(parsed as SseProgressEvent);
             } else if (eventType === "error") {
-              setError(parsed.detail ?? "Stream failed");
+              sawTerminal = true;
+              // The backend's error event carries `error`; `detail` is FastAPI's HTTP shape.
+              setError(parsed.error ?? parsed.detail ?? "Stream failed");
             } else if (eventType === "complete") {
+              sawTerminal = true;
               finalData = (parsed.result ?? parsed) as T;
               setResult(finalData);
             }
           }
+        }
+        if (!sawTerminal) {
+          setError(LOST_CONNECTION);
+          return null;
         }
         if (finalData && onComplete) {
           onComplete(finalData);
         }
         return finalData;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not reach the server.");
+        // Once the stream has opened, a failure is the connection, not the run: the server
+        // finishes and records the run whether or not anyone is watching.
+        setError(
+          streamOpened
+            ? LOST_CONNECTION
+            : err instanceof Error
+              ? err.message
+              : "Could not reach the server.",
+        );
         return null;
       } finally {
         setRunning(false);

@@ -152,7 +152,11 @@ class LiteLLMGateway:
         for rung in chain.rungs:
             result = await self._attempt(litellm, task, rung, requested, messages, schema, tools)
             if result is not None:
-                self._cache.put(key, result)
+                if result.text or result.tool_calls or result.parsed is not None:
+                    # An empty answer is a failed call that happened to return 200 — a
+                    # thinking model that spent its whole budget before writing. Cached, it
+                    # was served back for that prompt on every later attempt, forever.
+                    self._cache.put(key, result)
                 return result
 
         return None
@@ -209,9 +213,21 @@ class LiteLLMGateway:
         #
         # The alternative LiteLLM suggests, `drop_params`, would silently discard the setting
         # and leave a task looking configured while thinking at the default.
+        #
+        # Ollama is the exception. LiteLLM's Ollama provider does not forward `extra_body`,
+        # so there the setting reached nobody and every task ran with thinking on — gemma4
+        # spent its whole context thinking and returned empty narratives. It *does* accept
+        # `reasoning_effort` as an argument and translates it into Ollama's own `think` flag.
         effort = settings.reasoning_for_task(task)
-        if effort:
+        if effort and rung.provider == "ollama":
+            kwargs["reasoning_effort"] = effort
+        elif effort:
             kwargs["extra_body"] = {"reasoning_effort": effort}
+        if rung.provider == "ollama" and settings.llm_local_context_tokens:
+            # Ollama's default window is 4096 tokens for prompt *and* answer together, and it
+            # truncates silently: research prompts arrived cut to 4029 tokens, and narratives
+            # stopped mid-thought. The window is chosen per request, so it is set here.
+            kwargs["num_ctx"] = settings.llm_local_context_tokens
         if trace_id:
             kwargs["metadata"] = {"trace_id": trace_id, "generation_name": task}
 
@@ -307,6 +323,17 @@ class LiteLLMGateway:
                 )
             )
             return None
+
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+        if finish_reason == "length":
+            # Said once per call, because the symptom downstream — an empty or half-written
+            # answer — looks like the model's fault rather than the window's.
+            log.warning(
+                "%s answer for task=%s hit its token limit (%s chars of text returned)",
+                rung.target,
+                task,
+                len(text),
+            )
 
         parsed: Any | None = None
         if schema and text:

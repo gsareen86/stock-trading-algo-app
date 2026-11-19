@@ -135,6 +135,8 @@ Settings are environment variables. Nothing is read from the database at runtime
 | `DATABASE_URL` | Defaults to a local SQLite file. Point at Postgres for anything shared. |
 | `LLM_ROUTE__NARRATIVE` | Which model writes explanations, e.g. `ollama/gemma4:12b` for a local one |
 | `LLM_LOCAL_TIMEOUT_SECONDS` | Defaults to 300. Local models are slow; the hosted default of 30 is far too short for them. |
+| `LLM_LOCAL_CONTEXT_TOKENS` | Context window asked of Ollama, prompt and answer together. Defaults to 16384; Ollama's own 4096 silently cuts long prompts and answers. `0` keeps Ollama's default. |
+| `LLM_REASONING__<TASK>` | How hard a thinking model reasons for one task: `none`, `low`, `medium`, `high`. `run-local.ps1` sets `none` for `NARRATIVE`, which otherwise thinks itself out of room and returns nothing. |
 | `LLM_DAILY_BUDGET_INR` | Daily spend cap in rupees for paid models. Local models are free and never blocked by it. |
 | `MCP_SERVER__KITE` | Zerodha Kite MCP, for looking up live quotes and holdings |
 

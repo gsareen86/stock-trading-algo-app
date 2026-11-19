@@ -37,6 +37,11 @@ $env:LLM_LOCAL_TIMEOUT_SECONDS = "300"
 $env:USD_INR_RATE              = "$UsdInrRate"
 $env:LLM_DAILY_BUDGET_INR      = "$DailyBudgetInr"
 
+# A narrative explains a verdict that is already decided; there is nothing to reason about.
+# With thinking left on, gemma4:12b spent 2,600+ tokens thinking per narrative, ran out of
+# context and returned no text at all, three minutes a time. Off, it writes ~80 tokens.
+$env:LLM_REASONING__NARRATIVE  = "none"
+
 Write-Host "Routing every task to ollama/$Model" -ForegroundColor Cyan
 
 try {

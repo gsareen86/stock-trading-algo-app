@@ -146,6 +146,13 @@ class Settings(BaseSettings):
     #: and the feature looked broken rather than slow. Waiting is the right default when the
     #: alternative is no answer and the wait is free.
     llm_local_timeout_seconds: Annotated[float, Field(gt=0)] = 300.0
+
+    #: Context window requested from **Ollama**, in tokens, covering prompt and answer
+    #: together. Ollama's own default is 4096, which it enforces by silently dropping the
+    #: start of a long prompt or stopping an answer mid-sentence. Larger windows cost memory
+    #: (the KV cache), so lower this on a machine that cannot hold it. `0` keeps Ollama's
+    #: default.
+    llm_local_context_tokens: Annotated[int, Field(ge=0)] = 16384
     llm_max_retries: Annotated[int, Field(ge=0)] = 2
 
     #: Consecutive rate-limit failures before the breaker opens for one provider.
