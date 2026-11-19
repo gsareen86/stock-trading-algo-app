@@ -11,16 +11,23 @@
   /* Neutrals — the chrome */
   --surface-base: #f8fafc;
   --surface-raised: #ffffff;
+  --surface-elevated: #ffffff;
   --surface-sunken: #f1f5f9;
+  --surface-hero: #f1f5ff;
   --border-subtle: #e2e8f0;
   --border-strong: #cbd5e1;
 
   --text-primary: #0f172a;
   --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  --text-muted: #64748b;
 
   --accent: #4f46e5;
   --accent-soft: #eef2ff;
+
+  /* Elevation */
+  --shadow-card: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  --shadow-card-hover: 0 8px 24px -6px rgba(15, 23, 42, 0.08), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+  --shadow-drawer: -12px 0 40px -8px rgba(15, 23, 42, 0.16);
 
   /* Stance — domain tokens. Verdicts are BUY / WATCH / AVOID and these three
      colours must mean the same thing on every surface that renders one. */
@@ -31,6 +38,16 @@
   --stance-avoid: #dc2626;
   --stance-avoid-soft: #fef2f2;
 
+  /* Sector RRG quadrant tokens */
+  --quadrant-leading: #059669;
+  --quadrant-leading-soft: #ecfdf5;
+  --quadrant-improving: #2563eb;
+  --quadrant-improving-soft: #eff6ff;
+  --quadrant-weakening: #d97706;
+  --quadrant-weakening-soft: #fffbeb;
+  --quadrant-lagging: #dc2626;
+  --quadrant-lagging-soft: #fef2f2;
+
   /* Seam status */
   --status-ok: #059669;
   --status-degraded: #d97706;
@@ -38,22 +55,29 @@
 
   --radius: 0.5rem;
   --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --surface-base: #0b1120;
-    --surface-raised: #131c31;
-    --surface-sunken: #0f1728;
+    --surface-base: #090e1a;
+    --surface-raised: #11192b;
+    --surface-elevated: #172238;
+    --surface-sunken: #0d1424;
+    --surface-hero: #131c33;
     --border-subtle: #1e293b;
     --border-strong: #334155;
 
-    --text-primary: #e2e8f0;
+    --text-primary: #f1f5f9;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
 
     --accent: #818cf8;
     --accent-soft: #1e1b4b;
+
+    --shadow-card: 0 1px 2px 0 rgba(2, 6, 23, 0.4);
+    --shadow-card-hover: 0 10px 28px -6px rgba(2, 6, 23, 0.55), 0 2px 8px -2px rgba(2, 6, 23, 0.35);
+    --shadow-drawer: -12px 0 44px -8px rgba(2, 6, 23, 0.7);
 
     --stance-buy: #34d399;
     --stance-buy-soft: #052e23;
@@ -61,6 +85,15 @@
     --stance-watch-soft: #3b2708;
     --stance-avoid: #f87171;
     --stance-avoid-soft: #3f1414;
+
+    --quadrant-leading: #34d399;
+    --quadrant-leading-soft: #052e23;
+    --quadrant-improving: #60a5fa;
+    --quadrant-improving-soft: #0f2547;
+    --quadrant-weakening: #fbbf24;
+    --quadrant-weakening-soft: #3b2708;
+    --quadrant-lagging: #f87171;
+    --quadrant-lagging-soft: #3f1414;
 
     --status-ok: #34d399;
     --status-degraded: #fbbf24;
@@ -71,7 +104,9 @@
 @theme inline {
   --color-surface-base: var(--surface-base);
   --color-surface-raised: var(--surface-raised);
+  --color-surface-elevated: var(--surface-elevated);
   --color-surface-sunken: var(--surface-sunken);
+  --color-surface-hero: var(--surface-hero);
   --color-border-subtle: var(--border-subtle);
   --color-border-strong: var(--border-strong);
 
@@ -89,12 +124,22 @@
   --color-stance-avoid: var(--stance-avoid);
   --color-stance-avoid-soft: var(--stance-avoid-soft);
 
+  --color-quadrant-leading: var(--quadrant-leading);
+  --color-quadrant-leading-soft: var(--quadrant-leading-soft);
+  --color-quadrant-improving: var(--quadrant-improving);
+  --color-quadrant-improving-soft: var(--quadrant-improving-soft);
+  --color-quadrant-weakening: var(--quadrant-weakening);
+  --color-quadrant-weakening-soft: var(--quadrant-weakening-soft);
+  --color-quadrant-lagging: var(--quadrant-lagging);
+  --color-quadrant-lagging-soft: var(--quadrant-lagging-soft);
+
   --color-status-ok: var(--status-ok);
   --color-status-degraded: var(--status-degraded);
   --color-status-down: var(--status-down);
 
   --radius-token: var(--radius);
   --radius-token-lg: var(--radius-lg);
+  --radius-token-xl: var(--radius-xl);
 
   /* System stack: no build-time font fetch, so the build stays hermetic. */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
@@ -107,4 +152,36 @@ body {
   background: var(--surface-base);
   color: var(--text-primary);
   font-family: var(--font-sans);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.card-surface {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: border-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.card-interactive:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.hero-surface {
+  background: linear-gradient(135deg, var(--surface-hero) 0%, var(--surface-raised) 65%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+}
+
+.drawer-surface {
+  background: var(--surface-elevated);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-drawer);
 }

@@ -184,6 +184,17 @@ export type Gate = {
   evidence_ids: string[];
 };
 
+export type Plan = {
+  entry: number;
+  stop: number;
+  target: number;
+  risk_reward: number | null;
+  entry_kind: "pivot" | "breakout" | "pullback" | "close" | string;
+  valid_until?: string | null;
+  note?: string | null;
+  horizon?: string | null;
+};
+
 export type Verdict = {
   strategy_id: string;
   ticker: string;
@@ -194,6 +205,8 @@ export type Verdict = {
   gates_passed: boolean;
   gates: Gate[];
   evidence: Evidence[];
+  plan?: Plan | null;
+  plan_note?: string | null;
   narrative: string | null;
   trace_id: string | null;
 };
@@ -428,4 +441,415 @@ export function fetchThemes(): Promise<
 
 export function fetchTheme(key: string): Promise<Fetched<ThemeDetail>> {
   return getJson(`/themes/${encodeURIComponent(key)}`);
+}
+
+// ── Daily-driver types: briefing, discovery, RRG, quality, watchlist, stocks ──
+
+export type Trade = {
+  id: number;
+  book: string;
+  ticker: string;
+  side: "BUY" | "SELL";
+  quantity: number;
+  price: number;
+  gross_amount: number;
+  strategy_id: string | null;
+  source: string;
+  note: string | null;
+  executed_at: string;
+};
+
+export function fetchTrades(book: string, limit = 100): Promise<Fetched<{ trades: Trade[]; count: number }>> {
+  return getJson(`/books/${book}/trades?limit=${limit}`);
+}
+
+export type TrailPoint = {
+  as_of: string;
+  rs_ratio: number;
+  rs_momentum: number;
+  quadrant: string;
+};
+
+export type SectorPlacement = {
+  key: string;
+  nse_name: string;
+  ticker: string;
+  benchmark: string;
+  quadrant: "Leading" | "Weakening" | "Improving" | "Lagging" | "unplaced" | string;
+  rs_pct: number | null;
+  rs_momentum_pp: number | null;
+  rs_ratio: number | null;
+  rs_momentum: number | null;
+  window_bars?: number;
+  trail?: TrailPoint[];
+  reason?: string | null;
+};
+
+export type NotableMover = {
+  symbol: string;
+  name: string;
+  sector: string | null;
+  last_close: number;
+  triggers: string[];
+  rs_20d_pct: number | null;
+  volume_ratio: number | null;
+  pct_from_52w_high: number | null;
+};
+
+export type QualityFacet = {
+  key: string;
+  label: string;
+  status: "pass" | "watch" | "fail" | "not_applicable" | "unavailable" | string;
+  value: number | null;
+  threshold: string | number | null;
+  unit: string;
+  source?: string | null;
+  reason?: string | null;
+};
+
+export type QualityReport = {
+  symbol: string;
+  sector_key: string | null;
+  source: string;
+  unavailable_reason: string | null;
+  facets: QualityFacet[];
+  summary: Record<string, number | string | null>;
+};
+
+export type ScanRunSummary = {
+  id: number;
+  trigger: string;
+  universe_origin: string;
+  index_name: string;
+  benchmark: string;
+  outcome: string;
+  considered_count: number;
+  eligible_count: number;
+  unevaluable_count: number;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+};
+
+export type CandidateThemeBadge = {
+  key: string;
+  label: string;
+  exposure?: string | null;
+};
+
+export type DiscoveryCandidate = {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  sector_key: string | null;
+  universe_index: number;
+  ranked_by: string;
+  ranked_conviction: number;
+  ranked_stance: "BUY" | "WATCH" | "AVOID" | string;
+  buy_count: number;
+  verdicts: Verdict[];
+  quality: QualityReport;
+  themes: CandidateThemeBadge[];
+};
+
+export type LatestDiscoveryResponse = {
+  run: ScanRunSummary | null;
+  sectors: SectorPlacement[];
+  candidates: DiscoveryCandidate[];
+  total_candidates: number;
+  filtered_candidates: number;
+  unevaluable: { symbol: string; reason: string }[];
+  rank_policy: string;
+};
+
+export type IndexSnapshot = {
+  symbol: string;
+  label: string;
+  available: boolean;
+  close?: number;
+  change_pct?: number;
+  above_50dma?: boolean;
+  above_200dma?: boolean | null;
+  posture?: "constructive" | "cautious" | "risk_off" | string;
+};
+
+export type MorningBriefing = {
+  market: {
+    session: string;
+    ist_timestamp: string;
+    ist_time_label: string;
+    nifty50: IndexSnapshot;
+    nifty500: IndexSnapshot;
+  };
+  scan_status: {
+    has_scan: boolean;
+    run_id?: number;
+    finished_at?: string | null;
+    stale: boolean;
+    stale_reason?: string | null;
+    considered_count?: number;
+    eligible_count?: number;
+  };
+  sectors_summary: {
+    leading_count: number;
+    improving_count: number;
+    top_leading: SectorPlacement[];
+    top_improving: SectorPlacement[];
+    shifts: { sector_key: string; nse_name: string; from_quadrant: string; to_quadrant: string }[];
+  };
+  watchlist_pulse: {
+    total_watched: number;
+    flipped_buy_count: number;
+    near_pivot_count: number;
+    items: {
+      symbol: string;
+      book_intent: string;
+      strategy_id: string | null;
+      last_price: number | null;
+      entry: number | null;
+      stop: number | null;
+      distance_pct: number;
+      flipped_buy: boolean;
+    }[];
+  };
+  books: {
+    swing_open: number;
+    longterm_open: number;
+    total_open: number;
+    swing_cost_basis: number;
+    longterm_cost_basis: number;
+  };
+  top_themes: Theme[];
+  unread_insights: number;
+};
+
+export type WatchlistItem = {
+  id: number;
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  sector_key: string | null;
+  book_intent: "swing" | "longterm";
+  target_strategy_id: string | null;
+  notes: string | null;
+  added_price: number | null;
+  last_price: number | null;
+  distance_to_entry_pct: number | null;
+  last_known_stances: Record<string, string>;
+  current_stances: Record<string, string>;
+  flipped_buy: boolean;
+  flipped_strategies: string[];
+  plan: Plan | null;
+  verdicts: Verdict[];
+  themes: CandidateThemeBadge[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type UniverseSymbol = {
+  symbol: string;
+  name: string;
+  sector: string | null;
+  sector_key: string | null;
+};
+
+export type StockChartBar = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema20: number | null;
+  sma50: number | null;
+  sma150: number | null;
+  sma200: number | null;
+};
+
+export type StockChartResponse = {
+  symbol: string;
+  range: string;
+  available: boolean;
+  reason?: string | null;
+  last_price: number | null;
+  prev_close: number | null;
+  change_pct: number | null;
+  bars: StockChartBar[];
+};
+
+export type StockQualityResponse = QualityReport & {
+  company_name: string;
+  sector: string | null;
+  industry: string | null;
+  description: string | null;
+  shareholding: {
+    as_of: string;
+    promoter_pct: number | null;
+    fii_pct: number | null;
+    dii_pct: number | null;
+    pledge_pct: number | null;
+    source: string;
+  } | null;
+  statements: Record<string, { period: string; value: number }[]>;
+};
+
+export type StockResearchResponse = {
+  symbol: string;
+  themes: {
+    theme_key: string;
+    label: string;
+    tier: number;
+    matched_description: string | null;
+    exposure: string;
+    exposure_basis: string | null;
+    breadth: number;
+  }[];
+  concepts: {
+    concept: string;
+    period: string;
+    kind: string;
+    source_ref: string;
+    excerpt: string | null;
+    extracted_by: string;
+  }[];
+  filings: {
+    available: boolean;
+    items: {
+      headline?: string;
+      title?: string;
+      filed_at?: string;
+      category?: string;
+      source_ref?: string;
+      url?: string;
+    }[];
+  };
+  news: {
+    available: boolean;
+    items: {
+      headline?: string;
+      title?: string;
+      published_at?: string;
+      source?: string;
+      url?: string;
+      source_ref?: string;
+    }[];
+  };
+  concall_digest: {
+    section?: string;
+    summary?: string;
+    quotes?: string[];
+  }[];
+};
+
+export function fetchBriefing(): Promise<Fetched<MorningBriefing>> {
+  return getJson<MorningBriefing>("/insights/briefing");
+}
+
+export function fetchDiscoverySectors(
+  benchmark = "^CRSLDX",
+): Promise<Fetched<{ benchmark: string; source_mode: string; sectors: SectorPlacement[]; count: number }>> {
+  return getJson(`/discovery/sectors?benchmark=${encodeURIComponent(benchmark)}`);
+}
+
+export function fetchLatestDiscovery(params?: {
+  sector?: string;
+  strategy_id?: string;
+  stance?: string;
+  min_buy_count?: number;
+  roe_min?: number;
+  sales_yoy_min?: number;
+  low_debt?: boolean;
+  theme_backed?: boolean;
+  limit?: number;
+}): Promise<Fetched<LatestDiscoveryResponse>> {
+  const qs = new URLSearchParams();
+  if (params?.sector) qs.set("sector", params.sector);
+  if (params?.strategy_id) qs.set("strategy_id", params.strategy_id);
+  if (params?.stance) qs.set("stance", params.stance);
+  if (params?.min_buy_count) qs.set("min_buy_count", String(params.min_buy_count));
+  if (params?.roe_min !== undefined) qs.set("roe_min", String(params.roe_min));
+  if (params?.sales_yoy_min !== undefined) qs.set("sales_yoy_min", String(params.sales_yoy_min));
+  if (params?.low_debt) qs.set("low_debt", "true");
+  if (params?.theme_backed) qs.set("theme_backed", "true");
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return getJson<LatestDiscoveryResponse>(`/discovery/runs/latest${suffix}`);
+}
+
+export function fetchDiscoveryRuns(
+  limit = 10,
+): Promise<Fetched<{ runs: ScanRunSummary[]; count: number }>> {
+  return getJson(`/discovery/runs?limit=${limit}`);
+}
+
+export function fetchWatchlist(
+  bookIntent?: string,
+): Promise<Fetched<{ items: WatchlistItem[]; count: number }>> {
+  const suffix = bookIntent ? `?book_intent=${encodeURIComponent(bookIntent)}` : "";
+  return getJson(`/watchlist${suffix}`);
+}
+
+export function fetchStockChart(
+  symbol: string,
+  range: "3M" | "6M" | "1Y" | "3Y" = "1Y",
+): Promise<Fetched<StockChartResponse>> {
+  return getJson(`/stocks/${encodeURIComponent(symbol)}/chart?range=${range}`);
+}
+
+export function fetchStockQuality(symbol: string): Promise<Fetched<StockQualityResponse>> {
+  return getJson(`/stocks/${encodeURIComponent(symbol)}/quality`);
+}
+
+export function fetchStockResearch(
+  symbol: string,
+  summarize = false,
+): Promise<Fetched<StockResearchResponse>> {
+  return getJson(
+    `/stocks/${encodeURIComponent(symbol)}/research${summarize ? "?summarize=true" : ""}`,
+  );
+}
+
+export function fetchUniverseSymbols(
+  q?: string,
+  limit = 750,
+): Promise<Fetched<{ symbols: UniverseSymbol[]; count: number; total_universe: number }>> {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (q) qs.set("q", q);
+  return getJson(`/universe/symbols?${qs.toString()}`);
+}
+
+export type ToolInfo = {
+  name: string;
+  version: string;
+  summary: string;
+  tags: string[];
+};
+
+export function fetchTools(): Promise<
+  Fetched<{ tools: ToolInfo[]; count: number; load_failures: { module: string; error: string }[] }>
+> {
+  return getJson("/tools");
+}
+
+export function fetchThemeRuns(
+  limit = 10,
+): Promise<Fetched<{ runs: ThemeRun[]; count: number }>> {
+  return getJson(`/themes/runs?limit=${limit}`);
+}
+
+export function fetchMovers(
+  sector: string,
+  benchmark = "^CRSLDX",
+): Promise<
+  Fetched<{
+    sector: string;
+    benchmark: string;
+    checked_instruments: number;
+    movers: NotableMover[];
+    count: number;
+  }>
+> {
+  return getJson(
+    `/discovery/movers?sector=${encodeURIComponent(sector)}&benchmark=${encodeURIComponent(benchmark)}`,
+  );
 }

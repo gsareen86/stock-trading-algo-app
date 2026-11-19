@@ -1,94 +1,94 @@
-import { VerdictCard } from "@/components/verdict";
-import { Empty, Unavailable } from "@/components/states";
-import { evaluate, fetchPositions } from "@/lib/api";
-
-/**
- * Stock — everything known about one name.
- *
- * Four verdicts with their evidence, plus whether it is held. The four are rendered as four,
- * with no summary line above them: a "3 of 4 agree" badge here would be the blend this
- * platform exists to remove, arriving where it would look most helpful.
- */
+import { StockLookupHero, StockWorkstation } from "@/components/stock-workstation";
+import { Unavailable } from "@/components/states";
+import {
+  evaluate,
+  fetchLatestDiscovery,
+  fetchPositions,
+  fetchStockChart,
+  fetchStockQuality,
+  fetchStockResearch,
+  fetchWatchlist,
+} from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
-export default async function Page({
+export default async function StockPage({
   searchParams,
 }: {
   searchParams: Promise<{ symbol?: string }>;
 }) {
   const params = await searchParams;
-  const symbol = (params.symbol ?? "RELIANCE").trim().toUpperCase();
+  const rawSymbol = (params.symbol ?? "").trim().toUpperCase();
 
-  const [result, swing, longterm] = await Promise.all([
-    evaluate([symbol], true),
-    fetchPositions("swing"),
-    fetchPositions("longterm"),
-  ]);
+  if (!rawSymbol) {
+    const [watchlistRes, latestRes] = await Promise.all([
+      fetchWatchlist(),
+      fetchLatestDiscovery({ limit: 8 }),
+    ]);
 
-  const held = [
-    ...(swing.ok ? swing.data.positions : []),
-    ...(longterm.ok ? longterm.data.positions : []),
-  ].filter((position) => position.ticker === symbol);
+    const picks: { symbol: string; tag: string }[] = [];
+    const seen = new Set<string>();
+    if (watchlistRes.ok) {
+      for (const item of watchlistRes.data.items.slice(0, 4)) {
+        if (!seen.has(item.symbol)) {
+          seen.add(item.symbol);
+          picks.push({
+            symbol: item.symbol,
+            tag: item.flipped_buy ? "WATCH → BUY" : "Watchlist",
+          });
+        }
+      }
+    }
+    if (latestRes.ok) {
+      for (const c of latestRes.data.candidates.slice(0, 6)) {
+        if (!seen.has(c.symbol)) {
+          seen.add(c.symbol);
+          picks.push({ symbol: c.symbol, tag: c.ranked_by });
+        }
+      }
+    }
+
+    return <StockLookupHero quickPicks={picks.slice(0, 8)} />;
+  }
+
+  const [verdictRes, chartRes, qualityRes, researchRes, swingRes, longtermRes, watchlistRes] =
+    await Promise.all([
+      evaluate([rawSymbol], true),
+      fetchStockChart(rawSymbol, "1Y"),
+      fetchStockQuality(rawSymbol),
+      fetchStockResearch(rawSymbol, false),
+      fetchPositions("swing"),
+      fetchPositions("longterm"),
+      fetchWatchlist(),
+    ]);
+
+  if (!verdictRes.ok && !chartRes.ok) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <Unavailable result={verdictRes} />
+      </div>
+    );
+  }
+
+  const heldPositions = [
+    ...(swingRes.ok ? swingRes.data.positions : []),
+    ...(longtermRes.ok ? longtermRes.data.positions : []),
+  ].filter((p) => p.ticker === rawSymbol);
+
+  const initiallyWatched = watchlistRes.ok
+    ? watchlistRes.data.items.some((w) => w.symbol === rawSymbol)
+    : false;
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{symbol}</h1>
-      <p className="mt-1 text-sm text-text-secondary">
-        Four independent readings, and the evidence behind each.
-      </p>
-
-      <form method="get" className="mt-5 flex gap-2">
-        <input
-          name="symbol"
-          defaultValue={symbol}
-          aria-label="NSE symbol"
-          className="w-48 rounded-token border border-border-subtle bg-surface-sunken px-3 py-1.5 font-mono text-sm text-text-primary"
-        />
-        <button
-          type="submit"
-          className="rounded-token border border-border-strong px-3 py-1.5 text-sm text-text-primary"
-        >
-          Look up
-        </button>
-      </form>
-
-      {held.length > 0 ? (
-        <div className="mt-6 rounded-token-lg border border-border-subtle bg-surface-raised p-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-            Held
-          </h2>
-          {held.map((position) => (
-            <p key={position.book} className="mt-1 text-sm text-text-secondary">
-              <span className="capitalize">{position.book}</span>: {position.quantity} at
-              ₹{position.average_cost.toLocaleString("en-IN")} — unrealised{" "}
-              {position.unrealised_pnl_gross === null
-                ? "unavailable"
-                : `₹${position.unrealised_pnl_gross.toLocaleString("en-IN", {
-                    maximumFractionDigits: 0,
-                  })} gross`}
-            </p>
-          ))}
-        </div>
-      ) : null}
-
-      {!result.ok ? (
-        <div className="mt-8">
-          <Unavailable result={result} />
-        </div>
-      ) : result.data.verdicts.length === 0 ? (
-        <div className="mt-8">
-          <Empty>No strategy could form a verdict on {symbol}.</Empty>
-        </div>
-      ) : (
-        <div className="mt-6 grid gap-3 md:grid-cols-2">
-          {[...result.data.verdicts]
-            .sort((a, b) => a.strategy_id.localeCompare(b.strategy_id))
-            .map((verdict) => (
-              <VerdictCard key={verdict.strategy_id} verdict={verdict} />
-            ))}
-        </div>
-      )}
-    </div>
+    <StockWorkstation
+      key={rawSymbol}
+      symbol={rawSymbol}
+      verdicts={verdictRes.ok ? verdictRes.data.verdicts : []}
+      chart={chartRes.ok ? chartRes.data : null}
+      quality={qualityRes.ok ? qualityRes.data : null}
+      initialResearch={researchRes.ok ? researchRes.data : null}
+      heldPositions={heldPositions}
+      initiallyWatched={initiallyWatched}
+    />
   );
 }

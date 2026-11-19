@@ -41,10 +41,23 @@ async function proxy(request: NextRequest, path: string[]) {
     response = await send(refreshed.access_token);
   }
 
+  const contentType = response.headers.get("content-type") ?? "application/json";
+  if (contentType.includes("text/event-stream") && response.body) {
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  }
+
   const text = await response.text();
   return new NextResponse(text, {
     status: response.status,
-    headers: { "Content-Type": response.headers.get("content-type") ?? "application/json" },
+    headers: { "Content-Type": contentType },
   });
 }
 
@@ -55,3 +68,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
 export async function POST(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   return proxy(request, (await context.params).path);
 }
+
+export async function PATCH(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  return proxy(request, (await context.params).path);
+}
+
+export async function DELETE(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  return proxy(request, (await context.params).path);
+}
+
