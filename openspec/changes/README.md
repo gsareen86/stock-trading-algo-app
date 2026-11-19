@@ -15,7 +15,7 @@ the directory to `openspec/archive/`. See `openspec/AGENTS.md` for the full work
 
 ## In flight
 
-Seven changes, ordered by dependency. They are separate because each states one intent; the
+Eight changes, ordered by dependency. They are separate because each states one intent; the
 work they describe together is a single rethink of what the platform is *for* — answering
 "where should I be looking" rather than only "what do you think of this name".
 
@@ -28,6 +28,7 @@ work they describe together is a single rethink of what the platform is *for* �
 | 5 | `theme-engine` | What is emerging, and every listed company positioned to be paid by it | 3 | **in progress** |
 | 6 | `theme-research-agent` | Go and find out when name matching cannot, and let a person drive it | 5 | specified |
 | 7 | `signal-scoreboard` | Measure what happened after every published verdict, per strategy | 4 | **built** |
+| 8 | `backtest-plans` | Replay each strategy as its plan says to trade it, against the market after costs | 4 | **built** |
 
 1 and 2 are independent of everything and fix what is visibly wrong today. 3 is the data
 foundation 4 and 5 cannot be built without — the platform held four fundamental fields and one

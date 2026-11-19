@@ -206,3 +206,17 @@ class NseUniverseSource:
             index_name=self._index_name,
             excluded=tuple(excluded),
         )
+
+
+def bundled_sectors() -> dict[str, str]:
+    """Symbol -> industry from the bundled Total Market list, which carries industries.
+
+    The Nifty 500 fallback lists symbols only, so a universe that fell back to it knows no
+    sectors. The Total Market list is a superset with industries, and filling gaps from it lets
+    sector-aware strategies place a name even when the live constituent file was unreachable.
+    """
+    return {
+        inst.symbol: inst.sector
+        for inst in _load_fallback_instruments(str(TOTAL_MARKET_FALLBACK_FILE))
+        if inst.sector
+    }

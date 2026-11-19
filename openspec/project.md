@@ -266,26 +266,39 @@ with the LLM off (principle 5). The value is not a performance number; it is the
 a live platform cannot answer: does a strategy fire often enough to matter, does its conviction
 mean anything, and does a failed gate precede a bad outcome.
 
-**Lookahead is prevented at the seam.** `AsOfPriceSource` wraps any `PriceSource` and truncates
-to bars at or before the evaluation date. Strategies are unmodified and cannot opt out — a
-strategy that wanted the future would have to reach around its own injected source. Threading a
-date through `evaluate` instead would depend on four strategies and every future one getting it
-right forever.
+**Lookahead is prevented at the seam.** `AsOfPriceSource` (and, for long runs,
+`ReplayPriceSource`, which preloads each history once) serves only bars whose IST session is on
+or before the evaluation date. Strategies are unmodified and cannot opt out. Fundamentals are cut
+the same way, by SEBI filing deadline (45 days after a quarter, 60 for March).
 
-**Fills happen at the next session's open.** A verdict formed from Tuesday's close could not have
-been acted on at Tuesday's close; the decision did not exist until the bar did.
+**Each strategy is traded as its plan says** (`backtest-plans`). A BUY places a buy-stop at the
+plan's entry; it fills on a later session that trades through it, is skipped if the open is
+already beyond a chase limit, and is withdrawn if the stop trades first. Stops are checked every
+session; each strategy's exit rule (`app/backtest/exits.py`), its own AVOID, or a hold limit
+closes at the next open. A BUY without a plan is counted and not traded.
 
-**The real `Ledger`** runs against an in-memory database — not a `BacktestPortfolio` with its own
-averaging. A fourth position ledger would be the worst of them, because it would be the one
-deciding whether a strategy looks good.
+**Measured against the market, after costs.** Every trade carries gross and net return (a
+declared round-trip cost and per-fill slippage), an R-multiple against the plan's stop, and excess
+over a benchmark across the same sessions; results are broken down by conviction band within
+each strategy, and thin samples are flagged.
+
+**The real `Ledger`** runs against an in-memory database — one per strategy, so two strategies
+in one name never share an average cost. Not a `BacktestPortfolio` with its own averaging.
 
 **Results are per strategy with no combined curve.** Four independent verdicts do not compose
 into one portfolio unless something decides how to allocate between them, and that decision is
 the confluence scorecard with a chart attached.
 
+**Sessions come from the calendar where it is covered** and from the market index's own bars
+where it is not — the bundled holiday file covers only recent years.
+
+**Long runs belong on the command line**: `python -m app.backtest.cli` replays a universe across
+processes and writes the report and every trade to files. The HTTP endpoint is bounded to 100
+symbols and three years.
+
 **Survivorship cannot be removed** with the data this platform has, so every result carries a
-`biases` block naming it alongside absent charges and slippage — attached to the result, because
-a number and its caveat travel together or the caveat does not travel.
+`biases` block naming it alongside the cost estimate and fill assumptions — attached to the
+result, because a number and its caveat travel together or the caveat does not travel.
 
 ## Authentication
 

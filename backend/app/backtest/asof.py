@@ -111,3 +111,140 @@ def first_bar_after(series: PriceSeries, when: date) -> tuple[date, float] | Non
     if future.empty:
         return None
     return future.index[0].date(), float(future["open"].iloc[0])
+
+
+# ── replay sources ─────────────────────────────────────────────────────────────────────────
+#
+# `AsOfPriceSource` above re-asks its inner source for every evaluation, which is right for a
+# handful of names and far too slow for a multi-year universe replay. The replay instead loads
+# each history once and serves slices of it. The guarantee is the same — nothing after the
+# as-of session is ever returned — and is asserted by the same kind of test.
+
+#: The live yfinance source never returns fewer than this many calendar days, so a strategy in
+#: production always sees at least this much history. The replay serves the same window, so a
+#: strategy is not shown more history in a backtest than it would have live.
+LIVE_MIN_LOOKBACK_DAYS = 820
+
+
+def session_dates(series: PriceSeries) -> list[date]:
+    """IST session date of every bar.
+
+    Keyed by IST rather than UTC date because NSE bars stamped at midnight IST are stored at
+    18:30 UTC on the previous day: a UTC cutoff would hand a strategy the next session's bar.
+    """
+    from app.core.clock import IST
+
+    if series.is_empty:
+        return []
+    index = series.frame.index
+    if index.tz is None:
+        index = index.tz_localize("UTC")
+    return [ts.date() for ts in index.tz_convert(IST)]
+
+
+class ReplayPriceSource:
+    """Preloaded histories, served as of one session. Implements `PriceSource`.
+
+    ``at(day)`` is cheap — it shares the loaded data — so a runner makes one per session.
+    """
+
+    def __init__(
+        self,
+        histories: dict[str, PriceSeries],
+        *,
+        as_of: date | None = None,
+        min_lookback_days: int = LIVE_MIN_LOOKBACK_DAYS,
+        _dates: dict[str, list[date]] | None = None,
+    ) -> None:
+        self._histories = histories
+        self._dates = _dates if _dates is not None else {
+            symbol: session_dates(series) for symbol, series in histories.items()
+        }
+        self.as_of = as_of
+        self._min_lookback = min_lookback_days
+
+    def at(self, as_of: date) -> ReplayPriceSource:
+        return ReplayPriceSource(
+            self._histories,
+            as_of=as_of,
+            min_lookback_days=self._min_lookback,
+            _dates=self._dates,
+        )
+
+    def history(
+        self,
+        instrument: Instrument,
+        *,
+        interval: Interval = "1d",
+        lookback_days: int = 400,
+    ) -> PriceSeries:
+        from bisect import bisect_left, bisect_right
+        from datetime import timedelta
+
+        series = self._histories.get(instrument.symbol)
+        if series is None or series.is_empty or self.as_of is None:
+            return empty_series(instrument, interval)
+        dates = self._dates[instrument.symbol]
+        end = bisect_right(dates, self.as_of)
+        window = max(lookback_days, self._min_lookback)
+        start = bisect_left(dates, self.as_of - timedelta(days=window))
+        frame = series.frame.iloc[start:end]
+        if frame.empty:
+            return empty_series(instrument, interval)
+        if interval == "1wk":
+            from app.strategies.indicators import to_weekly
+
+            frame = to_weekly(frame)
+        return PriceSeries(
+            instrument=instrument,
+            interval=interval,
+            frame=frame,
+            source=series.source,
+            fetched_at=series.fetched_at,
+        )
+
+
+#: SEBI LODR Regulation 33: quarterly results within 45 days of the quarter's end; the last
+#: quarter of the financial year (March) with the annual results, within 60 days.
+FILING_LAG_DAYS = 45
+FILING_LAG_DAYS_YEAR_END = 60
+
+
+def filed_by(period_end: date) -> date:
+    """The latest date a quarter's results were due to be published."""
+    from datetime import timedelta
+
+    lag = FILING_LAG_DAYS_YEAR_END if period_end.month == 3 else FILING_LAG_DAYS
+    return period_end + timedelta(days=lag)
+
+
+@dataclass
+class AsOfFundamentalsSource:
+    """Quarterly fundamentals as they could have been known on ``as_of``.
+
+    A quarter is visible only once its filing deadline has passed. Using the deadline rather
+    than the actual announcement date is conservative — most companies file earlier — and it
+    is the only date available without an announcements history. Implements
+    `FundamentalsSource`.
+    """
+
+    inner: object
+    as_of: date
+
+    def quarterly(self, instrument: Instrument):
+        from app.data.fundamentals import QuarterlyFundamentals, empty
+
+        try:
+            full = self.inner.quarterly(instrument)
+        except Exception as exc:  # pragma: no cover - sources are contracted not to raise
+            log.warning("as-of fundamentals failed for %s: %s", instrument.symbol, exc)
+            return empty(instrument.symbol)
+        eps = tuple(p for p in full.eps if filed_by(p.period_end) <= self.as_of)
+        revenue = tuple(p for p in full.revenue if filed_by(p.period_end) <= self.as_of)
+        return QuarterlyFundamentals(
+            symbol=full.symbol,
+            eps=eps,
+            revenue=revenue,
+            source_ref=f"{full.source_ref}&as_of={self.as_of.isoformat()}" if full.source_ref
+            else "",
+        )
