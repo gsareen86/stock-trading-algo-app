@@ -401,21 +401,41 @@ export function IdeasExplorer({
                   </p>
                 ) : (
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {movers.map((m) => (
-                      <Link
-                        key={m.symbol}
-                        href={`/stock?symbol=${encodeURIComponent(m.symbol)}`}
-                        className="rounded-token border border-border-subtle bg-surface-sunken px-2.5 py-1 text-xs transition-colors hover:border-accent"
-                        title={m.triggers.join(" · ")}
-                      >
-                        <span className="font-mono font-semibold text-text-primary">
-                          {m.symbol}
-                        </span>
-                        <span className="ml-1.5 text-[11px] text-text-muted">
-                          {m.triggers[0] ?? "mover"}
-                        </span>
-                      </Link>
-                    ))}
+                    {movers.map((m) => {
+                      const labels =
+                        m.triggers && m.triggers.length > 0
+                          ? m.triggers
+                          : (m.signals ?? []).map((s) =>
+                              s.signal_id === "near_52w_high"
+                                ? "Near 52W High"
+                                : s.signal_id === "volume_expansion"
+                                  ? `${s.observed}x Vol`
+                                  : s.signal_id === "one_month_rs_surge"
+                                    ? `+${s.observed}pp RS`
+                                    : s.label,
+                            );
+                      const tooltip =
+                        m.signals && m.signals.length > 0
+                          ? m.signals
+                              .map((s) => `${s.label}: ${s.observed}${s.unit}`)
+                              .join(" · ")
+                          : labels.join(" · ");
+                      return (
+                        <Link
+                          key={m.symbol}
+                          href={`/stock?symbol=${encodeURIComponent(m.symbol)}`}
+                          className="rounded-token border border-border-subtle bg-surface-sunken px-2.5 py-1 text-xs transition-colors hover:border-accent"
+                          title={tooltip || m.symbol}
+                        >
+                          <span className="font-mono font-semibold text-text-primary">
+                            {m.symbol}
+                          </span>
+                          <span className="ml-1.5 text-[11px] text-text-muted">
+                            {labels[0] ?? "mover"}
+                          </span>
+                        </Link>
+                      );
+                    })}
                   </div>
                 )}
               </div>

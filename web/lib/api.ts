@@ -485,15 +485,26 @@ export type SectorPlacement = {
   reason?: string | null;
 };
 
+export type MoverSignal = {
+  signal_id: string;
+  label: string;
+  observed: number;
+  threshold: number;
+  unit: string;
+};
+
 export type NotableMover = {
   symbol: string;
-  name: string;
-  sector: string | null;
-  last_close: number;
-  triggers: string[];
-  rs_20d_pct: number | null;
-  volume_ratio: number | null;
-  pct_from_52w_high: number | null;
+  name: string | null;
+  sector?: string | null;
+  sector_key?: string;
+  close?: number | null;
+  last_close?: number;
+  signals?: MoverSignal[];
+  triggers?: string[];
+  rs_20d_pct?: number | null;
+  volume_ratio?: number | null;
+  pct_from_52w_high?: number | null;
 };
 
 export type QualityFacet = {
