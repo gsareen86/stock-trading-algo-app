@@ -24,9 +24,9 @@ log = logging.getLogger(__name__)
 class YFinancePriceSource:
     """Implements :class:`app.data.protocols.PriceSource`."""
 
-    #: yfinance needs a `period` string; a generous floor avoids short windows returning
-    #: too few bars for a 200-day moving average, which every strategy here needs.
-    MIN_DAILY_LOOKBACK = 400
+    #: yfinance needs a `period` string; 820 calendar days (~550 trading sessions) satisfies
+    #: every strategy's longest lookback including BVM's 1.5-year base + breakout requirement.
+    MIN_DAILY_LOOKBACK = 820
 
     def __init__(self, downloader=None) -> None:
         """``downloader`` is injectable so tests can replay a recorded frame offline."""
@@ -46,6 +46,67 @@ class YFinancePriceSource:
             auto_adjust=False,
             threads=False,
         )
+
+    def download_batch(
+        self,
+        instruments: list[Instrument] | tuple[Instrument, ...],
+        *,
+        interval: Interval = "1d",
+        lookback_days: int = 820,
+    ) -> dict[str, PriceSeries]:
+        """Download OHLCV frames for multiple instruments in a single yfinance batch call."""
+        if not instruments:
+            return {}
+        if self._downloader is not None:
+            return {
+                inst.symbol: self.history(inst, interval=interval, lookback_days=lookback_days)
+                for inst in instruments
+            }
+
+        import yfinance as yf
+
+        days = max(lookback_days, self.MIN_DAILY_LOOKBACK)
+        period = f"{days}d"
+        by_yf = {inst.yf_ticker: inst for inst in instruments}
+        tickers = list(by_yf.keys())
+
+        try:
+            raw = yf.download(
+                tickers,
+                period=period,
+                interval=interval,
+                group_by="ticker",
+                progress=False,
+                auto_adjust=False,
+                threads=True,
+            )
+        except Exception as exc:
+            log.warning("batch price download failed (%d tickers): %s", len(tickers), exc)
+            return {}
+
+        if raw is None or getattr(raw, "empty", True):
+            return {}
+
+        results: dict[str, PriceSeries] = {}
+        is_multi = isinstance(raw.columns, pd.MultiIndex)
+
+        for yf_ticker, inst in by_yf.items():
+            try:
+                if len(tickers) == 1 and not is_multi:
+                    sub = raw
+                elif is_multi and yf_ticker in raw.columns.get_level_values(0):
+                    sub = raw[yf_ticker]
+                elif is_multi and yf_ticker in raw.columns.get_level_values(-1):
+                    sub = raw.xs(yf_ticker, axis=1, level=-1)
+                else:
+                    continue
+                sub = sub.dropna(how="all")
+                if sub.empty:
+                    continue
+                results[inst.symbol] = build_series(inst, interval, sub, source="yfinance")
+            except (PriceSeriesError, KeyError, Exception) as exc:
+                log.debug("batch frame unusable for %s: %s", inst.symbol, exc)
+        return results
 
     def history(
         self,

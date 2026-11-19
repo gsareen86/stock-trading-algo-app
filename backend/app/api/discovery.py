@@ -171,9 +171,22 @@ async def list_sectors(
     benchmark: Annotated[str, Query(pattern=r"^\^(CRSLDX|NSEI)$")] = BENCHMARK_NIFTY500,
 ) -> dict[str, Any]:
     """Compute (or return cached) 14-sector NSE RRG quadrants against benchmark."""
+    import asyncio
+
+    from app.data.sectors import all_sector_indices
+    from app.domain.instrument import Instrument
+
     bench = benchmark.strip().upper()
     price_source = _price_source(request, settings)
-    placements = compute_sector_rrg(price_source, benchmark=bench)
+
+    def _compute():
+        prefetch_fn = getattr(price_source, "prefetch", None)
+        if prefetch_fn is not None:
+            targets = [s.as_instrument() for s in all_sector_indices()] + [Instrument(bench)]
+            prefetch_fn(targets, interval="1d", lookback_days=820, chunk_size=20)
+        return compute_sector_rrg(price_source, benchmark=bench)
+
+    placements = await asyncio.to_thread(_compute)
     sectors = [p.as_dict() for p in placements]
     placed_count = sum(1 for s in sectors if s["quadrant"] != "unplaced")
     source_mode = "live"
@@ -215,23 +228,35 @@ async def sector_movers(
     benchmark: Annotated[str, Query(pattern=r"^\^(CRSLDX|NSEI)$")] = BENCHMARK_NIFTY500,
 ) -> dict[str, Any]:
     """Flag notable sector constituents with exact measured thresholds."""
+    import asyncio
+
+    from app.domain.instrument import Instrument
+
     price_source = _price_source(request, settings)
-    snap = _universe_source(request).snapshot()
+    snap = await asyncio.to_thread(_universe_source(request).snapshot)
     target_sector = sector.strip().lower()
     sector_instruments = [
         inst
         for inst in snap.instruments
         if (mapped := for_instrument(inst)) is not None and mapped.key.lower() == target_sector
     ]
-    movers = find_movers(
-        sector.strip(),
-        sector_instruments,
-        price_source,
-        benchmark=benchmark.strip().upper(),
-    )
+    bench = benchmark.strip().upper()
+
+    def _compute_movers():
+        prefetch_fn = getattr(price_source, "prefetch", None)
+        if prefetch_fn is not None and sector_instruments:
+            prefetch_fn(
+                [*sector_instruments, Instrument(bench)],
+                interval="1d",
+                lookback_days=820,
+                chunk_size=75,
+            )
+        return find_movers(sector.strip(), sector_instruments, price_source, benchmark=bench)
+
+    movers = await asyncio.to_thread(_compute_movers)
     return {
         "sector": sector.strip(),
-        "benchmark": benchmark.strip().upper(),
+        "benchmark": bench,
         "checked_instruments": len(sector_instruments),
         "movers": [m.as_dict() for m in movers],
         "count": len(movers),

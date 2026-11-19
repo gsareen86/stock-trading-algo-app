@@ -138,3 +138,53 @@ class StaticFundamentalsSource:
 
     def quarterly(self, instrument: Instrument) -> QuarterlyFundamentals:
         return self.data.get(instrument.symbol, empty(instrument.symbol))
+
+
+class FinancialsBackedFundamentalsSource:
+    """Adapts a cached :class:`CompanyFinancialsSource` into a :class:`FundamentalsSource`.
+
+    Avoids making a second uncached Yahoo Finance ``quarterly_income_stmt`` request per stock
+    during full-universe scans where :class:`YFinanceQualitySource` already caches quarterly
+    EPS and revenue on disk for 30 days.
+    """
+
+    def __init__(self, financials_source, fallback: FundamentalsSource | None = None) -> None:
+        self._financials = financials_source
+        self._fallback = fallback
+
+    def quarterly(self, instrument: Instrument) -> QuarterlyFundamentals:
+        try:
+            fin = self._financials.financials(instrument)
+        except Exception as exc:
+            log.debug("financials-backed fundamentals failed for %s: %s", instrument.symbol, exc)
+            fin = None
+
+        if fin is not None and not fin.is_empty:
+            eps_stmt = fin.statements.get("quarterly_eps")
+            rev_stmt = fin.statements.get("quarterly_revenue")
+            eps = tuple(
+                QuarterPoint(period_end=p.period_end, value=float(p.value))
+                for p in (eps_stmt.points if eps_stmt else ())
+                if p.period_end is not None
+            )
+            rev = tuple(
+                QuarterPoint(period_end=p.period_end, value=float(p.value))
+                for p in (rev_stmt.points if rev_stmt else ())
+                if p.period_end is not None
+            )
+            if eps or rev:
+                return QuarterlyFundamentals(
+                    symbol=instrument.symbol,
+                    eps=tuple(sorted(eps, key=lambda p: p.period_end, reverse=True)),
+                    revenue=tuple(sorted(rev, key=lambda p: p.period_end, reverse=True)),
+                    source_ref=(
+                        f"fundamentals://{fin.source or 'yfinance'}"
+                        f"/{instrument.yf_ticker}?statement=quarterly_income"
+                    ),
+                )
+            # We already checked Yahoo for this symbol and it had no quarterly statement.
+            return empty(instrument.symbol)
+
+        if self._fallback is not None:
+            return self._fallback.quarterly(instrument)
+        return empty(instrument.symbol)

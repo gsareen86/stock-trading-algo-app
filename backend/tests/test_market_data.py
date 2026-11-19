@@ -95,12 +95,12 @@ class TestYFinanceSource:
         assert source.history(RELIANCE).is_empty
 
     def test_lookback_floor_applied(self) -> None:
-        """Short windows return too few bars for a 200-day moving average."""
+        """Short windows return too few bars for 200-DMA and BVM's 405-bar weekly gate."""
         downloader = RecordingDownloader()
 
         YFinancePriceSource(downloader=downloader).history(RELIANCE, lookback_days=30)
 
-        assert downloader.calls[0]["period"] == "400d"
+        assert downloader.calls[0]["period"] == f"{YFinancePriceSource.MIN_DAILY_LOOKBACK}d"
 
     def test_weekly_interval_passed_through(self) -> None:
         downloader = RecordingDownloader()
@@ -286,6 +286,17 @@ class TestUniverse:
         assert snapshot.index_name == "NIFTY500"
         assert snapshot.origin == "fallback"
         assert 100 < len(snapshot) < 600
+
+    def test_dummy_corporate_action_symbols_excluded(self) -> None:
+        csv_body = (
+            "Company Name,Industry,Symbol,Series,ISIN Code\n"
+            "Reliance Industries Ltd.,Oil Gas & Consumable Fuels,RELIANCE,EQ,INE002A01018\n"
+            "Dummy HEG Placeholder,Capital Goods,DUMMYHEG,EQ,IN0000000000\n"
+            "Dummy Inox Placeholder,Capital Goods,DUMMYINXGN,EQ,IN0000000001\n"
+        )
+        snapshot = NseUniverseSource(fetcher=lambda _url: csv_body).snapshot()
+
+        assert [i.symbol for i in snapshot.instruments] == ["RELIANCE"]
 
 
 class TestFakeSource:

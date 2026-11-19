@@ -76,10 +76,15 @@ async def stock_chart(
     sym = symbol.strip().upper()
     range_key = range.upper()
     display_bars = RANGE_BARS.get(range_key, 252)
-    lookback_days = max(500, int(display_bars * 1.6) + 260)
+    lookback_days = max(820, int(display_bars * 1.6) + 260)
 
-    series = _price_source(request, settings).history(
-        Instrument(sym), interval="1d", lookback_days=lookback_days
+    import asyncio
+
+    series = await asyncio.to_thread(
+        _price_source(request, settings).history,
+        Instrument(sym),
+        interval="1d",
+        lookback_days=lookback_days,
     )
     if series.is_empty:
         return {
@@ -146,13 +151,15 @@ async def stock_quality(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, Any]:
     """Business quality facets, quarterly trends, and shareholding."""
+    import asyncio
+
     sym = symbol.strip().upper()
-    snap = _universe_source(request).snapshot()
+    snap = await asyncio.to_thread(_universe_source(request).snapshot)
     inst = next((i for i in snap.instruments if i.symbol == sym), None) or Instrument(sym)
     sec_idx = for_instrument(inst)
     sec_key = sec_idx.key if sec_idx else None
 
-    fin = _financials_source(request, settings).financials(inst)
+    fin = await asyncio.to_thread(_financials_source(request, settings).financials, inst)
     report = evaluate_quality(fin, symbol=sym, sector_key=sec_key)
 
     shareholding = (

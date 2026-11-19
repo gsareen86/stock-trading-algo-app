@@ -29,6 +29,13 @@ def sse_stream_response(
     """Wrap an async runner ``(emit) -> result_dict`` as a live SSE StreamingResponse."""
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
     started = time.monotonic()
+    loop_holder: list[asyncio.AbstractEventLoop] = []
+
+    def _enqueue(item: tuple[str, dict[str, Any]] | None) -> None:
+        if loop_holder:
+            loop_holder[0].call_soon_threadsafe(queue.put_nowait, item)
+        else:
+            queue.put_nowait(item)
 
     def emit(
         step: str,
@@ -39,7 +46,7 @@ def sse_stream_response(
         pct: float | None = None
         if completed is not None and total is not None and total > 0:
             pct = round(min(100.0, max(0.0, completed / total * 100.0)), 1)
-        queue.put_nowait(
+        _enqueue(
             (
                 "progress",
                 {
@@ -56,7 +63,7 @@ def sse_stream_response(
     async def drive() -> None:
         try:
             result = await runner(emit)
-            queue.put_nowait(
+            _enqueue(
                 (
                     "complete",
                     {
@@ -66,7 +73,7 @@ def sse_stream_response(
                 )
             )
         except Exception as exc:  # pragma: no cover - surfaced cleanly as SSE error
-            queue.put_nowait(
+            _enqueue(
                 (
                     "error",
                     {
@@ -76,9 +83,10 @@ def sse_stream_response(
                 )
             )
         finally:
-            queue.put_nowait(None)
+            _enqueue(None)
 
     async def generate() -> AsyncIterator[str]:
+        loop_holder.append(asyncio.get_running_loop())
         task = asyncio.create_task(drive())
         try:
             while True:

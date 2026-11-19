@@ -196,8 +196,6 @@
     "DIXON",
     "LALPATHLAB",
     "DRREDDY",
-    "DUMMYHEG",
-    "DUMMYINXGN",
     "DYNAMATECH",
     "EIDPARRY",
     "E2E",
@@ -1725,16 +1723,6 @@
       "symbol": "DRREDDY",
       "name": "Dr. Reddy's Laboratories Ltd.",
       "industry": "Healthcare"
-    },
-    {
-      "symbol": "DUMMYHEG",
-      "name": "Dummy HEG Ltd.",
-      "industry": "Capital Goods"
-    },
-    {
-      "symbol": "DUMMYINXGN",
-      "name": "Dummy Inox Green Ltd.",
-      "industry": "Construction"
     },
     {
       "symbol": "DYNAMATECH",
@@ -4516,5 +4504,6 @@
       "name": "eClerx Services Ltd.",
       "industry": "Services"
     }
-  ]
+  ],
+  "count": 750
 }

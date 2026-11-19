@@ -95,6 +95,7 @@ class NseUniverseSource:
         csv_url: str | None = None,
         fetcher=None,
         timeout: float = 10.0,
+        cache_ttl_seconds: float = 6 * 3600.0,
     ) -> None:
         """``fetcher`` is injectable so tests replay a recorded CSV rather than calling NSE."""
         self._index_name = index_name.strip().upper()
@@ -108,6 +109,9 @@ class NseUniverseSource:
         self._csv_url = self._csv_urls[0]
         self._fetcher = fetcher
         self._timeout = timeout
+        self._cache_ttl = cache_ttl_seconds
+        self._cached_snapshot: UniverseSnapshot | None = None
+        self._cached_at: float = 0.0
 
     def _fetch_csv(self) -> str | None:
         if self._fetcher is not None:
@@ -137,7 +141,7 @@ class NseUniverseSource:
             # NSE's header casing has changed before; match case-insensitively.
             lowered = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
             symbol = lowered.get("symbol", "")
-            if not symbol:
+            if not symbol or symbol.upper().startswith("DUMMY"):
                 continue
             parsed.append(
                 (
@@ -149,6 +153,15 @@ class NseUniverseSource:
         return parsed
 
     def snapshot(self) -> UniverseSnapshot:
+        import time
+
+        if (
+            self._fetcher is None
+            and self._cached_snapshot is not None
+            and (time.monotonic() - self._cached_at) < self._cache_ttl
+        ):
+            return self._cached_snapshot
+
         blocked = blocked_symbols()
 
         try:
@@ -171,12 +184,16 @@ class NseUniverseSource:
                 continue
             kept.append(Instrument(symbol=symbol, name=name, sector=sector))
 
-        return UniverseSnapshot(
+        snap = UniverseSnapshot(
             instruments=tuple(kept),
             origin="live",
             index_name=self._index_name,
             excluded=tuple(sorted(excluded)),
         )
+        if self._fetcher is None:
+            self._cached_snapshot = snap
+            self._cached_at = time.monotonic()
+        return snap
 
     def _fallback_snapshot(self, blocked: frozenset[str]) -> UniverseSnapshot:
         fallback_path = INDEX_FALLBACK_FILES.get(self._index_name, TOTAL_MARKET_FALLBACK_FILE)

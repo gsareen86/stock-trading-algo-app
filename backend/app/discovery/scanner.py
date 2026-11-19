@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,10 +15,16 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.clock import now_utc
 from app.data.protocols import CompanyFinancialsSource, PriceSource, UniverseSource
-from app.data.sectors import for_instrument
+from app.data.sectors import all_sector_indices, for_instrument
 from app.discovery.quality import QualityReport, evaluate_quality
 from app.discovery.ranking import CandidateEntry, rank_candidates
-from app.discovery.sectors import BENCHMARK_NIFTY500, SectorPlacement, compute_sector_rrg
+from app.discovery.sectors import (
+    BENCHMARK_NIFTY50,
+    BENCHMARK_NIFTY500,
+    SectorPlacement,
+    compute_sector_rrg,
+)
+from app.domain.instrument import Instrument
 from app.domain.verdict import Evidence, GateResult, Plan, Stance, Verdict
 from app.llm.types import LLMGateway
 from app.narratives.generator import narrate_all
@@ -169,7 +177,7 @@ class DiscoveryScanner:
                 if existing is not None:
                     raise ScanInProgressError(existing.id)
 
-            snapshot = self._universe.snapshot()
+            snapshot = await asyncio.to_thread(self._universe.snapshot)
             with self._sessions() as session:
                 row = ScanRunRow(
                     trigger=trigger,
@@ -193,20 +201,50 @@ class DiscoveryScanner:
                 if on_progress is not None:
                     on_progress(step, label, completed, total)
 
-            # 1. Screen universe in universe order
+            # 0. Batch-prefetch OHLCV prices (universe + 14 sectors + benchmarks) into cache
             total_universe = len(snapshot.instruments)
+            prefetch_fn = getattr(self._prices, "prefetch", None)
+            if prefetch_fn is not None:
+                sector_insts = [s.as_instrument() for s in all_sector_indices()]
+                bench_insts = [Instrument(BENCHMARK_NIFTY50), Instrument(BENCHMARK_NIFTY500)]
+                all_targets = [*snapshot.instruments, *sector_insts, *bench_insts]
+                emit(
+                    "prices",
+                    f"Downloading live OHLCV bars (0 / {len(all_targets)})",
+                    0,
+                    len(all_targets),
+                )
+                await asyncio.to_thread(
+                    prefetch_fn,
+                    all_targets,
+                    interval="1d",
+                    lookback_days=820,
+                    chunk_size=75,
+                    on_progress=lambda done, tot: emit(
+                        "prices",
+                        f"Downloading live OHLCV bars ({done} / {tot})",
+                        done,
+                        tot,
+                    ),
+                )
+
+            # 1. Screen universe in universe order (runs off warm cache)
             emit("screening", f"Screening {total_universe} instruments", 0, total_universe)
-            screen_result = Screener(self._prices).run(snapshot, criteria=criteria)
+            screen_result = await asyncio.to_thread(
+                Screener(self._prices).run, snapshot, criteria=criteria
+            )
             emit(
                 "screening",
-                f"Screened {total_universe} instruments",
+                f"Screened {total_universe} instruments ({len(screen_result.eligible)} eligible)",
                 total_universe,
                 total_universe,
             )
 
             # 2. Compute 14-sector RRG quadrants
             emit("sectors", "Computing 14-sector RRG rotation", 0, 14)
-            sector_placements = compute_sector_rrg(self._prices, benchmark=benchmark)
+            sector_placements = await asyncio.to_thread(
+                compute_sector_rrg, self._prices, benchmark=benchmark
+            )
             emit(
                 "sectors",
                 "Computed 14-sector RRG rotation",
@@ -214,9 +252,50 @@ class DiscoveryScanner:
                 len(sector_placements),
             )
 
-            # 3. Evaluate all 4 strategies + Quality facets over eligible instruments
+            # 3. Warm financials & quarterly EPS/revenue concurrently (30-day cached on disk)
             eligible = screen_result.eligible
             total_eligible = len(eligible)
+            financials_map: dict[str, Any] = {}
+            if self._financials is not None and eligible:
+                emit(
+                    "financials",
+                    f"Loading financials & quality (0 / {total_eligible})",
+                    0,
+                    total_eligible,
+                )
+
+                def _warm_financials() -> dict[str, Any]:
+                    fetched: dict[str, Any] = {}
+                    done_count = 0
+
+                    def _one(inst: Instrument):
+                        try:
+                            return inst.symbol, self._financials.financials(inst)
+                        except Exception as exc:
+                            log.debug("quality fetch failed for %s: %s", inst.symbol, exc)
+                            return inst.symbol, None
+
+                    with ThreadPoolExecutor(max_workers=12) as pool:
+                        futures = [pool.submit(_one, inst) for inst in eligible]
+                        for fut in as_completed(futures):
+                            sym, fin_obj = fut.result()
+                            fetched[sym] = fin_obj
+                            done_count += 1
+                            if done_count == total_eligible or done_count % 25 == 0:
+                                emit(
+                                    "financials",
+                                    (
+                                        f"Loading financials & quality "
+                                        f"({done_count} / {total_eligible})"
+                                    ),
+                                    done_count,
+                                    total_eligible,
+                                )
+                    return fetched
+
+                financials_map = await asyncio.to_thread(_warm_financials)
+
+            # 4. Evaluate all 4 strategies + Quality facets over eligible instruments
             strategy_defs = self._strategies.definitions()
             strategy_ctx = StrategyContext(
                 price_source=self._prices,
@@ -226,49 +305,56 @@ class DiscoveryScanner:
             theme_labels: dict[str, list[dict[str, Any]]] = {}
             if self._theme_labeller is not None and eligible:
                 try:
-                    theme_labels = self._theme_labeller([inst.symbol for inst in eligible]) or {}
+                    theme_labels = (
+                        await asyncio.to_thread(
+                            self._theme_labeller, [inst.symbol for inst in eligible]
+                        )
+                        or {}
+                    )
                 except Exception as exc:
                     log.debug("theme labeller unavailable during scan: %s", exc)
 
-            entries: list[CandidateEntry] = []
-            for idx, inst in enumerate(eligible):
-                emit(
-                    "strategies",
-                    f"Evaluating strategies & plans ({idx + 1} / {total_eligible})",
-                    idx + 1,
-                    total_eligible,
-                )
-                verdicts = [defn.strategy.evaluate(inst, strategy_ctx) for defn in strategy_defs]
-                sec_idx = for_instrument(inst)
-                sec_key = sec_idx.key if sec_idx else None
+            def _evaluate_all() -> list[CandidateEntry]:
+                out: list[CandidateEntry] = []
+                for idx, inst in enumerate(eligible):
+                    if idx == 0 or (idx + 1) == total_eligible or (idx + 1) % 25 == 0:
+                        emit(
+                            "strategies",
+                            f"Evaluating strategies & plans ({idx + 1} / {total_eligible})",
+                            idx + 1,
+                            total_eligible,
+                        )
+                    verdicts = [
+                        defn.strategy.evaluate(inst, strategy_ctx) for defn in strategy_defs
+                    ]
+                    sec_idx = for_instrument(inst)
+                    sec_key = sec_idx.key if sec_idx else None
 
-                fin = None
-                if self._financials is not None:
-                    try:
-                        fin = self._financials.financials(inst)
-                    except Exception as exc:
-                        log.debug("quality fetch failed for %s: %s", inst.symbol, exc)
-                quality_report: QualityReport = evaluate_quality(
-                    fin, symbol=inst.symbol, sector_key=sec_key
-                )
-
-                entries.append(
-                    CandidateEntry.from_verdicts(
-                        symbol=inst.symbol,
-                        name=inst.name,
-                        sector=inst.sector,
-                        sector_key=sec_key,
-                        universe_index=idx,
-                        verdicts=verdicts,
-                        quality=quality_report,
-                        themes=theme_labels.get(inst.symbol, ()),
+                    fin = financials_map.get(inst.symbol)
+                    quality_report: QualityReport = evaluate_quality(
+                        fin, symbol=inst.symbol, sector_key=sec_key
                     )
-                )
 
-            # 4. Deterministic attribution ranking BEFORE any LLM narration
+                    out.append(
+                        CandidateEntry.from_verdicts(
+                            symbol=inst.symbol,
+                            name=inst.name,
+                            sector=inst.sector,
+                            sector_key=sec_key,
+                            universe_index=idx,
+                            verdicts=verdicts,
+                            quality=quality_report,
+                            themes=theme_labels.get(inst.symbol, ()),
+                        )
+                    )
+                return out
+
+            entries = await asyncio.to_thread(_evaluate_all)
+
+            # 5. Deterministic attribution ranking BEFORE any LLM narration
             ranked = rank_candidates(entries)
 
-            # 5. Optional narration confined strictly to the ranked head
+            # 6. Optional narration confined strictly to the ranked head
             if narrate and self._gateway is not None and narrate_head > 0 and ranked:
                 head_slice = ranked[:narrate_head]
                 to_narrate = [

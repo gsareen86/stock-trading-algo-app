@@ -132,14 +132,16 @@ class YFinanceQualitySource:
             q_income = ticker.quarterly_income_stmt
         except Exception as exc:
             log.debug("quarterly_income_stmt unavailable for %s: %s", yf_ticker, exc)
-        try:
-            balance = ticker.balance_sheet
-        except Exception as exc:
-            log.debug("balance_sheet unavailable for %s: %s", yf_ticker, exc)
-        try:
-            cashflow = ticker.cashflow
-        except Exception as exc:
-            log.debug("cashflow unavailable for %s: %s", yf_ticker, exc)
+        if _clean_float(info.get("debtToEquity")) is None:
+            try:
+                balance = ticker.balance_sheet
+            except Exception as exc:
+                log.debug("balance_sheet unavailable for %s: %s", yf_ticker, exc)
+        if _clean_float(info.get("freeCashflow")) is None:
+            try:
+                cashflow = ticker.cashflow
+            except Exception as exc:
+                log.debug("cashflow unavailable for %s: %s", yf_ticker, exc)
         return {
             "info": info,
             "quarterly_income_stmt": q_income,

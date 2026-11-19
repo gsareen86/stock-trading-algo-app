@@ -38,12 +38,13 @@ from app.api.watchlist import router as watchlist_router
 from app.auth.guard import AuthGuard
 from app.auth.service import AuthService
 from app.broker.session import DEFAULT_KITE_MCP_URL, KiteSession
+from app.core.clock import now_utc
 from app.core.logging import configure_logging
 from app.core.rate_limit import RateLimiter
 from app.core.scheduler import Scheduler
 from app.core.settings import Settings
 from app.data.cache import CachingPriceSource
-from app.data.fundamentals import YFinanceFundamentalsSource
+from app.data.fundamentals import FinancialsBackedFundamentalsSource, YFinanceFundamentalsSource
 from app.data.profiles import YFinanceProfileSource
 from app.data.provider_budget import MonthlyRequestBudget
 from app.data.search import TavilySearchSource
@@ -55,12 +56,37 @@ from app.discovery.scanner import DiscoveryScanner
 from app.llm.budget import DailyBudget
 from app.llm.gateway import LiteLLMGateway
 from app.llm.recorder import CallRecorder
+from app.persistence.models import ScanRun as ScanRunRow
 from app.persistence.session import make_engine, make_session_factory
 from app.strategies.registry import StrategyRegistry
 from app.themes.assembly import build_runner
 from app.tools.registry import ToolRegistry
 
 log = logging.getLogger(__name__)
+
+
+def _recover_orphaned_scans(session_factory) -> None:
+    """Mark any in-flight scan rows left behind by an abruptly killed process as interrupted."""
+    from sqlalchemy import select
+
+    try:
+        with session_factory() as session:
+            stale = (
+                session.execute(select(ScanRunRow).where(ScanRunRow.outcome == "running"))
+                .scalars()
+                .all()
+            )
+            if stale:
+                stamp = now_utc()
+                for row in stale:
+                    row.outcome = "interrupted"
+                    row.error = "interrupted by server restart"
+                    row.finished_at = stamp
+                session.commit()
+                log.info("marked %d orphaned running scan(s) as interrupted", len(stale))
+    except Exception:
+        # Table may not exist yet before migrations run.
+        pass
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -76,6 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = make_engine(settings)
     app.state.session_factory = make_session_factory(app.state.engine)
+    _recover_orphaned_scans(app.state.session_factory)
 
     # The recorder and budget share the session factory: one writes the ledger, the other
     # reads it back to decide whether the platform may keep spending.
@@ -103,9 +130,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.price_source = CachingPriceSource(
         YFinancePriceSource(), cache_dir=f"{settings.llm_cache_dir}/prices"
     )
-    app.state.fundamentals_source = YFinanceFundamentalsSource()
     app.state.company_financials_source = build_company_financials_source(
         settings, app.state.session_factory
+    )
+    app.state.fundamentals_source = FinancialsBackedFundamentalsSource(
+        app.state.company_financials_source,
+        fallback=YFinanceFundamentalsSource(),
     )
     app.state.profile_source = YFinanceProfileSource(
         cache_path=f"{settings.llm_cache_dir}/profiles.json"

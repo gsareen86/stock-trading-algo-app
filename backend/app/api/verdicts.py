@@ -7,12 +7,14 @@ is something a reader sees, never something the platform computes.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_gateway, get_session_factory, get_settings
+from app.api.screening import _universe_source
 from app.core.settings import Settings
 from app.data.cache import CachingPriceSource
 from app.data.fundamentals import YFinanceFundamentalsSource
@@ -115,12 +117,25 @@ async def evaluate(
         price_source=_price_source(request, settings),
         fundamentals_source=_fundamentals_source(request),
     )
-    verdicts: list[Verdict] = []
-    for symbol in payload.symbols:
-        instrument = Instrument(symbol.strip().upper())
-        for strategy_id in selected:
-            definition = registry.get(strategy_id)
-            verdicts.append(definition.strategy.evaluate(instrument, context))
+
+    def _evaluate_sync() -> list[Verdict]:
+        by_sym: dict[str, Instrument] = {}
+        try:
+            snap = _universe_source(request).snapshot()
+            by_sym = {inst.symbol: inst for inst in snap.instruments}
+        except Exception:
+            by_sym = {}
+
+        out: list[Verdict] = []
+        for symbol in payload.symbols:
+            clean = symbol.strip().upper()
+            instrument = by_sym.get(clean) or Instrument(clean)
+            for strategy_id in selected:
+                definition = registry.get(strategy_id)
+                out.append(definition.strategy.evaluate(instrument, context))
+        return out
+
+    verdicts = await asyncio.to_thread(_evaluate_sync)
 
     # Narrate before persisting, so a stored verdict carries the prose that was shown for it.
     narration: list[dict] | None = None
