@@ -11,6 +11,7 @@ could reason about.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import FastAPI
@@ -21,26 +22,36 @@ from app.api.backtest import router as backtest_router
 from app.api.books import router as books_router
 from app.api.broker import router as broker_router
 from app.api.cycles import router as cycles_router
+from app.api.discovery import _theme_labeller
+from app.api.discovery import router as discovery_router
 from app.api.health import router as health_router
 from app.api.insights import router as insights_router
 from app.api.llm import router as llm_router
+from app.api.research import router as research_router
 from app.api.root import router as root_router
 from app.api.screening import router as screening_router
-from app.api.research import router as research_router
+from app.api.stocks import router as stocks_router
 from app.api.themes import router as themes_router
 from app.api.tools import router as tools_router
 from app.api.verdicts import router as verdicts_router
+from app.api.watchlist import router as watchlist_router
 from app.auth.guard import AuthGuard
 from app.auth.service import AuthService
 from app.broker.session import DEFAULT_KITE_MCP_URL, KiteSession
 from app.core.logging import configure_logging
+from app.core.rate_limit import RateLimiter
 from app.core.scheduler import Scheduler
 from app.core.settings import Settings
-from app.core.rate_limit import RateLimiter
+from app.data.cache import CachingPriceSource
+from app.data.fundamentals import YFinanceFundamentalsSource
 from app.data.profiles import YFinanceProfileSource
 from app.data.provider_budget import MonthlyRequestBudget
 from app.data.search import TavilySearchSource
 from app.data.universe import NseUniverseSource
+from app.data.yfinance_quality import build_company_financials_source
+from app.data.yfinance_source import YFinancePriceSource
+from app.discovery.briefing import record_scan_transitions
+from app.discovery.scanner import DiscoveryScanner
 from app.llm.budget import DailyBudget
 from app.llm.gateway import LiteLLMGateway
 from app.llm.recorder import CallRecorder
@@ -85,10 +96,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tools = ToolRegistry.discover()
     app.state.strategies = StrategyRegistry.discover()
 
-    # Themes: assembled here so the factory stays a list of what exists. Every model-backed
-    # step degrades to absent, so a missing extra or an unreachable model produces a runner
-    # that reports what it could not read rather than a platform that will not boot.
+    # Themes & Discovery: assembled here so the factory stays a list of what exists. Every
+    # model-backed step degrades to absent, so a missing extra or an unreachable model produces
+    # a runner that reports what it could not read rather than a platform that will not boot.
     app.state.universe_source = NseUniverseSource()
+    app.state.price_source = CachingPriceSource(
+        YFinancePriceSource(), cache_dir=f"{settings.llm_cache_dir}/prices"
+    )
+    app.state.fundamentals_source = YFinanceFundamentalsSource()
+    app.state.company_financials_source = build_company_financials_source(
+        settings, app.state.session_factory
+    )
     app.state.profile_source = YFinanceProfileSource(
         cache_path=f"{settings.llm_cache_dir}/profiles.json"
     )
@@ -106,6 +124,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.search_configured
         else None
     )
+    app.state.discovery_scanner = DiscoveryScanner(
+        session_factory=app.state.session_factory,
+        universe_source=app.state.universe_source,
+        price_source=app.state.price_source,
+        strategies=app.state.strategies,
+        fundamentals_source=app.state.fundamentals_source,
+        company_financials_source=app.state.company_financials_source,
+        gateway=app.state.gateway,
+        theme_labeller=_theme_labeller(app.state.session_factory),
+    )
     try:
         app.state.theme_runner = build_runner(
             settings=settings,
@@ -114,6 +142,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             tools=app.state.tools,
             universe_source=app.state.universe_source,
             profile_source=app.state.profile_source,
+            price_source=app.state.price_source,
+            search_source=app.state.search_source,
         )
     except Exception as exc:  # pragma: no cover - construction is dependency-light
         log.warning("theme runner unavailable: %s", exc)
@@ -129,6 +159,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             day=settings.theme_run_day,
             hour=settings.theme_run_hour,
         )
+
+    def _run_scheduled_discovery_scan() -> None:
+        summary = asyncio.run(app.state.discovery_scanner.run(trigger="scheduled"))
+        record_scan_transitions(
+            app.state.session_factory,
+            run_id=summary.run_id,
+            price_source=app.state.price_source,
+        )
+
+    app.state.scheduler.every_day(
+        "discovery_scan",
+        _run_scheduled_discovery_scan,
+        hour=settings.scan_run_hour,
+        minute=settings.scan_run_minute,
+    )
     app.state.scheduler.start()
 
     # The browser is not a database client here; it reaches data only through this API, so
@@ -153,6 +198,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(verdicts_router)
     app.include_router(cycles_router)
     app.include_router(screening_router)
+    app.include_router(discovery_router)
+    app.include_router(watchlist_router)
+    app.include_router(stocks_router)
     app.include_router(books_router)
     app.include_router(insights_router)
     app.include_router(backtest_router)

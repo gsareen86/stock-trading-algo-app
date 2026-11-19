@@ -30,6 +30,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agents.skills import combined_skill_prompt
 from app.agents.toolbelt import Toolbelt
 from app.llm.types import LLMGateway, Message
 
@@ -128,8 +129,11 @@ async def ask(
     if not tools:
         return Answer(question=question, answer="", reason="no tools are available")
 
+    skills_text = combined_skill_prompt()
+    system_prompt = f"{SYSTEM}\n\n{skills_text}" if skills_text else SYSTEM
+
     messages = [
-        Message(role="system", content=SYSTEM),
+        Message(role="system", content=system_prompt),
         Message(role="user", content=question),
     ]
 

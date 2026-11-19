@@ -59,8 +59,12 @@ class Scheduler:
     def every_week(self, job_id: str, run: Callable[[], None], day: str, hour: int) -> None:
         self._jobs.append((job_id, run, {"trigger": "cron", "day_of_week": day, "hour": hour}))
 
-    def every_day(self, job_id: str, run: Callable[[], None], hour: int) -> None:
-        self._jobs.append((job_id, run, {"trigger": "cron", "hour": hour}))
+    def every_day(
+        self, job_id: str, run: Callable[[], None], hour: int, minute: int = 0
+    ) -> None:
+        self._jobs.append(
+            (job_id, run, {"trigger": "cron", "hour": hour, "minute": minute})
+        )
 
     def start(self) -> bool:
         """Begin scheduling. False when nothing will run, for any reason."""

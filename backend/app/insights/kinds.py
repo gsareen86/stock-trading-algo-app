@@ -41,8 +41,16 @@ class Kind(StrEnum):
     OPPORTUNITY = "opportunity"
     #: The book is at its position limit, so opportunities cannot be acted on.
     BOOK_FULL = "book_full"
-    #: The market regime changed.
+    #: Market regime changed.
     REGIME_CHANGE = "regime_change"
+    #: A tracked watchlist name flipped from WATCH to BUY for a strategy.
+    WATCHLIST_FLIP = "watchlist_flip"
+    #: A tracked watchlist name moved within 2% of a strategy's Plan entry pivot.
+    PIVOT_PROXIMITY = "pivot_proximity"
+    #: An NSE sector index shifted RRG quadrant (e.g. Lagging -> Improving).
+    SECTOR_SHIFT = "sector_shift"
+    #: A new emerging theme or concall catalyst surfaced for a watched or BUY stock.
+    THEME_CATALYST = "theme_catalyst"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +67,10 @@ SPECS: dict[Kind, KindSpec] = {
     # joining verdicts to positions. Restated weekly while it stays true.
     Kind.THESIS_BROKEN: KindSpec(Severity.HIGH, suppress_days=7),
     Kind.CONCENTRATION: KindSpec(Severity.HIGH, suppress_days=7),
+    Kind.WATCHLIST_FLIP: KindSpec(Severity.HIGH, suppress_days=2),
+    Kind.PIVOT_PROXIMITY: KindSpec(Severity.MEDIUM, suppress_days=2),
+    Kind.SECTOR_SHIFT: KindSpec(Severity.MEDIUM, suppress_days=7),
+    Kind.THEME_CATALYST: KindSpec(Severity.MEDIUM, suppress_days=3, from_research=True),
     Kind.EVENT_DUE: KindSpec(Severity.MEDIUM, suppress_days=3, from_research=True),
     Kind.POSITION_NEWS: KindSpec(Severity.MEDIUM, suppress_days=2, from_research=True),
     Kind.OPPORTUNITY: KindSpec(Severity.MEDIUM, suppress_days=3),

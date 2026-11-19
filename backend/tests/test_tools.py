@@ -87,12 +87,16 @@ class TestDiscovery:
         """
         assert registry.names() == [
             "commentary",
+            "company_quality",
             "concept_extract",
             "event_calendar",
             "filings_scan",
             "news_research",
             "peer_compare",
             "policy_classify",
+            "portfolio_and_watchlist",
+            "sector_rotation",
+            "setup_screener",
             "theme_chain",
             "theme_merge",
             "theme_participants",

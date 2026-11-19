@@ -47,7 +47,7 @@ def _fundamentals_source(request: Request):
 
 
 def _serialise(verdict: Verdict) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "strategy_id": verdict.strategy_id,
         "ticker": verdict.ticker,
         "as_of": verdict.as_of.isoformat(),
@@ -60,6 +60,11 @@ def _serialise(verdict: Verdict) -> dict[str, Any]:
         "narrative": verdict.narrative,
         "trace_id": verdict.trace_id,
     }
+    if verdict.plan is not None:
+        payload["plan"] = verdict.plan.as_dict()
+    if verdict.plan_note is not None:
+        payload["plan_note"] = verdict.plan_note
+    return payload
 
 
 class EvaluateRequest(BaseModel):

@@ -245,6 +245,10 @@ class Settings(BaseSettings):
     theme_run_day: str = "sun"
     theme_run_hour: Annotated[int, Field(ge=0, le=23)] = 8
 
+    #: Daily post-close discovery scan time, IST (16:15 IST by default, after NSE closing bar).
+    scan_run_hour: Annotated[int, Field(ge=0, le=23)] = 16
+    scan_run_minute: Annotated[int, Field(ge=0, le=59)] = 15
+
     # ── Observability ─────────────────────────────────────────────────────────
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None

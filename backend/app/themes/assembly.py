@@ -60,6 +60,8 @@ def build_runner(
     universe_source,
     profile_source=None,
     document_budget: int = DEFAULT_DOCUMENT_BUDGET,
+    price_source=None,
+    search_source=None,
 ) -> ThemeRunner:
     """A runner wired to the live sources, models and stores."""
     themes = ThemeStore(session_factory)
@@ -67,16 +69,38 @@ def build_runner(
     model = settings.model_for_task("research")
     call = _caller(gateway, model)
 
-    def gather() -> Gathered:
+    def gather(on_progress=None) -> Gathered:
+        from app.agents.scout import IdeaScout
         from app.domain.themes import SourceKind
         from app.themes import sources
 
         period = _current_period()
-        symbols = [i.symbol for i in universe_source.snapshot().instruments]
-        sectors = {i.symbol: i.sector for i in universe_source.snapshot().instruments if i.sector}
+        snap = universe_source.snapshot()
+        sectors = {i.symbol: i.sector for i in snap.instruments if i.sector}
         unavailable: list[SourceKind] = []
         references: list[Any] = []
         documents = 0
+
+        scout = IdeaScout(
+            tools=tools,
+            session_factory=session_factory,
+            universe_source=universe_source,
+            price_source=price_source,
+            search_source=search_source,
+            period=period,
+        )
+        scout_plan = scout.plan(limit=max(document_budget, 20), include_web_discovery=True)
+        symbols = list(scout_plan.prioritized_symbols) or [i.symbol for i in snap.instruments]
+        references.extend(scout_plan.web_references)
+
+        target_count = min(len(symbols), document_budget)
+        if on_progress is not None:
+            on_progress(
+                "concalls",
+                f"Reading concalls 0 / {target_count}",
+                0,
+                target_count,
+            )
 
         commentary = sources.read_documents(
             symbols,
@@ -92,6 +116,29 @@ def build_runner(
         documents += commentary.documents_read
         if not commentary.available:
             unavailable.append(SourceKind.COMMENTARY)
+        if on_progress is not None:
+            on_progress(
+                "concalls",
+                f"Read concalls {target_count} / {target_count}",
+                target_count,
+                target_count,
+            )
+
+        filing_budget = min(10, target_count)
+        filings = sources.read_documents(
+            symbols,
+            reader=_filings_reader(tools),
+            extractor=_extractor(tools, call),
+            store=concepts,
+            period=period,
+            kind=SourceKind.FILING,
+            sectors=sectors,
+            limit=filing_budget,
+        )
+        references.extend(filings.references)
+        documents += filings.documents_read
+        if not filings.available:
+            unavailable.append(SourceKind.FILING)
 
         policy = sources.policy_references(classifier=_classifier(tools, call), period=period)
         references.extend(policy.references)
@@ -277,6 +324,27 @@ def _commentary_reader(tools: ToolRegistry):
             return []
         url = (result.data or {}).get("document_url") or f"commentary://{symbol}"
         return [(item["text"], f"{url}#section={item['section_index']}") for item in result.items]
+
+    return read
+
+
+def _filings_reader(tools: ToolRegistry):
+    """Yield `(text, source_ref)` for recent exchange announcements."""
+
+    def read(symbol: str) -> list[tuple[str, str]]:
+        result = tools.invoke(
+            "filings_scan", {"symbol": symbol, "days": 30, "limit": 5}, ToolContext()
+        )
+        if not result.ok:
+            return []
+        return [
+            (
+                f"{item['subject']} ({item.get('category') or 'announcement'})",
+                item["source_ref"],
+            )
+            for item in result.items
+            if item.get("subject")
+        ]
 
     return read
 

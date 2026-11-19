@@ -45,6 +45,10 @@ class ToolContext:
     now: Callable[[], Any] | None = None
     #: Per-tool overrides — e.g. a recorded feed fetcher in place of the live one.
     fetchers: dict[str, Any] = field(default_factory=dict)
+    #: Optional read-only collaborators injected by API / agent runners.
+    session_factory: Any = None
+    company_financials_source: Any = None
+    universe_source: Any = None
 
 
 #: A handler receives validated arguments and the context, and returns output to be validated.

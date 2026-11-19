@@ -76,7 +76,15 @@ def _context(request: Request, settings: Settings) -> ToolContext:
     if gateway is not None:
         fetchers.update(_model_fetchers(gateway, settings))
 
-    return ToolContext(fetchers=fetchers)
+    return ToolContext(
+        price_source=getattr(request.app.state, "price_source", None),
+        session_factory=getattr(request.app.state, "session_factory", None),
+        company_financials_source=getattr(
+            request.app.state, "company_financials_source", None
+        ),
+        universe_source=getattr(request.app.state, "universe_source", None),
+        fetchers=fetchers,
+    )
 
 
 def _model_fetchers(gateway, settings: Settings) -> dict[str, Any]:

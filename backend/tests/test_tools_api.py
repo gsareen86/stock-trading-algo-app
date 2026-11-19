@@ -27,6 +27,10 @@ class TestSkillsEndpoint:
             "tier_decompose",
             "web_search",
             "theme_participants",
+            "company_quality",
+            "sector_rotation",
+            "portfolio_and_watchlist",
+            "setup_screener",
         }
         assert body["count"] == len(names)
         for tool in body["tools"]:

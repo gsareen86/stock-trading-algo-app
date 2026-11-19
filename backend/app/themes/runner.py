@@ -159,7 +159,16 @@ class ThemeRunner:
         #: search is ever attempted — which is what a platform with no search key does.
         self._researcher = researcher
 
-    def run(self, trigger: str = "requested") -> ThemeRunResult:
+    def run(self, trigger: str = "requested", on_progress=None) -> ThemeRunResult:
+        def emit(
+            step: str,
+            label: str,
+            completed: int | None = None,
+            total: int | None = None,
+        ) -> None:
+            if on_progress is not None:
+                on_progress(step, label, completed, total)
+
         already = self._store.running_run()
         if already is not None:
             # Refused rather than queued. Two runs writing the same themes would interleave
@@ -171,9 +180,13 @@ class ThemeRunner:
             )
 
         run_id = self._store.start_run(trigger)
+        emit("scout", "Scout prioritizing sectors, watchlist, and catalysts", None, None)
 
         try:
-            gathered = self._gather()
+            try:
+                gathered = self._gather(on_progress=on_progress)
+            except TypeError:
+                gathered = self._gather()
         except Exception as exc:
             log.warning("theme source gathering failed: %s", exc)
             self._store.finish_run(run_id, "failed", reason=str(exc))
@@ -205,13 +218,19 @@ class ThemeRunner:
         withdrawn = self._store.withdraw_short(short_themes, self._thresholds.shortfall)
 
         universe = self._universe_source.snapshot()
-        outcome = self._expand_and_resolve(surfaced_themes, universe)
+        outcome = self._expand_and_resolve(surfaced_themes, universe, on_progress=on_progress)
 
         self._store.finish_run(
             run_id,
             "complete",
             sources_unavailable=unavailable,
             documents_read=gathered.documents_read,
+        )
+        emit(
+            "complete",
+            f"Surfaced {new} new, {refreshed} refreshed themes",
+            len(surfaced_themes),
+            len(surfaced_themes),
         )
         return ThemeRunResult(
             run_id=run_id,
@@ -224,7 +243,9 @@ class ThemeRunner:
             **outcome,
         )
 
-    def _expand_and_resolve(self, themes, universe: UniverseSnapshot) -> dict[str, int]:
+    def _expand_and_resolve(
+        self, themes, universe: UniverseSnapshot, on_progress=None
+    ) -> dict[str, int]:
         """Expand each theme's chain, resolve it, then research it. Never fatal."""
         totals = {
             "chains_expanded": 0,
@@ -239,8 +260,23 @@ class ThemeRunner:
             return totals
 
         profiles = self._profiles.all() if self._profiles is not None else None
+        total_themes = len(themes)
+        if on_progress is not None and total_themes:
+            on_progress(
+                "themes",
+                f"Expanding & resolving {total_themes} themes",
+                0,
+                total_themes,
+            )
 
-        for theme in themes:
+        for idx, theme in enumerate(themes, start=1):
+            if on_progress is not None and total_themes:
+                on_progress(
+                    "themes",
+                    f"Resolving theme chains {idx} / {total_themes}: {theme.key}",
+                    idx,
+                    total_themes,
+                )
             try:
                 tiers = self._expander(theme.label or theme.key)
             except Exception as exc:

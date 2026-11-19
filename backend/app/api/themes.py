@@ -61,6 +61,79 @@ async def run_themes(
     return result.as_dict()
 
 
+@router.post("/run/stream")
+async def run_themes_stream(
+    request: Request,
+    payload: RunThemesRequest | None = None,
+):
+    """Run theme & Scout discovery with counted-work SSE progress events."""
+    import asyncio
+
+    from app.api.streaming import sse_stream_response
+
+    runner = getattr(request.app.state, "theme_runner", None)
+    if runner is None:
+        raise HTTPException(
+            status_code=503,
+            detail="theme runs are not configured on this instance",
+        )
+    req = payload or RunThemesRequest()
+
+    async def drive(emit):
+        loop = asyncio.get_running_loop()
+
+        def thread_safe_emit(
+            step: str,
+            label: str,
+            completed: int | None = None,
+            total: int | None = None,
+        ) -> None:
+            loop.call_soon_threadsafe(emit, step, label, completed, total)
+
+        res = await asyncio.to_thread(
+            runner.run, trigger=req.trigger, on_progress=thread_safe_emit
+        )
+        return res.as_dict()
+
+    return sse_stream_response(drive)
+
+
+@router.post("/discover")
+async def discover_themes(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    session_factory: Annotated[Any, Depends(get_session_factory)],
+    payload: RunThemesRequest | None = None,
+) -> dict[str, Any]:
+    """Run IdeaScout preview + theme discovery pass."""
+    from app.agents.scout import IdeaScout
+    from app.api.screening import _universe_source
+    from app.api.verdicts import _price_source
+
+    req = payload or RunThemesRequest()
+    tools = getattr(request.app.state, "tools", None)
+    scout_plan = None
+    if tools is not None:
+        scout = IdeaScout(
+            tools=tools,
+            session_factory=session_factory,
+            universe_source=_universe_source(request),
+            price_source=_price_source(request, settings),
+            search_source=getattr(request.app.state, "search_source", None),
+        )
+        scout_plan = scout.plan(limit=25, include_web_discovery=True).as_dict()
+
+    runner = getattr(request.app.state, "theme_runner", None)
+    theme_result = None
+    if runner is not None:
+        res = runner.run(trigger=req.trigger)
+        if res.outcome == "refused":
+            raise HTTPException(status_code=409, detail=res.reason)
+        theme_result = res.as_dict()
+
+    return {"scout": scout_plan, "theme_run": theme_result}
+
+
 @router.get("/runs")
 async def list_runs(
     session_factory: Annotated[Any, Depends(get_session_factory)],

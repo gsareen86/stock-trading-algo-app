@@ -63,6 +63,22 @@ async def unread_count(
     return {"unread": InsightFeed(session_factory).unread_count()}
 
 
+@router.get("/briefing")
+async def morning_briefing(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    session_factory: Annotated[Any, Depends(get_session_factory)],
+) -> dict[str, Any]:
+    """Morning Briefing summary for Today (`/`): regime, sector shifts, watchlist & books."""
+    from app.api.verdicts import _price_source
+    from app.discovery.briefing import build_morning_briefing
+
+    return build_morning_briefing(
+        session_factory,
+        price_source=_price_source(request, settings),
+    )
+
+
 @router.get("/kinds")
 async def kinds() -> dict[str, Any]:
     """What the platform can raise, and how loud each kind is.
