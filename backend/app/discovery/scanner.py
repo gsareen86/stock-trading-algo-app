@@ -430,6 +430,20 @@ class DiscoveryScanner:
             )
         except ScanInProgressError:
             raise
+        except asyncio.CancelledError:
+            # Not an `Exception`, so the handler below never saw it and a cancelled scan kept
+            # claiming to be running — refusing every later scan until a restart. Cancellation
+            # is now only the server shutting down; a closed browser no longer causes it.
+            log.warning("discovery scan #%s cancelled before completion", run_id)
+            if run_id:
+                with self._sessions() as session:
+                    run_row = session.get(ScanRunRow, run_id)
+                    if run_row is not None and run_row.outcome == "running":
+                        run_row.outcome = "interrupted"
+                        run_row.error = "cancelled before completion"
+                        run_row.finished_at = now_utc()
+                        session.commit()
+            raise
         except Exception as exc:
             log.exception("discovery scan #%s failed: %s", run_id, exc)
             if run_id:

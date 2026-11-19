@@ -3,17 +3,29 @@
 Emits honest counted-work progress events (`step`, `label`, `completed`, `total`,
 `elapsed_seconds`) and a single terminal `complete` or `error` event. Never emits a
 synthetic ETA or percent-of-time forecast.
+
+The stream is a view of the run, not its owner. A viewer that goes away — a closed tab, a
+navigation, the web server stopping — ends the stream and leaves the run to finish and
+persist its own result. Cancelling on disconnect threw away a 26-minute Nifty 750 scan
+in its final narration step, and left its row claiming to still be running.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
 from fastapi.responses import StreamingResponse
+
+log = logging.getLogger(__name__)
+
+#: Runs whose viewer disconnected. The event loop holds only weak references to tasks, so
+#: an unwatched run with nothing else pointing at it could be collected mid-flight.
+_DETACHED: set[asyncio.Task[None]] = set()
 
 
 def format_sse(event: str, payload: dict[str, Any]) -> str:
@@ -30,8 +42,12 @@ def sse_stream_response(
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
     started = time.monotonic()
     loop_holder: list[asyncio.AbstractEventLoop] = []
+    # Cleared when the viewer goes away; events after that have no one to read them.
+    listening = [True]
 
     def _enqueue(item: tuple[str, dict[str, Any]] | None) -> None:
+        if not listening[0]:
+            return
         if loop_holder:
             loop_holder[0].call_soon_threadsafe(queue.put_nowait, item)
         else:
@@ -72,7 +88,10 @@ def sse_stream_response(
                     },
                 )
             )
-        except Exception as exc:  # pragma: no cover - surfaced cleanly as SSE error
+        except Exception as exc:
+            if not listening[0]:
+                # No viewer will see the error event, so the log is the only place it lands.
+                log.warning("streamed run failed after its viewer disconnected: %s", exc)
             _enqueue(
                 (
                     "error",
@@ -96,8 +115,11 @@ def sse_stream_response(
                 ev_name, data = item
                 yield format_sse(ev_name, data)
         finally:
+            listening[0] = False
             if not task.done():
-                task.cancel()
+                log.info("stream viewer disconnected; the run continues and persists its result")
+                _DETACHED.add(task)
+                task.add_done_callback(_DETACHED.discard)
 
     return StreamingResponse(
         generate(),
