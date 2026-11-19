@@ -21,7 +21,7 @@ You need **Python 3.11+** and **Node 20+**.
 # 1. Backend dependencies (once)
 cd backend
 py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[llm,agents,dev]"
+.\.venv\Scripts\python.exe -m pip install -e ".[llm,agents,data,scheduling,dev]"
 .\.venv\Scripts\python.exe -m alembic upgrade head
 
 # 2. Create your login (once)
@@ -38,6 +38,10 @@ cd ..
 ```
 
 Then open **http://localhost:3000** and sign in.
+
+`scheduling` is what runs the weekly scan on its own, and `data` is what lets the research tools
+read company PDFs. Both are optional — without them the app still starts, it just schedules
+nothing and skips documents, silently — so install them unless you mean to leave them out.
 
 `run-local.ps1` starts the API on port 8000 and the web app on port 3000. Set
 `AUTH_SECRET_KEY` to a long random string before running this anywhere other than your own

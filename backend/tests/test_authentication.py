@@ -316,7 +316,13 @@ class TestRefreshAndLogout:
         stolen = open_client.cookies[REFRESH_COOKIE]
         open_client.post("/auth/refresh")
 
+        # Replace, not add: the jar holds the rotated cookie under the domain
+        # `testserver.local`, and `set` without a domain stores a second cookie beside it — the
+        # request then carries both, the server reads the valid one, and the test passes or
+        # fails on cookie-jar behaviour rather than on revocation.
+        open_client.cookies.clear()
         open_client.cookies.set(REFRESH_COOKIE, stolen)
+        assert len(open_client.cookies.jar) == 1
         response = open_client.post("/auth/refresh")
 
         assert response.status_code == 401
