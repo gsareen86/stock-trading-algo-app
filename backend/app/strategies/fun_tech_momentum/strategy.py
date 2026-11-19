@@ -15,7 +15,7 @@ from app.core.clock import now_utc
 from app.data.fundamentals import QuarterlyFundamentals
 from app.domain.instrument import Instrument
 from app.domain.prices import PriceSeries
-from app.domain.verdict import Evidence, GateResult, Operator, Stance, Verdict
+from app.domain.verdict import Evidence, GateResult, Operator, Plan, Stance, Verdict
 from app.strategies import gates
 from app.strategies.indicators import (
     consolidation_tightness,
@@ -76,15 +76,46 @@ class FunTechMomentumStrategy:
         evidence = (*check.evidence, *fundamental_rows, *technical_rows)
         conviction = self._conviction(fundamental_rows, technical_rows)
         core_passed = bool(fundamental_rows[0].passed and fundamental_rows[1].passed)
+        stance = gates.stance_from(conviction, BUY_CONVICTION, WATCH_CONVICTION, core_passed)
+
+        entry_val = next((r.value for r in technical_rows if r.id == "plan_entry_tight_base"), None)
+        stop_val = next((r.value for r in technical_rows if r.id == "plan_stop_tight_base"), None)
+        plan: Plan | None = None
+        plan_note: str | None = None
+        if stance is Stance.AVOID:
+            plan_note = "Verdict stance is AVOID — no trade plan generated."
+        elif (
+            isinstance(entry_val, (int, float))
+            and isinstance(stop_val, (int, float))
+            and 0 < float(stop_val) < float(entry_val)
+        ):
+            plan = Plan(
+                entry=float(entry_val),
+                stop=float(stop_val),
+                target=None,
+                holding_horizon="2–6 months (quarterly earnings cycle)",
+                exit_rule="Exit on quarterly YoY EPS deceleration or close below 50-day SMA",
+                evidence_ids=(
+                    "plan_entry_tight_base",
+                    "plan_stop_tight_base",
+                    "tight_consolidation",
+                ),
+                entry_evidence_id="plan_entry_tight_base",
+                stop_evidence_id="plan_stop_tight_base",
+            )
+        else:
+            plan_note = "Tight-base high/low spread is too narrow to anchor entry and stop levels."
 
         return Verdict(
             strategy_id=STRATEGY_ID,
             ticker=instrument.symbol,
             as_of=as_of,
-            stance=gates.stance_from(conviction, BUY_CONVICTION, WATCH_CONVICTION, core_passed),
+            stance=stance,
             conviction=conviction,
             evidence=evidence,
             gates=check.gates,
+            plan=plan,
+            plan_note=plan_note,
         )
 
     # ── fundamentals gate ─────────────────────────────────────────────────────
@@ -229,6 +260,10 @@ class FunTechMomentumStrategy:
         last_volume = float(frame["volume"].iloc[-1])
         multiple = round(last_volume / avg_volume, 4) if avg_volume > 0 else None
 
+        base_window = frame.tail(BASE_BARS)
+        base_high = round(float(base_window["high"].max()), 4) if len(base_window) >= 2 else None
+        base_low = round(float(base_window["low"].min()), 4) if len(base_window) >= 2 else None
+
         return (
             Evidence(
                 id="within_15pct_of_high",
@@ -259,6 +294,22 @@ class FunTechMomentumStrategy:
                 passed=bool(multiple is not None and multiple >= VOLUME_EXPANSION),
                 unit="x",
                 source_ref=f"price://{instrument.symbol}?interval=1d&bars=20",
+            ),
+            Evidence(
+                id="plan_entry_tight_base",
+                label=f"Entry above {BASE_BARS}-session tight base high",
+                value=base_high,
+                operator=Operator.INFO,
+                unit="INR",
+                source_ref=ref,
+            ),
+            Evidence(
+                id="plan_stop_tight_base",
+                label=f"Stop at {BASE_BARS}-session tight base low",
+                value=base_low,
+                operator=Operator.INFO,
+                unit="INR",
+                source_ref=ref,
             ),
         )
 

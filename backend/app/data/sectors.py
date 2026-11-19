@@ -44,6 +44,12 @@ def _tables() -> tuple[dict[str, str], tuple[tuple[str, str], ...]]:
     return indices, ordered
 
 
+@lru_cache(maxsize=1)
+def nse_names() -> dict[str, str]:
+    payload = json.loads(SECTORS_FILE.read_text("utf-8"))
+    return dict(payload.get("nse_names", {}))
+
+
 def all_sector_indices() -> tuple[SectorIndex, ...]:
     indices, _ = _tables()
     return tuple(SectorIndex(key=k, ticker=v) for k, v in sorted(indices.items()))

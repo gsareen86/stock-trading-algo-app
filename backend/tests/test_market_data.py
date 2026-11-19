@@ -269,6 +269,24 @@ class TestUniverse:
     def test_satisfies_the_protocol(self) -> None:
         assert isinstance(NseUniverseSource(fetcher=lambda url: self.CSV), UniverseSource)
 
+    def test_default_index_fallback_covers_total_market(self) -> None:
+        snapshot = NseUniverseSource(fetcher=lambda url: (_ for _ in ()).throw(RuntimeError("down"))).snapshot()
+
+        assert snapshot.index_name == "NIFTY_TOTAL_MARKET"
+        assert snapshot.origin == "fallback"
+        assert len(snapshot) > 700
+        assert any(inst.name and inst.sector for inst in snapshot.instruments)
+
+    def test_nifty500_remains_selectable(self) -> None:
+        snapshot = NseUniverseSource(
+            index_name="NIFTY500",
+            fetcher=lambda url: (_ for _ in ()).throw(RuntimeError("down")),
+        ).snapshot()
+
+        assert snapshot.index_name == "NIFTY500"
+        assert snapshot.origin == "fallback"
+        assert 100 < len(snapshot) < 600
+
 
 class TestFakeSource:
     def test_deterministic_for_the_same_instrument(self) -> None:

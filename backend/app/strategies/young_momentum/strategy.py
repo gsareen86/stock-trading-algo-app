@@ -20,7 +20,7 @@ from __future__ import annotations
 from app.core.clock import now_utc
 from app.domain.instrument import Instrument
 from app.domain.prices import PriceSeries
-from app.domain.verdict import Evidence, Operator, Verdict
+from app.domain.verdict import Evidence, Operator, Plan, Stance, Verdict
 from app.strategies import gates
 from app.strategies.indicators import (
     fib_retracement_pct,
@@ -74,15 +74,44 @@ class YoungMomentumStrategy:
         conviction = self._conviction(rows)
         # The impulse and the pause are the signal; a base breakout alone is not this setup.
         core_passed = bool(rows[1].passed and rows[2].passed)
+        stance = gates.stance_from(conviction, BUY_CONVICTION, WATCH_CONVICTION, core_passed)
+
+        trigger = next((r.value for r in rows if r.id == "entry_trigger"), None)
+        stop = next((r.value for r in rows if r.id == "entry_stop"), None)
+        plan: Plan | None = None
+        plan_note: str | None = None
+        if stance is Stance.AVOID:
+            plan_note = "Verdict stance is AVOID — no trade plan generated."
+        elif (
+            isinstance(trigger, (int, float))
+            and isinstance(stop, (int, float))
+            and 0 < float(stop) < float(trigger)
+        ):
+            plan = Plan(
+                entry=float(trigger),
+                stop=float(stop),
+                target=None,
+                holding_horizon="1–4 weeks (continuation swing until momentum stalls)",
+                exit_rule="Exit on failure to make higher high or close below 20-day EMA",
+                evidence_ids=("entry_trigger", "entry_stop", "pause_within_fib"),
+                entry_evidence_id="entry_trigger",
+                stop_evidence_id="entry_stop",
+            )
+        else:
+            plan_note = (
+                "No qualifying impulse-and-pause sequence to anchor buy-stop and stop levels."
+            )
 
         return Verdict(
             strategy_id=STRATEGY_ID,
             ticker=instrument.symbol,
             as_of=as_of,
-            stance=gates.stance_from(conviction, BUY_CONVICTION, WATCH_CONVICTION, core_passed),
+            stance=stance,
             conviction=conviction,
             evidence=evidence,
             gates=check.gates,
+            plan=plan,
+            plan_note=plan_note,
         )
 
     def _sequence(self, instrument: Instrument, series: PriceSeries) -> tuple[Evidence, ...]:

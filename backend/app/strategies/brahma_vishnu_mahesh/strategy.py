@@ -22,7 +22,7 @@ from app.core.clock import now_utc
 from app.data import sectors
 from app.domain.instrument import Instrument
 from app.domain.prices import PriceSeries
-from app.domain.verdict import Evidence, Operator, Verdict
+from app.domain.verdict import Evidence, Operator, Plan, Stance, Verdict
 from app.strategies import gates
 from app.strategies.indicators import (
     horizontal_range_breakout,
@@ -77,15 +77,49 @@ class BrahmaVishnuMaheshStrategy:
         evidence = (*check.evidence, *regime, *sector, *breakout)
         conviction = self._conviction(regime, sector, breakout)
         core_passed = bool(regime[0].passed and breakout[0].passed)
+        stance = gates.stance_from(conviction, BUY_CONVICTION, WATCH_CONVICTION, core_passed)
+
+        entry_val = next((r.value for r in breakout if r.id == "plan_entry_breakout"), None)
+        stop_val = next((r.value for r in breakout if r.id == "plan_stop_base_floor"), None)
+        plan: Plan | None = None
+        plan_note: str | None = None
+        if stance is Stance.AVOID:
+            plan_note = "Verdict stance is AVOID — no trade plan generated."
+        elif (
+            isinstance(entry_val, (int, float))
+            and isinstance(stop_val, (int, float))
+            and 0 < float(stop_val) < float(entry_val)
+        ):
+            plan = Plan(
+                entry=float(entry_val),
+                stop=float(stop_val),
+                target=None,
+                holding_horizon="3–12+ months (multi-year weekly trend)",
+                exit_rule=(
+                    "Exit if Nifty weekly close breaks rising 20-week SMA "
+                    "or sector drops out of top 3 RS"
+                ),
+                evidence_ids=(
+                    "plan_entry_breakout",
+                    "plan_stop_base_floor",
+                    "mahesh_range_breakout",
+                ),
+                entry_evidence_id="plan_entry_breakout",
+                stop_evidence_id="plan_stop_base_floor",
+            )
+        else:
+            plan_note = "Insufficient base spread to anchor breakout and floor levels."
 
         return Verdict(
             strategy_id=STRATEGY_ID,
             ticker=instrument.symbol,
             as_of=as_of,
-            stance=gates.stance_from(conviction, BUY_CONVICTION, WATCH_CONVICTION, core_passed),
+            stance=stance,
             conviction=conviction,
             evidence=evidence,
             gates=check.gates,
+            plan=plan,
+            plan_note=plan_note,
         )
 
     # ── BRAHMA ────────────────────────────────────────────────────────────────
@@ -227,7 +261,7 @@ class BrahmaVishnuMaheshStrategy:
             else None
         )
 
-        return (
+        rows = [
             Evidence(
                 id="mahesh_range_breakout",
                 label=f"Close above a horizontal base of at least {MIN_BASE_BARS} sessions",
@@ -256,7 +290,29 @@ class BrahmaVishnuMaheshStrategy:
                 unit="%",
                 source_ref=ref,
             ),
-        )
+        ]
+        if breakout is not None:
+            rows.extend(
+                [
+                    Evidence(
+                        id="plan_entry_breakout",
+                        label=f"Entry above {MIN_BASE_BARS}-session base high",
+                        value=round(breakout.range_high, 4),
+                        operator=Operator.INFO,
+                        unit="INR",
+                        source_ref=ref,
+                    ),
+                    Evidence(
+                        id="plan_stop_base_floor",
+                        label="Stop at horizontal base floor",
+                        value=round(breakout.range_low, 4),
+                        operator=Operator.INFO,
+                        unit="INR",
+                        source_ref=ref,
+                    ),
+                ]
+            )
+        return tuple(rows)
 
     # ── scoring ───────────────────────────────────────────────────────────────
     def _conviction(

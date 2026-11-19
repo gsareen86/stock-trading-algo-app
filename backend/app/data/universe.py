@@ -24,9 +24,29 @@ log = logging.getLogger(__name__)
 
 RESOURCES = Path(__file__).parent / "resources"
 FALLBACK_FILE = RESOURCES / "nse_fallback_universe.json"
+TOTAL_MARKET_FALLBACK_FILE = RESOURCES / "nse_nifty_total_market_fallback.json"
 BLOCKLIST_FILE = RESOURCES / "blocked_tickers.json"
 
 NSE_NIFTY500_CSV_URL = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
+NIFTYINDICES_NIFTY500_CSV_URL = (
+    "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
+)
+NSE_NIFTY_TOTAL_MARKET_CSV_URL = (
+    "https://archives.nseindia.com/content/indices/ind_niftytotalmarketlist.csv"
+)
+NIFTYINDICES_TOTAL_MARKET_CSV_URL = (
+    "https://www.niftyindices.com/IndexConstituent/ind_niftytotalmarket_list.csv"
+)
+
+INDEX_CSV_URLS: dict[str, tuple[str, ...]] = {
+    "NIFTY_TOTAL_MARKET": (NIFTYINDICES_TOTAL_MARKET_CSV_URL, NSE_NIFTY_TOTAL_MARKET_CSV_URL),
+    "NIFTY500": (NIFTYINDICES_NIFTY500_CSV_URL, NSE_NIFTY500_CSV_URL),
+}
+
+INDEX_FALLBACK_FILES: dict[str, Path] = {
+    "NIFTY_TOTAL_MARKET": TOTAL_MARKET_FALLBACK_FILE,
+    "NIFTY500": FALLBACK_FILE,
+}
 
 #: NSE returns 403 to clients that do not look like a browser.
 _HEADERS = {
@@ -38,10 +58,27 @@ _HEADERS = {
 }
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=4)
 def _load_symbols(path_str: str) -> tuple[str, ...]:
     payload = json.loads(Path(path_str).read_text("utf-8"))
     return tuple(payload.get("symbols", ()))
+
+
+@lru_cache(maxsize=4)
+def _load_fallback_instruments(path_str: str) -> tuple[Instrument, ...]:
+    payload = json.loads(Path(path_str).read_text("utf-8"))
+    raw_instruments = payload.get("instruments")
+    if isinstance(raw_instruments, list) and raw_instruments:
+        return tuple(
+            Instrument(
+                symbol=str(row["symbol"]).strip().upper(),
+                name=row.get("name") or None,
+                sector=row.get("industry") or row.get("sector") or None,
+            )
+            for row in raw_instruments
+            if row.get("symbol")
+        )
+    return tuple(Instrument(symbol=s) for s in payload.get("symbols", ()))
 
 
 def blocked_symbols() -> frozenset[str]:
@@ -54,14 +91,21 @@ class NseUniverseSource:
 
     def __init__(
         self,
-        index_name: str = "NIFTY500",
-        csv_url: str = NSE_NIFTY500_CSV_URL,
+        index_name: str = "NIFTY_TOTAL_MARKET",
+        csv_url: str | None = None,
         fetcher=None,
         timeout: float = 10.0,
     ) -> None:
         """``fetcher`` is injectable so tests replay a recorded CSV rather than calling NSE."""
-        self._index_name = index_name
-        self._csv_url = csv_url
+        self._index_name = index_name.strip().upper()
+        if csv_url is not None:
+            self._csv_urls: tuple[str, ...] = (csv_url,)
+        else:
+            self._csv_urls = INDEX_CSV_URLS.get(
+                self._index_name,
+                (NIFTYINDICES_TOTAL_MARKET_CSV_URL, NSE_NIFTY_TOTAL_MARKET_CSV_URL),
+            )
+        self._csv_url = self._csv_urls[0]
         self._fetcher = fetcher
         self._timeout = timeout
 
@@ -71,9 +115,18 @@ class NseUniverseSource:
 
         import requests
 
-        response = requests.get(self._csv_url, headers=_HEADERS, timeout=self._timeout)
-        response.raise_for_status()
-        return response.text
+        last_exc: Exception | None = None
+        for url in self._csv_urls:
+            try:
+                response = requests.get(url, headers=_HEADERS, timeout=self._timeout)
+                response.raise_for_status()
+                if response.text and "symbol" in response.text[:200].lower():
+                    return response.text
+            except Exception as exc:
+                last_exc = exc
+        if last_exc is not None:
+            raise last_exc
+        return None
 
     @staticmethod
     def _parse(text: str) -> list[tuple[str, str | None, str | None]]:
@@ -104,7 +157,11 @@ class NseUniverseSource:
             if not entries:
                 raise ValueError("constituent CSV parsed to zero rows")
         except Exception as exc:
-            log.warning("NSE constituent fetch failed (%s); using the bundled fallback list", exc)
+            log.warning(
+                "NSE constituent fetch failed for %s (%s); using the bundled fallback list",
+                self._index_name,
+                exc,
+            )
             return self._fallback_snapshot(blocked)
 
         kept, excluded = [], []
@@ -122,9 +179,10 @@ class NseUniverseSource:
         )
 
     def _fallback_snapshot(self, blocked: frozenset[str]) -> UniverseSnapshot:
-        symbols = _load_symbols(str(FALLBACK_FILE))
-        kept = [Instrument(symbol=s) for s in symbols if s not in blocked]
-        excluded = sorted(s for s in symbols if s in blocked)
+        fallback_path = INDEX_FALLBACK_FILES.get(self._index_name, TOTAL_MARKET_FALLBACK_FILE)
+        instruments = _load_fallback_instruments(str(fallback_path))
+        kept = [inst for inst in instruments if inst.symbol not in blocked]
+        excluded = sorted(inst.symbol for inst in instruments if inst.symbol in blocked)
         return UniverseSnapshot(
             instruments=tuple(kept),
             origin="fallback",

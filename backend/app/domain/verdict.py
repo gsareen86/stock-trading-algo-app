@@ -154,6 +154,101 @@ class GateResult:
 
 
 @dataclass(frozen=True, slots=True)
+class Plan:
+    """Deterministic action plan derived by a strategy from its own evidence rows.
+
+    A plan restates a non-AVOID verdict in actionable price levels (`entry`, `stop`, optional
+    `target`) plus exit rules — never invented by an LLM and never blended across strategies.
+    """
+
+    entry: float
+    stop: float
+    holding_horizon: str
+    exit_rule: str
+    evidence_ids: tuple[str, ...]
+    target: float | None = None
+    entry_evidence_id: str | None = None
+    stop_evidence_id: str | None = None
+    target_evidence_id: str | None = None
+    risk_inr: float = field(init=False)
+    risk_pct: float = field(init=False)
+    reward_inr: float | None = field(init=False)
+    reward_pct: float | None = field(init=False)
+    rr_ratio: float | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.entry <= 0 or self.stop <= 0:
+            raise ValueError(f"plan entry ({self.entry}) and stop ({self.stop}) must be positive")
+        if self.stop >= self.entry:
+            raise ValueError(f"plan stop ({self.stop}) must sit below entry ({self.entry})")
+        if self.target is not None and self.target <= self.entry:
+            raise ValueError(f"plan target ({self.target}) must sit above entry ({self.entry})")
+        if not self.holding_horizon.strip():
+            raise ValueError("plan holding_horizon must be non-empty")
+        if not self.exit_rule.strip():
+            raise ValueError("plan exit_rule must be non-empty")
+        if not self.evidence_ids:
+            raise ValueError("plan must cite at least one evidence row")
+        refs = set(self.evidence_ids)
+        for label, ref in (
+            ("entry_evidence_id", self.entry_evidence_id),
+            ("stop_evidence_id", self.stop_evidence_id),
+            ("target_evidence_id", self.target_evidence_id),
+        ):
+            if ref is not None and ref not in refs:
+                raise ValueError(f"plan {label} ({ref!r}) must be present in evidence_ids")
+
+        risk_inr = round(self.entry - self.stop, 4)
+        risk_pct = round((risk_inr / self.entry) * 100.0, 2)
+        object.__setattr__(self, "risk_inr", risk_inr)
+        object.__setattr__(self, "risk_pct", risk_pct)
+
+        if self.target is not None:
+            reward_inr = round(self.target - self.entry, 4)
+            reward_pct = round((reward_inr / self.entry) * 100.0, 2)
+            rr_ratio = round(reward_inr / risk_inr, 2) if risk_inr > 0 else None
+        else:
+            reward_inr = None
+            reward_pct = None
+            rr_ratio = None
+        object.__setattr__(self, "reward_inr", reward_inr)
+        object.__setattr__(self, "reward_pct", reward_pct)
+        object.__setattr__(self, "rr_ratio", rr_ratio)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "entry": self.entry,
+            "stop": self.stop,
+            "target": self.target,
+            "risk_inr": self.risk_inr,
+            "risk_pct": self.risk_pct,
+            "reward_inr": self.reward_inr,
+            "reward_pct": self.reward_pct,
+            "rr_ratio": self.rr_ratio,
+            "holding_horizon": self.holding_horizon,
+            "exit_rule": self.exit_rule,
+            "evidence_ids": list(self.evidence_ids),
+            "entry_evidence_id": self.entry_evidence_id,
+            "stop_evidence_id": self.stop_evidence_id,
+            "target_evidence_id": self.target_evidence_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> Plan:
+        return cls(
+            entry=float(payload["entry"]),
+            stop=float(payload["stop"]),
+            target=float(payload["target"]) if payload.get("target") is not None else None,
+            holding_horizon=str(payload["holding_horizon"]),
+            exit_rule=str(payload["exit_rule"]),
+            evidence_ids=tuple(payload.get("evidence_ids") or ()),
+            entry_evidence_id=payload.get("entry_evidence_id"),
+            stop_evidence_id=payload.get("stop_evidence_id"),
+            target_evidence_id=payload.get("target_evidence_id"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Verdict:
     """One strategy's independent opinion on one instrument at one point in time."""
 
@@ -166,6 +261,10 @@ class Verdict:
     conviction: int
     evidence: tuple[Evidence, ...]
     gates: tuple[GateResult, ...] = ()
+    #: Optional deterministic trade plan (never present on AVOID).
+    plan: Plan | None = None
+    #: Explicit explanation when a non-AVOID verdict has no deterministic plan.
+    plan_note: str | None = None
     #: Filled by `verdict-narratives`. A verdict is complete and reproducible without it.
     narrative: str | None = None
     trace_id: str | None = None
@@ -201,6 +300,18 @@ class Verdict:
                 f"verdict for {self.ticker} has failing gate(s) [{failed}] so its stance must "
                 f"be AVOID, not {self.stance.value}"
             )
+
+        if self.plan is not None:
+            if self.stance is Stance.AVOID:
+                raise ValueError(
+                    f"verdict for {self.ticker} by {self.strategy_id} is AVOID "
+                    "and cannot carry a plan"
+                )
+            missing_plan_refs = [ref for ref in self.plan.evidence_ids if ref not in known]
+            if missing_plan_refs:
+                raise ValueError(
+                    f"plan cites evidence that does not exist: {missing_plan_refs}"
+                )
 
     # ── derived ───────────────────────────────────────────────────────────────
     @property

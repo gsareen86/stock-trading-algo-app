@@ -19,7 +19,7 @@ import logging
 from app.core.clock import now_utc
 from app.domain.instrument import Instrument
 from app.domain.prices import PriceSeries
-from app.domain.verdict import Evidence, GateResult, Operator, Stance, Verdict
+from app.domain.verdict import Evidence, GateResult, Operator, Plan, Stance, Verdict
 from app.strategies.minervini import trend_template, vcp
 from app.strategies.protocols import StrategyContext, StrategyDefinition
 
@@ -76,10 +76,54 @@ class MinerviniStrategy:
             ),
         ]
 
-        evidence = [*context_rows, *template_rows, *vcp_rows]
+        plan_rows: list[Evidence] = []
+        pivot: float | None = None
+        stop: float | None = None
+        if reading.contractions:
+            vcp_ref = f"price://{instrument.symbol}?interval=1d&analysis=vcp"
+            pivot = round(max(c.high for c in reading.contractions), 4)
+            stop = round(reading.contractions[-1].low, 4)
+            plan_rows = [
+                Evidence(
+                    id="plan_entry_pivot",
+                    label="VCP breakout pivot (base high)",
+                    value=pivot,
+                    operator=Operator.INFO,
+                    unit="INR",
+                    source_ref=vcp_ref,
+                ),
+                Evidence(
+                    id="plan_stop_base_low",
+                    label="Stop below latest contraction low",
+                    value=stop,
+                    operator=Operator.INFO,
+                    unit="INR",
+                    source_ref=vcp_ref,
+                ),
+            ]
+
+        evidence = [*context_rows, *template_rows, *vcp_rows, *plan_rows]
         passed = trend_template.criteria_passed(template_rows)
         conviction = self._conviction(passed, reading)
         stance = self._stance(passed, conviction)
+
+        plan: Plan | None = None
+        plan_note: str | None = None
+        if stance is Stance.AVOID:
+            plan_note = "Verdict stance is AVOID — no trade plan generated."
+        elif pivot is not None and stop is not None and 0 < stop < pivot:
+            plan = Plan(
+                entry=pivot,
+                stop=stop,
+                target=None,
+                holding_horizon="2–8 weeks (until weekly close below 10-week / 50-day SMA)",
+                exit_rule="Exit on weekly close below 50-day (10-week) SMA",
+                evidence_ids=("plan_entry_pivot", "plan_stop_base_low"),
+                entry_evidence_id="plan_entry_pivot",
+                stop_evidence_id="plan_stop_base_low",
+            )
+        else:
+            plan_note = "No VCP contraction base detected yet to anchor pivot and stop levels."
 
         return Verdict(
             strategy_id=STRATEGY_ID,
@@ -89,6 +133,8 @@ class MinerviniStrategy:
             conviction=conviction,
             evidence=tuple(evidence),
             gates=tuple(self._passing_gates(series)),
+            plan=plan,
+            plan_note=plan_note,
         )
 
     # ── gates ─────────────────────────────────────────────────────────────────

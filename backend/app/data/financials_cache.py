@@ -24,7 +24,9 @@ from typing import Any
 from app.domain.financials import (
     CompanyFinancials,
     Metric,
+    PeriodValue,
     Shareholding,
+    StatementSeries,
 )
 
 log = logging.getLogger(__name__)
@@ -101,6 +103,20 @@ def _to_dict(f: CompanyFinancials) -> dict[str, Any]:
             }
             for m in f.metrics.values()
         ],
+        "statements": {
+            key: {
+                "metric": series.metric,
+                "points": [
+                    {
+                        "period": p.period,
+                        "value": p.value,
+                        "period_end": p.period_end.isoformat() if p.period_end else None,
+                    }
+                    for p in series.points
+                ],
+            }
+            for key, series in f.statements.items()
+        },
         "shareholding": [
             {
                 "as_of": s.as_of.isoformat(),
@@ -130,6 +146,17 @@ def _from_dict(symbol: str, payload: dict[str, Any]) -> CompanyFinancials | None
             )
             for m in payload.get("metrics") or []
         }
+        statements: dict[str, StatementSeries] = {}
+        for key, raw_series in (payload.get("statements") or {}).items():
+            points = tuple(
+                PeriodValue(
+                    period=p["period"],
+                    value=float(p["value"]),
+                    period_end=date.fromisoformat(p["period_end"]) if p.get("period_end") else None,
+                )
+                for p in (raw_series.get("points") or [])
+            )
+            statements[key] = StatementSeries(metric=raw_series.get("metric", key), points=points)
         holdings = tuple(
             Shareholding(
                 as_of=date.fromisoformat(s["as_of"]),
@@ -147,6 +174,7 @@ def _from_dict(symbol: str, payload: dict[str, Any]) -> CompanyFinancials | None
         return CompanyFinancials(
             symbol=payload.get("symbol") or symbol,
             metrics=metrics,
+            statements=statements,
             shareholding=holdings,
             industry=payload.get("industry"),
             company_name=payload.get("company_name"),

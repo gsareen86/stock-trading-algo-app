@@ -640,3 +640,87 @@ class ThemeProposal(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ScanRun(Base):
+    """One append-only pass of the Nifty 750 Discovery Funnel."""
+
+    __tablename__ = "scan_runs"
+    __table_args__ = (
+        Index("ix_scan_runs_started", "started_at"),
+        Index("ix_scan_runs_outcome", "outcome"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="requested")
+    universe_origin: Mapped[str] = mapped_column(String(16), nullable=False, default="live")
+    index_name: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="NIFTY_TOTAL_MARKET"
+    )
+    benchmark: Mapped[str] = mapped_column(String(16), nullable=False, default="^CRSLDX")
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    considered_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    eligible_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unevaluable: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    sectors_snapshot: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ScanEntry(Base):
+    """One evaluated equity inside a ScanRun, ordered by a single named strategy's conviction."""
+
+    __tablename__ = "scan_entries"
+    __table_args__ = (
+        Index("ix_scan_entries_run_id", "run_id"),
+        Index("ix_scan_entries_run_conviction", "run_id", "ranked_conviction"),
+        Index("ix_scan_entries_run_symbol", "run_id", "symbol", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    universe_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    sector: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    sector_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ranked_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    ranked_conviction: Mapped[int] = mapped_column(Integer, nullable=False)
+    ranked_stance: Mapped[str] = mapped_column(String(8), nullable=False)
+    buy_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verdicts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    quality: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    themes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class WatchlistItem(Base):
+    """User-tracked NSE equity with target strategy, book intent, and stance drift tracking."""
+
+    __tablename__ = "watchlist_items"
+    __table_args__ = (
+        Index("ix_watchlist_items_symbol", "symbol", unique=True),
+        Index("ix_watchlist_items_intent", "book_intent"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    sector: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    book_intent: Mapped[str] = mapped_column(String(16), nullable=False, default="swing")
+    target_strategy_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    added_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_known_stances: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
